@@ -1,0 +1,17 @@
+build/
+.build/
+.scratch/
+
+
+# sssf runtime
+adws/adw_data/sessions/
+adws/adw_data/sssf.db*
+.env
+__pycache__/
+*.pyc
+.DS_Store
+skills-lock.json
+justfile
+.agents/
+.env.sample
+.pi/

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Stillmatter app icon: an open room with a violet point of focus">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#302746"/>
+      <stop offset="1" stop-color="#171325"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+  <rect x="16.5" y="16.5" width="479" height="479" rx="108" fill="none" stroke="#FFFFFF" stroke-opacity=".13"/>
+  <!-- A three-sided room, open at the lower right, drawn as a single recognizable silhouette. -->
+  <path d="M347 277 V157 Q347 143 333 143 H165 Q151 143 151 157 V341 Q151 355 165 355 H287" fill="none" stroke="#DED4F2" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M347 325 V355" fill="none" stroke="#DED4F2" stroke-width="28" stroke-linecap="round"/>
+  <!-- An illuminated object inside; the empty gap acts as the doorway. -->
+  <rect x="222" y="216" width="68" height="68" rx="17" fill="#A38ACE"/>
+  <rect x="236" y="230" width="40" height="40" rx="11" fill="#DDC9F5" opacity=".58"/>
+</svg>

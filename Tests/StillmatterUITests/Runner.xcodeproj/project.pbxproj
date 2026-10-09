@@ -1,0 +1,24 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ classes = {};
+ objectVersion = 56;
+ objects = {
+  A00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillmatterFlowsUITests.swift; sourceTree = "<group>"; };
+  A00000000000000000000002 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StillmatterFlowsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+  A00000000000000000000003 = {isa = PBXBuildFile; fileRef = A00000000000000000000001; };
+  A00000000000000000000004 = {isa = PBXGroup; children = (A00000000000000000000005, A00000000000000000000006); sourceTree = "<group>"; };
+  A00000000000000000000005 = {isa = PBXGroup; children = (A00000000000000000000001); path = .; sourceTree = "<group>"; };
+  A00000000000000000000006 = {isa = PBXGroup; children = (A00000000000000000000002); name = Products; sourceTree = "<group>"; };
+  A00000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000003); runOnlyForDeploymentPostprocessing = 0; };
+  A00000000000000000000008 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000009; buildPhases = (A00000000000000000000007); buildRules = (); dependencies = (); name = StillmatterFlowsUITests; productName = StillmatterFlowsUITests; productReference = A00000000000000000000002; productType = "com.apple.product-type.bundle.ui-testing"; };
+  A00000000000000000000009 = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000A, A0000000000000000000000B); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+  A0000000000000000000000A = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterFlowsUITests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Debug; };
+  A0000000000000000000000B = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterFlowsUITests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Release; };
+  A0000000000000000000000C = {isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1600; TargetAttributes = { A00000000000000000000008 = { CreatedOnToolsVersion = 26.3; }; }; }; buildConfigurationList = A0000000000000000000000D; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000004; productRefGroup = A00000000000000000000006; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000008); };
+  A0000000000000000000000D = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000E, A0000000000000000000000F); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+  A0000000000000000000000E = {isa = XCBuildConfiguration; buildSettings = { }; name = Debug; };
+  A0000000000000000000000F = {isa = XCBuildConfiguration; buildSettings = { }; name = Release; };
+ };
+ rootObject = A0000000000000000000000C;
+}
