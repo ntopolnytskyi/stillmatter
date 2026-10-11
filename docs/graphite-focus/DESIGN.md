@@ -1,6 +1,6 @@
 ---
 schema: graphite-focus/v1
-contract_version: 1.0.0
+contract_version: 2.0.0
 name: Graphite Focus
 platform: macOS 13+
 appearance: dark-only
@@ -12,7 +12,7 @@ omitted_interchange_subset: Google Labs DESIGN.md tokens are web-oriented and no
 
 ## Identity and Scope
 
-Graphite Focus is a reusable visual language for frequently used native macOS applications. It combines restrained graphite surfaces, warm high-contrast text, and a rationed blue-green accent. This document is the complete normative visual contract; prototypes and research are evidence, not additional rules.
+Graphite Focus is a reusable visual language for frequently used native macOS applications. It combines restrained graphite surfaces, warm high-contrast text, and a rationed violet accent. This document is the complete normative visual contract; prototypes and research are evidence, not additional rules.
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are normative. Graphite Focus Schema `graphite-focus/v1` adapts the single-file, versioned, prose-plus-tokens idea of Google Labs' alpha `DESIGN.md`; it does not claim schema conformance. Values use macOS points and native semantics. Any external token export is an optional, non-authoritative Interchange Subset.
 
@@ -38,7 +38,7 @@ More-specific rules win within one tier. An example never overrides a rule. When
 2. **Calm density.** Favor information-rich, comfortable-compact compositions with stable opaque surfaces and progressive disclosure.
 3. **Hierarchy without decoration.** Surface value, typography, spacing, and quiet dividers carry structure; ordinary content does not float.
 4. **One principal action.** The current task or section has at most one visually dominant action.
-5. **Accent is a signal.** Blue-green identifies the principal action, current mode, actionable links, progress, sparse identity marks, and contextual dense-list selection only.
+5. **Accent is a signal.** Violet identifies the principal action, current mode, actionable links, progress, sparse identity marks, and contextual dense-list selection only.
 6. **State axes stay independent.** Focus, selection, meaning, activity, and active-window context are not synonyms.
 7. **Meaning survives presentation loss.** Color, transparency, and motion reinforce meaning but never carry it alone.
 8. **Structure adapts, capability persists.** Width pressure changes region presentation, not available capability or in-progress state.
@@ -57,16 +57,16 @@ Token IDs are normative and are referenced with brace syntax (for example, `surf
 | `surface.chrome` | `#242628` | Sidebar, content/list region, and opaque chrome fallback |
 | `surface.panel` | `#2D3032` | Meaningful opaque grouped content |
 | `surface.raised` | `#3A3D40` | Strong hover or emphasized raised region |
-| `surface.selection-neutral` | `#394441` | Global-sidebar selection |
+| `surface.selection-neutral` | `#35343D` | Global-sidebar selection |
 | `surface.transient` | `#111415` at 96% | Transient overlays; resolves opaque with Reduce Transparency |
 | `text.primary` | `#F4F2ED` | Primary content and titles |
 | `text.secondary` | `#D0D1CC` | Supporting content |
 | `text.metadata` | `#A4A8A5` | Metadata and secondary labels |
 | `text.disabled` | `#7F8582` | Disabled or decorative text; never essential caption-only information |
-| `accent.base` | `#67D8C5` | Principal action and permitted Accent Budget roles |
-| `accent.hover` | `#80E1D0` | Hover for app-owned accented actions |
-| `accent.pressed` | `#4EBBA9` | Pressed app-owned accented actions |
-| `accent.on` | `#071513` | Content placed on an accent fill |
+| `accent.base` | `#B58AE8` | Principal action and permitted Accent Budget roles |
+| `accent.hover` | `#C9A5F2` | Hover for app-owned accented actions |
+| `accent.pressed` | `#9770C7` | Pressed app-owned accented actions |
+| `accent.on` | `#1C1526` | Content placed on an accent fill |
 | `status.success` | `#6BD18F` | Successful or complete meaning |
 | `status.attention` | `#EFBD61` | Attention or live meaning |
 | `status.destructive` | `#FF7C74` | Destructive action or error meaning |
@@ -127,11 +127,11 @@ Each mapping is implementation-independent. **System** means native behavior own
 | Page Header | Label stack in document view | app | None | Identifies current area/context without duplicating window title; normally scrolls |
 | Content Section | View group | app | None | Groups a coherent topic with semantic heading |
 | Section Header | Text/Label | app | Native table header | Names a section and optional local action |
-| Shell Region | `NSSplitViewItem` / split-view column | system | None | Flush, independently scrolling, resizable structure |
+| Shell Region | `NSSplitView` / split-view column | system | None | Flush, independently scrolling regions; the sidebar rail is fixed-width while content/list and detail can resize where supported |
 | Semantic Panel | Opaque grouped view | app | Native group box when semantically suitable | One meaningful group; no ordinary shadow |
 | Structural Divider | `NSSplitView` divider / separator | system | App one-point stroke | Quiet boundary without floating geometry |
 | Contextual Inspector | Inspector split item / inspector scene scaffolding | contextual | Popover only when narrow | Follows selection, is toggleable/resizable, remembers preference, has no-selection state |
-| Sidebar Item | Source-list row | system | App presentation around native row | Labeled top-level destination, native keyboard selection, neutral selection plus accent symbol |
+| Sidebar Item | Native icon `NSButton` / Button | system | None | One destination per button in the fixed icon rail; accessible name and tooltip, native Tab focus and activation, neutral selection plus accent symbol |
 | Location Label | Toolbar label | app | None | Concise current narrow-navigation location |
 | Segmented Mode Selector | `NSSegmentedControl` / Picker segmented style | system | None | Shows one current mode without impersonating tabs |
 | Collection Row | `NSTableCellView`, collection item, or List row | contextual | Custom composition around native selection | Full-row selection; independent trailing action/disclosure; arrow navigation and Return activation |
@@ -175,14 +175,14 @@ Graphite Focus uses one Adaptive Shell. Region order and keyboard reading order 
 
 | Region | Useful width | Ideal | Behavior |
 |---|---:|---:|---|
-| Global sidebar | 200–260 pt | 220 pt | Resizable/hideable; user preference preserved and safely clamped |
+| Global sidebar | 64 pt | 64 pt | Fixed-width icon rail; user-hideable and automatically collapsible without changing the visibility preference |
 | Content/list | 260–380 pt | 300 pt | Present only for selection-heavy workflows |
 | Detail canvas | 480 pt minimum beside regions | Fluid | Reading/form measures constrain only relevant content |
 | Contextual Inspector | 280–420 pt | 320 pt | Normally closed unless central; transient when narrow |
 
 The **Reference Canvas** is 1200×760 pt, the spacious validation width is 1440 pt, and the **Minimum Operable Window** is 720×520 pt. They are validation anchors, not fixed breakpoints. Adaptation is content-driven when useful widths cease to fit.
 
-The Region Collapse Order is mandatory: (1) hide or transiently present the inspector, (2) auto-collapse the sidebar, then (3) let content/list temporarily replace detail. Narrow Navigation MUST provide a native toolbar back affordance and concise Location Label. Selection, scroll position, and in-progress input MUST survive every transition. No capability may disappear, no bottom/mobile navigation may be introduced, and user-requested sidebar visibility persists whenever space permits.
+The fixed icon rail MUST provide accessible names and tooltips for every destination. Its native buttons use Tab focus and Space/Return activation; it does not implement arrow-key traversal or a resizable divider. The Region Collapse Order is mandatory: (1) hide or transiently present the inspector, (2) auto-collapse the sidebar, then (3) let content/list temporarily replace detail. Narrow Navigation MUST provide a native toolbar back affordance and concise Location Label. Selection, scroll position, and in-progress input MUST survive every transition. No capability may disappear, no bottom/mobile navigation may be introduced, and user-requested sidebar visibility persists whenever space permits.
 
 Shell Regions are flush and square, separated by Structural Strokes. They scroll independently. The toolbar remains fixed; Page Headers ordinarily scroll with detail. Pin only task-essential controls or headings, and avoid nested scrolling inside Semantic Panels. Operational canvases, tables, evidence streams, and timelines use available width. Forms align leading at `{measure.form}`; long-form prose aligns leading at `{measure.reading}`.
 
@@ -245,7 +245,7 @@ Recipes arrange shared components; they never redefine component identity, state
 
 ### Structured Workbench
 
-The default composition uses a persistent labeled global sidebar, Page Header, broad detail canvas, one Principal Action where applicable, restrained Semantic Panels for genuine groups, and Collection Rows for interactive summaries. Ordinary structure stays open and divider-led rather than becoming a card grid.
+The default composition uses a fixed-width icon rail with accessible destination names, Page Header, broad detail canvas, one Principal Action where applicable, restrained Semantic Panels for genuine groups, and Collection Rows for interactive summaries. Ordinary structure stays open and divider-led rather than becoming a card grid.
 
 ### Precision Ledger
 
@@ -311,7 +311,7 @@ Automated checks MUST reject:
 - Application Profiles with incompatible versions, forbidden override claims, unknown token references, or incomplete exceptions;
 - newly introduced literal visual values outside this contract or a profile's documented native-control exception.
 
-The repository validator documents its scan scope and native-control exception syntax. Structural Checks prove document integrity, not visual quality.
+`scripts/validate-graphite-focus-presentation.py` scans every active `Sources/Stillmatter/*.swift` file except the two shared presentation providers; its line-level checks reject direct NSColor/SwiftUI RGB and native font literals, SwiftUI fixed font sizes/spacing/radii, and numeric AppKit spacing/radii. A necessary native-control geometry or fixture literal requires an inline `// graphite-focus-native-exception: <specific reason>` on that line. Semantic status colors and provider values are defined only in the shared layer. This is a structural guard, not a Swift parser or exhaustive visual audit. Structural Checks prove document integrity, not visual quality.
 
 ### Experience Review
 

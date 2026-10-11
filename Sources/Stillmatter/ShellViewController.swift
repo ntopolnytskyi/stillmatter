@@ -3,13 +3,7 @@ import AppKit
 import StillmatterCore
 #endif
 
-final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSSplitViewDelegate, NSToolbarDelegate, NSSearchFieldDelegate, NSPopoverDelegate {
-    private enum SidebarWidth {
-        static let minimum: CGFloat = 140
-        static let preferred: CGFloat = 140
-        static let maximum: CGFloat = 140
-    }
-
+final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolbarDelegate, NSSearchFieldDelegate, NSPopoverDelegate {
     private let stateStore: ShellStateStore
     private let settingsStore: SettingsStore
     private let tasksInbox: TasksInbox?
@@ -36,9 +30,11 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
     private var contentScrollView: NSScrollView?
     private var meetingViewportHeight: NSLayoutConstraint?
     private var contentBottomConstraints: [(view: NSView, constraint: NSLayoutConstraint)] = []
-    private let sidebarOutlineView = NSOutlineView()
+    private let aboutButton = DoubleClickAboutButton(image: Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+        .flatMap(NSImage.init(contentsOf:)) ?? NSApp.applicationIconImage,
+        target: NSApp, action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+    private var navigationButtons: [ShellTab: NSButton] = [:]
     private let sidebarTabs: [ShellTab] = [.today, .recording, .meetings, .tasks, .projectsActivities, .reports, .askAI, .settings]
-    private let lifecycleNote = NSTextField(wrappingLabelWithString: "Closing the window keeps Stillmatter running in the menu bar. Use Quit to exit.")
     private let contentTitle = NSTextField(labelWithString: "")
     private let recordingBadge = GraphiteFocusStatusLabel()
     private let jobBadge = GraphiteFocusStatusLabel()
@@ -201,6 +197,11 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         super.viewDidAppear()
         installToolbarIfNeeded()
         prepareForWindowResize(to: view.bounds.width)
+        // The first layout can precede the window's restored size. Reconcile once it is attached.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.applyAdaptiveLayout(availableWidth: self.view.bounds.width)
+        }
     }
 
     override func viewDidLayout() {
@@ -220,7 +221,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         splitView.addArrangedSubview(sidebar)
         splitView.addArrangedSubview(workspace)
         sidebar.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        sidebar.widthAnchor.constraint(equalToConstant: SidebarWidth.preferred).isActive = true
+        sidebar.widthAnchor.constraint(equalToConstant: AdaptiveShellLayout.sidebarWidth).isActive = true
         let workspaceMinimum = workspace.widthAnchor.constraint(greaterThanOrEqualToConstant: 480)
         workspaceMinimum.priority = .defaultLow
         workspaceMinimum.isActive = true
@@ -239,40 +240,60 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         container.wantsLayer = true
         container.setAccessibilityIdentifier("global-sidebar")
 
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("navigation"))
-        column.title = "Stillmatter"
-        sidebarOutlineView.addTableColumn(column)
-        sidebarOutlineView.outlineTableColumn = column
-        sidebarOutlineView.headerView = nil
-        sidebarOutlineView.style = .sourceList
-        sidebarOutlineView.selectionHighlightStyle = .regular
-        sidebarOutlineView.rowSizeStyle = .default
-        sidebarOutlineView.dataSource = self
-        sidebarOutlineView.delegate = self
-        sidebarOutlineView.target = self
-        sidebarOutlineView.action = #selector(sidebarSelectionChanged(_:))
-        sidebarOutlineView.setAccessibilityLabel("Stillmatter areas")
+        let stack = FlippedNavigationStackView()
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = GraphiteFocusPresentation.Space.compact
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for (index, tab) in sidebarTabs.enumerated() {
+            let button = NSButton(image: NSImage(systemSymbolName: symbol(for: tab), accessibilityDescription: tab.rawValue) ?? NSImage(size: NSSize(width: 20, height: 20)), target: self, action: #selector(selectNavigationArea(_:)))
+            button.tag = index
+            button.isBordered = false
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.toolTip = tab.rawValue
+            button.setAccessibilityLabel(tab.rawValue)
+            button.setAccessibilityIdentifier("sidebar-\(tab.rawValue.lowercased().replacingOccurrences(of: " ", with: "-"))")
+            button.wantsLayer = true
+            button.layer?.cornerRadius = GraphiteFocusPresentation.Radius.control
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 44),
+                button.heightAnchor.constraint(equalToConstant: 44)
+            ])
+            stack.addArrangedSubview(button)
+            navigationButtons[tab] = button
+        }
+
+        aboutButton.isBordered = false
+        aboutButton.imagePosition = .imageOnly
+        aboutButton.imageScaling = .scaleProportionallyDown
+        aboutButton.toolTip = "About Stillmatter (double-click)"
+        aboutButton.setAccessibilityLabel("About Stillmatter")
+        aboutButton.setAccessibilityHelp("Double-click to open About Stillmatter. Use Space or Return with the keyboard.")
+        aboutButton.setAccessibilityIdentifier("sidebar-about")
+        aboutButton.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = NSScrollView()
-        scrollView.documentView = sidebarOutlineView
+        scrollView.documentView = stack
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        lifecycleNote.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(scrollView)
-        container.addSubview(lifecycleNote)
+        container.addSubview(aboutButton)
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: GraphiteFocusPresentation.Space.compact),
-            scrollView.bottomAnchor.constraint(equalTo: lifecycleNote.topAnchor, constant: -GraphiteFocusPresentation.Space.compact),
-            lifecycleNote.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GraphiteFocusPresentation.Space.panel),
-            lifecycleNote.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.panel),
-            lifecycleNote.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.panel)
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: aboutButton.topAnchor, constant: -GraphiteFocusPresentation.Space.compact),
+            stack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            aboutButton.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            aboutButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.dense),
+            aboutButton.widthAnchor.constraint(equalToConstant: 44),
+            aboutButton.heightAnchor.constraint(equalToConstant: 44)
         ])
-        sidebarOutlineView.reloadData()
         return container
     }
 
@@ -305,6 +326,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
 
     private func configureWorkspaceBrowserRegion() {
         contentListContainer.wantsLayer = true
+        contentListContainer.translatesAutoresizingMaskIntoConstraints = false
         contentListContainer.setAccessibilityIdentifier("content-list-region")
         let browsers = [activityManagementView.browserView, meetingManagementView.browserView]
         for browser in browsers {
@@ -344,86 +366,39 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
     }
 
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        if splitView === self.splitView && dividerIndex == 0 { return SidebarWidth.preferred }
-        if splitView === workspaceSplitView && dividerIndex == 0 && fixedListWidth?.isActive == true { return 320 }
+        if splitView === self.splitView && dividerIndex == 0 { return AdaptiveShellLayout.sidebarWidth }
+        if splitView === workspaceSplitView && dividerIndex == 0 && stateStore.state.selectedTab == .meetings { return 320 }
         return proposedMinimumPosition
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        if splitView === self.splitView && dividerIndex == 0 { return SidebarWidth.preferred }
-        if splitView === workspaceSplitView && dividerIndex == 0 && fixedListWidth?.isActive == true { return 320 }
+        if splitView === self.splitView && dividerIndex == 0 { return AdaptiveShellLayout.sidebarWidth }
+        if splitView === workspaceSplitView && dividerIndex == 0 && stateStore.state.selectedTab == .meetings { return 320 }
         return proposedMaximumPosition
     }
 
 
-    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        item == nil ? sidebarTabs.count : 0
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        sidebarTabs[index]
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        false
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, objectValueFor tableColumn: NSTableColumn?, byItem item: Any?) -> Any? {
-        (item as? ShellTab)?.rawValue
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        item is ShellTab
-    }
-
-    func outlineViewSelectionDidChange(_ notification: Notification) {
-        sidebarSelectionChanged(sidebarOutlineView)
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-        let row = GraphiteFocusSidebarRowView()
-        row.selectionColor = GraphiteFocusPresentation.Colors(environment: currentPresentationEnvironment).surfaceSelectionNeutral
-        return row
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
-        let identifier = NSUserInterfaceItemIdentifier("SidebarArea")
-        let cell = (outlineView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView) ?? NSTableCellView()
-        cell.identifier = identifier
-        let label = cell.textField ?? NSTextField(labelWithString: "")
-        if label.superview == nil {
-            label.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(label)
-            cell.textField = label
-            NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: GraphiteFocusPresentation.Space.primitive),
-                label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -GraphiteFocusPresentation.Space.primitive),
-                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
-            ])
+    private func symbol(for tab: ShellTab) -> String {
+        switch tab {
+        case .today: "clock"
+        case .recording: "record.circle"
+        case .meetings: "bubble.left.and.bubble.right"
+        case .tasks: "checkmark.square"
+        case .projectsActivities: "point.3.connected.trianglepath.dotted"
+        case .reports: "chart.bar.doc.horizontal"
+        case .askAI: "sparkles"
+        case .settings: "slider.horizontal.3"
         }
-        if let tab = item as? ShellTab {
-            let colors = GraphiteFocusPresentation.Colors(environment: currentPresentationEnvironment)
-            let font = GraphiteFocusPresentation.Typography.control
-            if tab == stateStore.state.selectedTab {
-                let value = NSMutableAttributedString(
-                    string: "●  ",
-                    attributes: [.font: font, .foregroundColor: colors.accent]
-                )
-                value.append(NSAttributedString(
-                    string: tab.rawValue,
-                    attributes: [.font: font, .foregroundColor: colors.textPrimary]
-                ))
-                label.attributedStringValue = value
-            } else {
-                label.attributedStringValue = NSAttributedString(
-                    string: "    \(tab.rawValue)",
-                    attributes: [.font: font, .foregroundColor: colors.textPrimary]
-                )
-            }
-            cell.setAccessibilityLabel(tab.rawValue)
-            cell.setAccessibilityIdentifier("sidebar-\(tab.rawValue.lowercased().replacingOccurrences(of: " ", with: "-"))")
+    }
+
+    private func updateNavigationSelection() {
+        let colors = GraphiteFocusPresentation.Colors(environment: currentPresentationEnvironment)
+        for (tab, button) in navigationButtons {
+            let selected = tab == stateStore.state.selectedTab
+            button.contentTintColor = selected ? colors.accent : colors.textSecondary
+            button.layer?.backgroundColor = selected ? colors.surfaceSelectionNeutral.cgColor : colors.surfaceChrome.withAlphaComponent(0).cgColor
+            button.setAccessibilityValue(selected ? "Selected" : "")
         }
-        return cell
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -566,7 +541,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
             (searchResultsView, searchResultsView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large))
         ]
         contentBottomConstraints = bottomConstraints
-        meetingViewportHeight = meetingManagementView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor, constant: -92)
+        meetingViewportHeight = meetingManagementView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor, constant: -GraphiteFocusPresentation.Space.panel * 2)
 
         NSLayoutConstraint.activate([
             contentTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GraphiteFocusPresentation.Space.large),
@@ -579,7 +554,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
             captureRecordingView.topAnchor.constraint(equalTo: contentTitle.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
             meetingManagementView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
             meetingManagementView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
-            meetingManagementView.topAnchor.constraint(equalTo: contentTitle.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
+            meetingManagementView.topAnchor.constraint(equalTo: container.topAnchor, constant: GraphiteFocusPresentation.Space.panel),
             proposalReviewView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
             proposalReviewView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
             proposalReviewView.topAnchor.constraint(equalTo: todayWorkbenchView.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
@@ -642,8 +617,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
             region.layer?.borderColor = colors.structuralStroke.cgColor
         }
 
-        lifecycleNote.font = GraphiteFocusPresentation.Typography.metadata
-        lifecycleNote.textColor = colors.textMetadata
+        updateNavigationSelection()
         contentTitle.font = GraphiteFocusPresentation.Typography.pageTitle
         contentTitle.textColor = colors.textPrimary
         let captureSnapshot = captureServiceProvider()?.snapshot
@@ -728,12 +702,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         toolbarAreaLabel.setAccessibilityValue(state.selectedTab.rawValue)
         applyAdaptiveLayout()
 
-        sidebarOutlineView.reloadData()
-        if let row = (0..<sidebarOutlineView.numberOfRows).first(where: {
-            (sidebarOutlineView.item(atRow: $0) as? ShellTab) == state.selectedTab
-        }) {
-            sidebarOutlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        }
+        updateNavigationSelection()
     }
 
     @discardableResult
@@ -875,7 +844,9 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
     }
 
     private func applyAdaptiveLayout(availableWidth proposedWidth: CGFloat? = nil) {
-        let width = proposedWidth ?? requestedWindowWidth ?? view.bounds.width
+        // Use the actual settled width after layout; a remembered resize proposal can be
+        // stale after programmatic window sizing and hide the Meetings browser indefinitely.
+        let width = proposedWidth ?? view.bounds.width
         guard width > 0 else { return }
         isApplyingAdaptiveLayout = true
         defer { isApplyingAdaptiveLayout = false }
@@ -893,8 +864,8 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
             desired: layout.showsSidebar ? [sidebarContainer, workspaceContainer] : [workspaceContainer]
         )
         if layout.showsSidebar
-            && (!sidebarWasVisible || !(SidebarWidth.minimum...SidebarWidth.maximum).contains(sidebarContainer.frame.width)) {
-            splitView.setPosition(SidebarWidth.preferred, ofDividerAt: 0)
+            && (!sidebarWasVisible || abs(sidebarContainer.frame.width - AdaptiveShellLayout.sidebarWidth) >= 1) {
+            splitView.setPosition(AdaptiveShellLayout.sidebarWidth, ofDividerAt: 0)
         }
 
         var workspaceRegions: [NSView] = []
@@ -911,7 +882,12 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         if layout.detailMode != .listAndDetail { fixedListWidth?.isActive = false }
         synchronizeArrangedSubviews(of: workspaceSplitView, desired: workspaceRegions)
         if layout.detailMode == .listAndDetail {
-            fixedListWidth?.isActive = stateStore.state.selectedTab == .meetings && !usesAdaptiveFixtureRegions
+            // NSSplitView owns the browser width; a competing width constraint loses to
+            // its zero-width autoresizing mask after the detail-only transition.
+            fixedListWidth?.isActive = false
+            if stateStore.state.selectedTab == .meetings && workspaceSplitView.bounds.width >= 800 && contentListContainer.frame.width < 260 {
+                workspaceSplitView.setPosition(320, ofDividerAt: 0)
+            }
         }
 
         narrowBackButton.isHidden = !(layout.isNarrowNavigation && showingNarrowDetail)
@@ -979,11 +955,11 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         view.layoutSubtreeIfNeeded()
 
         precondition(
-            (SidebarWidth.minimum...SidebarWidth.maximum).contains(sidebarContainer.frame.width),
-            "Sidebar must start within its useful width range"
+            abs(sidebarContainer.frame.width - AdaptiveShellLayout.sidebarWidth) < 1,
+            "Icon rail must start at its fixed width"
         )
         let fixedSidebarWidth = sidebarContainer.frame.width
-        splitView.setPosition(240, ofDividerAt: 0)
+        splitView.setPosition(AdaptiveShellLayout.sidebarWidth * 2, ofDividerAt: 0)
         view.layoutSubtreeIfNeeded()
         precondition(abs(sidebarContainer.frame.width - fixedSidebarWidth) < 1, "Sidebar divider must stay fixed")
         sidebarPreferredVisible = false
@@ -997,8 +973,14 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         )
         precondition(sidebarContainer.frame.height > 0, "Sidebar must have a visible non-zero frame")
         precondition(splitView.arrangedSubviews.count == 2 && splitView.arrangedSubviews[1].frame.width > 0, "Detail region must have a visible non-zero frame")
-        precondition(sidebarTabs.count == 8 && sidebarOutlineView.numberOfRows == 8, "Sidebar must show Recording and the other seven areas without group headings")
-        precondition(sidebarOutlineView.selectedRow >= 0, "Sidebar selection must follow shell state")
+        precondition(sidebarTabs.count == 8 && navigationButtons.count == 8, "Navigation rail must show all eight areas")
+        precondition(aboutButton.frame.minY >= 0 && aboutButton.frame.minY <= GraphiteFocusPresentation.Space.panel,
+                     "About icon must remain at the bottom of the rail")
+        if let todayButton = navigationButtons[.today] {
+            let topInset = sidebarContainer.bounds.maxY - todayButton.convert(todayButton.bounds, to: sidebarContainer).maxY
+            precondition((0..<140).contains(topInset), "Navigation icons must start at the top of the rail")
+        }
+        precondition(navigationButtons[stateStore.state.selectedTab]?.accessibilityValue() as? String == "Selected", "Navigation selection must follow shell state")
         precondition(contentTitle.stringValue == stateStore.state.selectedTab.rawValue, "Page Header must follow shell state")
         precondition(toolbarAreaLabel.stringValue == stateStore.state.selectedTab.rawValue, "Toolbar location must follow shell state")
 
@@ -1054,7 +1036,11 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         precondition(!todayWorkbenchView.isHidden, "Today must use the Structured Workbench")
         stateStore.state.select(.meetings)
         view.layoutSubtreeIfNeeded()
+        meetingManagementView.validateCaptionLayoutFixture()
         meetingManagementView.validateAudioTransportFixture()
+        let meetingTop = meetingManagementView.convert(NSPoint(x: 0, y: meetingManagementView.bounds.height), to: view).y
+        let detailTop = detailContainer.convert(.zero, to: view).y
+        precondition(abs(meetingTop - detailTop) < 65, "Meeting caption must not sit below a blank shell header")
         captureRecordingView.validateVisibleLayout()
         stateStore.state.select(.projectsActivities)
         view.layoutSubtreeIfNeeded()
@@ -1086,7 +1072,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         window.layoutIfNeeded()
         view.layoutSubtreeIfNeeded()
         applyAdaptiveLayout()
-        precondition(lastAdaptiveLayout?.showsInspector == false, "Inspector must collapse first at reference width")
+        precondition(lastAdaptiveLayout?.showsInspector == true, "Narrow rail must leave room for inspector at reference width")
         precondition(lastAdaptiveLayout?.showsSidebar == true, "Sidebar must remain after inspector collapse")
         precondition(lastAdaptiveLayout?.detailMode == .listAndDetail, "Reference layout must retain list/detail continuity")
 
@@ -1096,7 +1082,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         view.layoutSubtreeIfNeeded()
         applyAdaptiveLayout()
         precondition(abs(view.bounds.width - 720) < 2 && abs(view.bounds.height - 520) < 2, "The shell must reach the 720×520 Minimum Operable Window")
-        precondition(lastAdaptiveLayout?.showsSidebar == false, "Sidebar must auto-collapse under width pressure")
+        precondition(lastAdaptiveLayout?.showsSidebar == true, "Navigation rail must remain available at minimum width")
         precondition(lastAdaptiveLayout?.detailMode == .listOnly, "Narrow layout must replace detail with the content list")
         focusAreaSearch(nil)
         precondition(compactSearchPopover.isShown, "Area Search must remain reachable in the compact toolbar")
@@ -1260,11 +1246,8 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         return formatter
     }()
 
-    @objc private func sidebarSelectionChanged(_ sender: NSOutlineView) {
-        guard sender.selectedRow >= 0,
-              let tab = sender.item(atRow: sender.selectedRow) as? ShellTab,
-              tab != stateStore.state.selectedTab else { return }
-        stateStore.state.select(tab)
+    @objc private func selectNavigationArea(_ sender: NSButton) {
+        stateStore.state.select(sidebarTabs[sender.tag])
     }
 
     @objc func focusAreaSearch(_ sender: Any?) {
@@ -1326,7 +1309,7 @@ final class ShellViewController: NSViewController, NSOutlineViewDataSource, NSOu
         transferFocusToResultsOnPopoverClose = false
         if compactSearchPopover.isShown { compactSearchPopover.close() }
         render()
-        view.window?.makeFirstResponder(sidebarOutlineView)
+        view.window?.makeFirstResponder(navigationButtons[stateStore.state.selectedTab])
     }
 
     @objc func toggleSidebar(_ sender: Any?) {
@@ -1360,13 +1343,16 @@ private final class ShellDocumentView: NSView {
     override var isFlipped: Bool { true }
 }
 
-private final class GraphiteFocusSidebarRowView: NSTableRowView {
-    var selectionColor: NSColor?
+private final class FlippedNavigationStackView: NSStackView {
+    override var isFlipped: Bool { true }
+}
 
-    override func drawSelection(in dirtyRect: NSRect) {
-        guard selectionHighlightStyle != .none, let selectionColor = selectionColor else { return }
-        selectionColor.setFill()
-        bounds.fill()
+/// A pointer click does not navigate; a double-click opens the native About panel.
+/// Native keyboard and accessibility activation still call performClick(_:) once.
+private final class DoubleClickAboutButton: NSButton {
+    override func mouseDown(with event: NSEvent) {
+        guard event.clickCount >= 2 else { return }
+        super.mouseDown(with: event)
     }
 }
 

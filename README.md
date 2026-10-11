@@ -4,7 +4,7 @@ Stillmatter is a local-first native macOS work log/worktable. This repository cu
 
 ## License
 
-Stillmatter includes a modified echo-cancellation port and is intended for distribution under the GNU General Public License version 3. **The repository currently lacks `LICENSE` and `THIRD_PARTY_NOTICES.md`.** Local development builds warn and omit them; do not distribute an app bundle until the correct license text and third-party attributions have been restored and reviewed. `REQUIRE_LEGAL_FILES=1 ./scripts/build-app.sh` enforces this before packaging.
+Stillmatter includes a modified echo-cancellation port and is intended for distribution under the [GNU General Public License version 3](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md). **The port's upstream attribution is still unresolved:** development builds warn, and `REQUIRE_LEGAL_FILES=1 ./scripts/build-app.sh` refuses packaging until its provenance and notices have been verified. Do not distribute the app yet.
 
 ## Build a launchable app bundle
 
@@ -21,7 +21,7 @@ The shell includes:
 - Today worktable with recording/job status, categorized Inbox, Daily Brief entry, top canonical Queue items, upcoming-meeting context, and active activities
 - focus-triggered Daily Brief generation from configurable Calendar sources with stable planning sections and no Todo Item mutations
 - scheduled editable Weekly Report drafts with working-day deferral, meeting-safe Accept / Remind prompts, and transactional acceptance that moves done/canceled todos into the report
-- native source-list navigation grouped into Work, Tools, and System for Today, Meetings, Tasks, Activities, Reports, Ask AI, and Settings
+- fixed 64 pt icon rail with eight accessible native navigation buttons: Today, Recording, Meetings, Tasks, Projects / Activities, Reports, Ask AI, and Settings; hideable without resizing; bottom app icon opens About on double-click (or keyboard activation)
 - Meetings capture UI with explicit lifecycle state, elapsed time, manual start/stop, live notes/action checkboxes, immediate doorway-note creation, and placeholder processing Jobs
 - native Teams detection with Accessibility hang-up evidence, optional microphone corroboration, and debounced end detection; configurable Ask / Automatic / Manual capture policy, with manual override and visible decision diagnostics
 - fail-closed Capture Preflight for microphone permission/device readiness, microphone-only system-audio degradation, and writable recording-media capacity, with actionable Settings guidance

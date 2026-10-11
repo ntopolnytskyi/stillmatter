@@ -183,13 +183,13 @@ private final class AttentionNoticeWindowController: NSObject {
         GraphiteFocusPresentation.applyDarkAppearance(to: content)
         [label, open, later].forEach(content.addSubview)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            label.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(lessThanOrEqualTo: open.topAnchor, constant: -8),
-            open.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            open.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
-            later.trailingAnchor.constraint(equalTo: open.leadingAnchor, constant: -8),
+            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: GraphiteFocusPresentation.Space.panel),
+            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -GraphiteFocusPresentation.Space.panel),
+            label.topAnchor.constraint(equalTo: content.topAnchor, constant: GraphiteFocusPresentation.Space.dense),
+            label.bottomAnchor.constraint(lessThanOrEqualTo: open.topAnchor, constant: -GraphiteFocusPresentation.Space.compact),
+            open.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -GraphiteFocusPresentation.Space.panel),
+            open.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -GraphiteFocusPresentation.Space.dense),
+            later.trailingAnchor.constraint(equalTo: open.leadingAnchor, constant: -GraphiteFocusPresentation.Space.compact),
             later.bottomAnchor.constraint(equalTo: open.bottomAnchor)
         ])
         let visible = parent.screen?.visibleFrame ?? parent.frame

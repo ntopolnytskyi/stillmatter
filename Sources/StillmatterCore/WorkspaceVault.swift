@@ -351,6 +351,23 @@ public final class WorkspaceVault {
         return WorkspaceSnapshot(url: snapshotURL, capturedRelativePaths: captured)
     }
 
+    /// Move a validated Meeting directory to macOS Trash instead of deleting its evidence.
+    public func trashMeeting(relativePath: String, expectedVersion: WorkspaceFileVersion) throws {
+        let doorway = try workspaceURL(for: relativePath)
+        guard doorway.lastPathComponent == "meeting.md",
+              (relativePath as NSString).pathComponents.first == "Meetings",
+              try versionOfMarkdown(relativePath: relativePath) == expectedVersion else {
+            throw WorkspaceVaultError.conflict(relativePath: relativePath, expected: expectedVersion,
+                actual: try versionOfMarkdown(relativePath: relativePath))
+        }
+        let directory = doorway.deletingLastPathComponent()
+        guard (try? fileManager.destinationOfSymbolicLink(atPath: directory.path)) == nil else {
+            throw WorkspaceVaultError.pathEscapesWorkspace(relativePath)
+        }
+        var trashed: NSURL?
+        try fileManager.trashItem(at: directory, resultingItemURL: &trashed)
+    }
+
     private func workspaceURL(for relativePath: String) throws -> URL {
         let candidate = workspaceRootURL.appendingPathComponent(relativePath).standardizedFileURL
         let rootPath = workspaceRootURL.path.hasSuffix("/") ? workspaceRootURL.path : workspaceRootURL.path + "/"

@@ -199,6 +199,7 @@ public final class TasksInbox {
         sourceRef: String,
         suppressionKey: String? = nil
     ) throws -> Bool {
+        let savedTitle = try proposalDraft(id: id)?.title
         lock.lock()
         defer { lock.unlock() }
         let key = suppressionKey ?? id
@@ -219,13 +220,13 @@ public final class TasksInbox {
                     updated_at = excluded.updated_at
                 """, bindings: [
                     .text(id), .text(ProposalReviewState.pending.rawValue), .text(key),
-                    .text(sourceRef), .text(title), .text(now())
+                    .text(sourceRef), .text(savedTitle ?? title), .text(now())
                 ])
             try saveUnlocked(InboxItem(
                 id: id,
                 category: .review,
                 kind: .proposal,
-                title: title,
+                title: savedTitle ?? title,
                 sourceRef: sourceRef,
                 details: nil,
                 createdAt: now()
@@ -301,11 +302,32 @@ public final class TasksInbox {
         return state
     }
 
+    /// User-authored draft remains separate from generated evidence and review state.
+    public func saveProposalDraft(id: String, title: String, comment: String) throws {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, try pendingProposal(id: id) != nil else { throw ActionItemProposalReviewError.proposalNotPending(id) }
+        lock.lock()
+        defer { lock.unlock() }
+        try database.transaction {
+            try database.run("INSERT INTO proposal_edits (proposal_id, title, comment) VALUES (?, ?, ?) ON CONFLICT(proposal_id) DO UPDATE SET title = excluded.title, comment = excluded.comment",
+                bindings: [.text(id), .text(title), .text(comment)])
+            try database.run("UPDATE inbox_items SET title = ?, updated_at = ? WHERE id = ?", bindings: [.text(title), .text(now()), .text(id)])
+        }
+    }
+
+    public func proposalDraft(id: String) throws -> (title: String, comment: String)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return try database.query("SELECT title, comment FROM proposal_edits WHERE proposal_id = ?", bindings: [.text(id)]) { statement in
+            (SQLiteDatabase.text(statement, column: 0), SQLiteDatabase.text(statement, column: 1))
+        }.first
+    }
+
     public func pendingProposal(id: String) throws -> ActionItemProposal? {
         lock.lock()
         defer { lock.unlock() }
         return try database.query(
-            "SELECT r.proposal_id, r.title, r.source_ref, i.details FROM proposal_reviews r LEFT JOIN inbox_items i ON i.id = r.proposal_id WHERE r.proposal_id = ? AND r.state = ?",
+            "SELECT r.proposal_id, COALESCE(e.title, r.title), r.source_ref, i.details FROM proposal_reviews r LEFT JOIN inbox_items i ON i.id = r.proposal_id LEFT JOIN proposal_edits e ON e.proposal_id = r.proposal_id WHERE r.proposal_id = ? AND r.state = ?",
             bindings: [.text(id), .text(ProposalReviewState.pending.rawValue)]
         ) { statement in
             ActionItemProposal(
@@ -389,6 +411,7 @@ public final class TasksInbox {
                 )
                 """)
             try database.run("CREATE INDEX IF NOT EXISTS inbox_items_category_index ON inbox_items (category, created_at)")
+            try database.run("CREATE TABLE IF NOT EXISTS proposal_edits (proposal_id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, comment TEXT NOT NULL)")
             try database.run("""
                 CREATE TABLE IF NOT EXISTS dismissed_proposals (
                     suppression_key TEXT PRIMARY KEY NOT NULL,

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Central semantic presentation roles for the Graphite Focus contract.
 /// Feature views consume these roles instead of choosing visual literals.
@@ -56,6 +57,7 @@ enum GraphiteFocusPresentation {
         static let sectionHeading = NSFont.systemFont(ofSize: 16, weight: .semibold)
         static let body = NSFont.systemFont(ofSize: 14)
         static let rowTitle = NSFont.systemFont(ofSize: 14, weight: .medium)
+        static let activeTranscriptSegment = NSFont.boldSystemFont(ofSize: 14)
         static let control = NSFont.systemFont(ofSize: 13, weight: .medium)
         static let metadata = NSFont.systemFont(ofSize: 12)
         static let caption = NSFont.systemFont(ofSize: 10, weight: .semibold)
@@ -90,7 +92,7 @@ enum GraphiteFocusPresentation {
             surfacePanel = Self.color(0x2D3032)
             surfaceRaised = Self.color(0x3A3D40)
             surfaceSelectionNeutral = Self.strengthen(
-                Self.color(0x394441),
+                Self.color(0x35343D),
                 by: 0.08,
                 when: environment.increasedContrast
             )
@@ -114,10 +116,10 @@ enum GraphiteFocusPresentation {
                 when: environment.increasedContrast
             )
 
-            accent = Self.color(0x67D8C5)
-            accentHover = Self.color(0x80E1D0)
-            accentPressed = Self.color(0x4EBBA9)
-            accentOn = Self.color(0x071513)
+            accent = Self.color(0xB58AE8)
+            accentHover = Self.color(0xC9A5F2)
+            accentPressed = Self.color(0x9770C7)
+            accentOn = Self.color(0x1C1526)
             success = Self.color(0x6BD18F)
             attention = Self.color(0xEFBD61)
             destructive = Self.color(0xFF7C74)
@@ -139,6 +141,11 @@ enum GraphiteFocusPresentation {
             let strengthened = color.blended(withFraction: fraction, of: .white) ?? color
             return strengthened.withAlphaComponent(color.alphaComponent)
         }
+    }
+
+    /// SwiftUI and AppKit resolve the same roles, including accessibility variants.
+    static func swiftUIColors(window: NSWindow? = nil) -> Colors {
+        Colors(environment: .system(window: window))
     }
 
     static func applyDarkAppearance(to view: NSView) {

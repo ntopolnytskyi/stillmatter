@@ -2,7 +2,7 @@
 profile_schema: graphite-focus-application-profile/v1
 name: Stillmatter
 contract: ./DESIGN.md
-compatible_contract: ^1.0.0
+compatible_contract: ^2.0.0
 platform: AppKit macOS 13+
 status: canonical
 ---
@@ -17,15 +17,7 @@ Stillmatter intentionally adopts Graphite Focus's dark-only appearance. This is 
 
 ## Information Architecture
 
-The global sidebar uses labeled native source-list destinations in these groups:
-
-| Group | Destinations | Default |
-|---|---|---|
-| Work | Today; Meetings; Tasks; Projects / Activities; Reports | Today |
-| Tools | Ask AI | — |
-| System | Settings | — |
-
-The sidebar has at most two hierarchy levels, retains native keyboard navigation, and uses neutral selection plus one accent symbol. Search is Area Search in the Window Toolbar, scoped to the current destination by default. Settings, search, and relevant frequent actions remain available through menus when toolbar or sidebar chrome is hidden.
+The global navigation is a fixed-width 64 pt icon rail containing eight native `NSButton`s, ordered Today (default), Recording, Meetings, Tasks, Projects / Activities, Reports, Ask AI, Settings. It is flat, not visually grouped or resizable. Each 44 pt icon button has an accessible name and tooltip, retains native Tab focus and Space/Return activation, and uses a neutral selection surface with one violet symbol. There is no arrow-key traversal. A separate app icon stays anchored at the bottom, outside the scrolling destinations: a pointer double-click opens the native About window; keyboard/VoiceOver activation opens it once. About shows the bundled current version and creator/copyright notice, and is also available from the app menu. A single pointer click does nothing and does not change the selected destination. Search is Area Search in the Window Toolbar, scoped to the current destination by default. Settings, search, and relevant frequent actions remain available through menus when toolbar or sidebar chrome is hidden.
 
 ## AppKit Native Mappings
 
@@ -33,8 +25,9 @@ These mappings specialize contract roles; all unlisted roles use the contract ma
 
 | Product role | Graphite Focus role | AppKit primitive | Ownership | Required behavior |
 |---|---|---|---|---|
-| Main window navigation | Shell Region | `NSSplitView` regions | system | Resizable 200–260 pt sidebar, resizable list/detail regions, independent scrolling, native collapse |
-| Global destinations | Sidebar Item | source-list `NSOutlineView`/`NSTableView` | system | Grouped Work/Tools/System labels, arrow navigation, preserved selection |
+| Main window navigation | Shell Region | `NSSplitView` regions | system | Fixed 64 pt icon rail, hideable at width pressure; resizable activity list and detail regions, independent scrolling |
+| Global destinations | Sidebar Item | native `NSButton` icon rail | system | Eight VoiceOver-labeled buttons, tooltips, Tab navigation and activation, preserved selection |
+| About icon | Icon Button | native `NSButton` and standard About panel | system | Bottom-anchored outside navigation scroll; pointer double-click or keyboard/VoiceOver activation; app-menu About remains available |
 | Global commands | Window Toolbar | `NSToolbar` and main-menu commands | system | Search, compact recording/Job status, navigation, and few frequent actions |
 | Area Search | Search Field; Precision Ledger | `NSSearchField` plus table/list results | contextual | Visible current scope, query, kind filter, selection/preview or owning-area navigation |
 | Today summary | Structured Workbench | AppKit document view and native collections | app | Semantic sections and rows; no formatted aggregate-text fallback |
@@ -93,9 +86,9 @@ Presentation MUST preserve these distinctions:
 
 ## Adaptive Shell Specialization
 
-Stillmatter uses the contract Region Collapse Order unchanged. The sidebar is natively resizable from 200–260 pt so labels and supporting text remain visible; users may also show or hide it. Selection browser width is 260–380 pt, optional inspector width is 280–420 pt, and side-by-side detail minimum is 480 pt. Validate at 1200×760, 720×520, and 1440 pt width.
+Stillmatter uses the contract Region Collapse Order unchanged. The fixed 64 pt icon rail remains visible at 720 pt when the list replaces detail, unless the user hides it; it collapses only if even the rail and useful content cannot fit. Its divider cannot change its width. The Meetings browser currently initializes at 320 pt and clamps its divider to 320 pt; the Activities browser remains resizable. The optional inspector is a layout fixture, not a shipped feature. Validate at 1200×760, 720×520, and 1440 pt width.
 
-At narrow width, native back navigation and the Location Label preserve list/detail continuity. Sidebar visibility and region widths are remembered per window and clamped safely. A simple screen remains a single canvas rather than keeping an empty middle column. An inspector is added only when context genuinely follows selection and is useful independently.
+At narrow width, the toolbar Back button and Location Label preserve list/detail continuity. Sidebar visibility is remembered in user defaults (not per-window); list widths are not persisted. Existing selection and input remain in the retained views across region changes. A simple screen remains a single canvas rather than keeping an empty middle column. An inspector is added only when context genuinely follows selection and is useful independently.
 
 ## Accessibility and State Specialization
 
@@ -111,7 +104,7 @@ At narrow width, native back navigation and the Location Label preserve list/det
 
 ## Token Specializations
 
-Stillmatter introduces no semantic-token value override. It consumes Graphite Focus roles including `{surface.base}`, `{surface.chrome}`, `{surface.panel}`, `{text.primary}`, `{text.secondary}`, `{accent.base}`, `{status.success}`, `{status.attention}`, `{status.destructive}`, and `{status.informational}`. Native AppKit control geometry and system focus presentation remain documented contract-level exceptions, not new literals.
+Stillmatter introduces one product typography specialization: the active Transcript segment uses a 14 pt bold system font to mark playback position without color alone (`Typography.activeTranscriptSegment`). It introduces no semantic-token value override. It consumes Graphite Focus roles including `{surface.base}`, `{surface.chrome}`, `{surface.panel}`, `{text.primary}`, `{text.secondary}`, `{accent.base}`, `{status.success}`, `{status.attention}`, `{status.destructive}`, and `{status.informational}`. Native AppKit control geometry and system focus presentation remain documented contract-level exceptions, not new literals.
 
 ## Exceptions
 

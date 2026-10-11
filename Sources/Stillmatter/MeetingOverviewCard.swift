@@ -11,9 +11,9 @@ struct MeetingOverviewCard: View {
     let copy: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 8) {
-                Text(title).font(.system(size: 19, weight: .semibold))
+        VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.panel) {
+            HStack(alignment: .center, spacing: GraphiteFocusPresentation.Space.compact) {
+                Text(title).font(GraphiteFocusSwiftUI.sectionHeading)
                 Spacer()
                 Button("Expand ↗", action: expand).disabled(!canEdit)
                 Button("Edit", action: edit).disabled(!canEdit)
@@ -21,16 +21,12 @@ struct MeetingOverviewCard: View {
             }
             .buttonStyle(.bordered)
             Text(content.isEmpty ? unavailable : content)
-                .font(.system(size: 15))
-                .foregroundStyle(content.isEmpty ? .secondary : .primary)
+                .font(GraphiteFocusSwiftUI.body)
+                .foregroundStyle(content.isEmpty ? GraphiteFocusSwiftUI.secondary : GraphiteFocusSwiftUI.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(red: 0.11, green: 0.17, blue: 0.19))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.13)))
+        .graphitePanel()
     }
 }

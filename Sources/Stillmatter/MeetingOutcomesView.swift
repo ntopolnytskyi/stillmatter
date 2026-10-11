@@ -20,48 +20,94 @@ struct MeetingOutcomesView: View {
     let copy: (String) -> Void
     let edit: () -> Void
     let seek: (String, Double) -> Void
+    let draft: (String) -> (title: String, comment: String)?
+    let save: (String, String, String) throws -> Void
+    let review: (String, Bool) throws -> Void
+    @State private var active: MeetingOutcomeRow?
+    @State private var reviewing = false
+    @State private var title = ""
+    @State private var comment = ""
+    @State private var error = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            if groups.isEmpty {
-                Text("No structured cited outcomes available.").foregroundStyle(.secondary)
-            }
+        VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.dense) {
+            if groups.isEmpty { Text("No structured cited outcomes available.").foregroundStyle(GraphiteFocusSwiftUI.secondary) }
             ForEach(groups) { group in
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.flush) {
                     HStack {
-                        Text(group.title).font(.system(size: 18, weight: .semibold))
+                        Text(group.title).font(GraphiteFocusSwiftUI.sectionHeading)
                         Spacer()
-                        Text(group.note).font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text(group.note).font(GraphiteFocusSwiftUI.metadataFont).foregroundStyle(GraphiteFocusSwiftUI.metadata)
                     }
                     ForEach(group.rows) { row in
-                        HStack(alignment: .top, spacing: 16) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(row.text).font(.system(size: 14, weight: .semibold))
+                        HStack(alignment: .top, spacing: GraphiteFocusPresentation.Space.dense) {
+                            VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.primitive) {
+                                Text(row.text).font(GraphiteFocusSwiftUI.rowTitle)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                HStack(spacing: 3) {
-                                    if !row.detail.isEmpty {
-                                        Text(row.detail).foregroundStyle(.secondary)
-                                    }
+                                HStack(spacing: GraphiteFocusPresentation.Space.primitive) {
+                                    Text(row.detail.isEmpty ? "Generated from meeting" : "Generated from meeting · \(row.detail)")
+                                        .foregroundStyle(GraphiteFocusSwiftUI.secondary)
                                     ForEach(Array(row.citations.enumerated()), id: \.offset) { _, citation in
                                         if let seconds = citation.seconds {
-                                            Button("↗ \(citation.label) source") { seek(citation.segmentID, seconds) }
-                                                .buttonStyle(.plain).foregroundStyle(.blue)
-                                        } else {
-                                            Text("Source · seek unavailable").foregroundStyle(.secondary)
-                                        }
+                                            Button("↗ source \(citation.label)") { seek(citation.segmentID, seconds) }
+                                                .buttonStyle(.borderless).foregroundStyle(GraphiteFocusSwiftUI.accent)
+                                        } else { Text("Source · seek unavailable").foregroundStyle(GraphiteFocusSwiftUI.metadata) }
                                     }
-                                }.font(.system(size: 12))
+                                }.font(GraphiteFocusSwiftUI.metadataFont)
                             }
-                            Button("Copy") { copy(row.text) }
-                            Button("Edit", action: edit).disabled(!canEdit)
+                            if group.id == "mine" {
+                                Button("Edit") { open(row, reviewing: false) }.disabled(row.detail != "pending")
+                                Button("Review") { open(row, reviewing: true) }.disabled(row.detail != "pending")
+                            } else {
+                                Button("Copy") { copy(row.text) }
+                            }
                         }
-                        .buttonStyle(.bordered)
-                        .padding(.vertical, 14)
+                        .buttonStyle(.bordered).padding(.vertical, GraphiteFocusPresentation.Space.dense)
                         Divider()
                     }
                 }
+                .graphitePanel()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(item: $active) { row in
+            VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.dense) {
+                Text(reviewing ? "Review my action" : "Edit my action").font(GraphiteFocusSwiftUI.sectionHeading)
+                Text(reviewing ? "Accept creates a Todo Item. Decline dismisses this proposal." : "Save updates only the proposal; it does not accept or create a Todo Item.")
+                    .font(GraphiteFocusSwiftUI.metadataFont).foregroundStyle(GraphiteFocusSwiftUI.secondary)
+                Text("Provenance: Generated from meeting · \(row.detail)").font(GraphiteFocusSwiftUI.metadataFont)
+                Text("Action item text")
+                TextEditor(text: $title).frame(minHeight: 76) // graphite-focus-native-exception: minimum native multiline editor height
+                Text("Comment")
+                TextEditor(text: $comment).frame(minHeight: 56) // graphite-focus-native-exception: minimum native multiline editor height
+                if !error.isEmpty { Text("Error: \(error)").foregroundStyle(Color(nsColor: GraphiteFocusSwiftUI.colors.destructive)) }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { active = nil }
+                    if reviewing {
+                        Button("Accept") { commit(row, accept: true) }.disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("Decline") { commit(row, accept: false) }
+                    } else {
+                        Button("Save") { commit(row, accept: nil) }.disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }.padding(GraphiteFocusPresentation.Space.page).frame(minWidth: 480) // graphite-focus-native-exception: sheet's minimum readable editor width
+        }
+    }
+
+    private func open(_ row: MeetingOutcomeRow, reviewing: Bool) {
+        self.reviewing = reviewing
+        title = draft(row.id)?.title ?? row.text
+        comment = draft(row.id)?.comment ?? ""
+        error = ""
+        active = row
+    }
+
+    private func commit(_ row: MeetingOutcomeRow, accept: Bool?) {
+        do {
+            if accept == nil || accept == true { try save(row.id, title, comment) }
+            if let accept { try review(row.id, accept) }
+            active = nil
+        } catch { self.error = error.localizedDescription }
     }
 }

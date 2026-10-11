@@ -4,6 +4,27 @@ import AVFoundation
 @testable import StillmatterCore
 
 final class MeetingManagementTests: XCTestCase {
+    func testActionDraftSaveDoesNotAcceptOrCreateTodoAndSurvivesRequeue() throws {
+        let fixture = try Fixture()
+        let path = "Meetings/draft/meeting.md"
+        try fixture.write(path, "---\ntitle: Draft\ncapture_session_id: draft\n---\n# Draft\n")
+        let inbox = try TasksInbox(databaseURL: fixture.root.appendingPathComponent("Support/draft.sqlite"))
+        let id = "meeting-action:draft:one"
+        let source = "[[Meetings/draft/summary#My action items|ref]]"
+        try inbox.queueProposal(id: id, title: "Generated task", sourceRef: source)
+        let service = MeetingManagementService(vault: fixture.vault, inbox: inbox)
+        try service.saveActionDraft(id: id, title: "Edited task", comment: "Needs confirmation")
+        XCTAssertEqual(try service.actionDraft(id: id)?.title, "Edited task")
+        XCTAssertEqual(try service.actionDraft(id: id)?.comment, "Needs confirmation")
+        XCTAssertEqual(try inbox.proposalReviewState(id: id), .pending)
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath))
+        try inbox.queueProposal(id: id, title: "Regenerated task", sourceRef: source)
+        XCTAssertEqual(try inbox.pendingProposal(id: id)?.title, "Edited task")
+        try service.reviewAction(id: id, accept: false)
+        XCTAssertEqual(try inbox.proposalReviewState(id: id), .dismissed)
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath))
+    }
+
     func testBrowserPresentationAndQueuesUseActionReviewAndFailure() {
         let base = MeetingBrowserRow(id: "one", title: "Untitled Meeting at 2026-10-07 17:35",
             startedAt: nil, meetingRelativePath: "Meetings/one/meeting.md", captureState: .stopped,
@@ -22,6 +43,18 @@ final class MeetingManagementTests: XCTestCase {
             processingState: .needsAttention,
             job: MeetingJobPresentation(jobID: "failed", title: "Transcribe", status: .failed, stage: nil, error: "Oops"))
         XCTAssertTrue(failure.requiresAttention)
+    }
+
+    func testRemoveMovesOnlyMeetingFolderToTrash() throws {
+        let fixture = try Fixture()
+        try fixture.write("Meetings/disposable/meeting.md", "# Disposable\n")
+        try fixture.write("Meetings/disposable/transcript.md", "Evidence\n")
+        try fixture.write("Todos/todo.md", "# Todos\n")
+        let service = MeetingManagementService(vault: fixture.vault)
+        try service.remove(meetingID: "Meetings/disposable/meeting.md")
+        XCTAssertTrue(try service.list().isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("Meetings/disposable").path))
+        XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("Todos/todo.md")), "# Todos\n")
     }
 
     func testArchiveRestorePersistsWithoutTouchingMeetingArtifactsOrProcessing() throws {

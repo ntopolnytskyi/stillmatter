@@ -322,7 +322,7 @@ final class CaptureRecordingView: NSView {
         statePanel.setAccessibilityIdentifier("capture-state-panel")
         statePanel.heightAnchor.constraint(equalToConstant: 104).isActive = true
 
-        stateSymbolLabel.font = .systemFont(ofSize: 28, weight: .semibold)
+        stateSymbolLabel.font = .systemFont(ofSize: 28, weight: .semibold) // graphite-focus-native-exception: large capture state glyph, not text
         stateSymbolLabel.alignment = .center
         stateSymbolLabel.widthAnchor.constraint(equalToConstant: 36).isActive = true
         statusLabel.font = GraphiteFocusPresentation.Typography.sectionHeading

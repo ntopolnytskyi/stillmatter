@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 @main
 struct GraphiteFocusPresentationHarness {
@@ -22,6 +23,10 @@ struct GraphiteFocusPresentationHarness {
         variants.forEach(validateFixture)
 
         let defaultColors = GraphiteFocusPresentation.Colors(environment: variants[0])
+        require(rgba(GraphiteFocusSwiftUI.colors.accent) == rgba(GraphiteFocusPresentation.swiftUIColors().accent),
+                "SwiftUI and AppKit must resolve the same accent")
+        require(GraphiteFocusSwiftUI.sectionHeading == Font(GraphiteFocusPresentation.Typography.sectionHeading),
+                "SwiftUI must use the AppKit typography role")
         let contrastColors = GraphiteFocusPresentation.Colors(environment: variants[1])
         let opaqueColors = GraphiteFocusPresentation.Colors(environment: variants[2])
         let inactiveColors = GraphiteFocusPresentation.Colors(environment: variants[4])

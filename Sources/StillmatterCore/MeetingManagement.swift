@@ -73,6 +73,26 @@ public final class MeetingManagementService {
     private let retryUnavailableReason: (String) -> String?
     private let onReprocessQueued: () -> Void
     public init(vault: WorkspaceVault, jobStore: JobStore? = nil, inbox: TasksInbox? = nil, searchIndex: SearchIndex? = nil, captureSnapshot: @escaping () -> CaptureSnapshot? = { nil }, retryUnavailableReason: @escaping (String) -> String? = { _ in "Retry unavailable: processing is not configured." }, retryDispatcher: @escaping (String, String, String, String?) throws -> Void = { _, _, _, _ in throw MeetingManagementError.retryRejected("Retry unavailable: processing is not configured.") }, onReprocessQueued: @escaping () -> Void = {}) { self.vault=vault; self.jobs=jobStore; self.inbox=inbox; self.index=searchIndex; self.captureSnapshot=captureSnapshot; self.retryUnavailableReason=retryUnavailableReason; self.retryDispatcher=retryDispatcher; self.onReprocessQueued=onReprocessQueued }
+    public func actionDraft(id: String) throws -> (title: String, comment: String)? { try inbox?.proposalDraft(id: id) }
+
+    public func saveActionDraft(id: String, title: String, comment: String) throws {
+        guard let inbox else { throw MeetingManagementError.unavailable }
+        try inbox.saveProposalDraft(id: id, title: title, comment: comment)
+    }
+
+    public func reviewAction(id: String, accept: Bool) throws {
+        guard let inbox else { throw MeetingManagementError.unavailable }
+        let reviewer = ActionItemProposalReviewer(inbox: inbox, todoMutator: TodoItemMutator(vault: vault))
+        if accept {
+            guard let version = try vault.versionOfMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath) else {
+                throw MeetingManagementError.unavailable
+            }
+            _ = try reviewer.accept(proposalID: id, expectedTodoVersion: version)
+        } else {
+            try reviewer.dismiss(proposalID: id)
+        }
+    }
+
     public func list() throws -> [MeetingBrowserRow] { try list(filters: MeetingBrowserFilters()) }
     public func list(filters: MeetingBrowserFilters) throws -> [MeetingBrowserRow] {
         try filter(allRows(), using: filters)
@@ -155,6 +175,17 @@ public final class MeetingManagementService {
             throw MeetingManagementError.malformed("Invalid archive marker at \(marker)")
         }
         return state.archived
+    }
+
+    /// Removes only the workspace Meeting folder; external recordings and accepted Todos are retained.
+    public func remove(meetingID: String) throws {
+        let selected = try detail(for: meetingID)
+        guard selected.row.captureState == .stopped,
+              !selected.jobs.contains(where: { $0.status == .queued || $0.status == .running }),
+              let version = selected.doorwayVersion else {
+            throw MeetingManagementError.retryRejected("Stop recording and finish processing before removing this Meeting.")
+        }
+        try vault.trashMeeting(relativePath: selected.row.meetingRelativePath, expectedVersion: version)
     }
 
     public func archive(meetingID: String) throws { try setArchived(true, meetingID: meetingID) }

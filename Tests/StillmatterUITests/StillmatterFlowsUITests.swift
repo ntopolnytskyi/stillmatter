@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 
-/// UI seams verified against the isolated app with Peekaboo: sidebar navigation and Ask AI scope.
+/// UI seams verified against the isolated native app: icon-rail navigation and Ask AI scope.
 final class StillmatterFlowsUITests: XCTestCase {
     private var app: XCUIApplication!
     private var fixtureRoot: URL!
@@ -31,13 +31,13 @@ final class StillmatterFlowsUITests: XCTestCase {
     }
 
     func testEmptyQueueIsVisibleFromTasks() {
-        app.cells["Tasks"].click()
+        app.buttons["sidebar-tasks"].click()
         XCTAssertTrue(app.staticTexts["No Queue Todo Items"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.staticTexts["Current area"].value as? String, "Tasks")
     }
 
     func testAskScopeIsOptInAndCanBeReverted() {
-        app.cells["Ask AI"].click()
+        app.buttons["sidebar-ask-ai"].click()
         let checkbox = app.checkBoxes["contextual-ask-broader-vault"]
         XCTAssertTrue(checkbox.waitForExistence(timeout: 10))
         XCTAssertEqual(checkbox.value as? String, "Selected context only")
@@ -48,8 +48,19 @@ final class StillmatterFlowsUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["Current area"].value as? String, "Ask AI")
     }
 
+    func testAboutIconRequiresDoubleClickAndShowsVersionAndCreator() {
+        let about = app.buttons["sidebar-about"]
+        XCTAssertTrue(about.waitForExistence(timeout: 10))
+        about.click()
+        XCTAssertFalse(app.dialogs.staticTexts["Version 0.1.0 (1)"].exists)
+        about.doubleClick()
+        let panel = app.dialogs.containing(.staticText, identifier: "Version 0.1.0 (1)").firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 10))
+        XCTAssertTrue(panel.staticTexts.matching(NSPredicate(format: "value CONTAINS[c] %@", "Nazar Topolnytskyi")).firstMatch.exists)
+    }
+
     func testSettingsIsReachableWithoutChangingSettings() {
-        app.cells["Settings"].click()
+        app.buttons["sidebar-settings"].click()
         XCTAssertTrue(app.buttons["Test Mic"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.staticTexts["Current area"].value as? String, "Settings")
     }
