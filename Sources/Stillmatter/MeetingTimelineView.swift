@@ -11,6 +11,23 @@ struct MeetingTimelineMoment: Identifiable {
     let seekSeconds: Double?
 }
 
+/// Bridges a cited outcome in the native detail pane to the same in-pane timeline.
+final class MeetingTimelineNavigation: ObservableObject {
+    struct Jump {
+        let id = UUID()
+        let seconds: Double
+        let segmentID: String
+        let kind: MeetingTimelineMoment.Kind
+    }
+    @Published var jump: Jump?
+
+    func show(seconds: Double, segmentID: String, kind: MeetingTimelineMoment.Kind) {
+        jump = Jump(seconds: seconds, segmentID: segmentID, kind: kind)
+    }
+
+    func clear() { jump = nil }
+}
+
 /// Pure selection policy: search covers the entire recording, while ordinary browsing
 /// materializes only one 15-minute window. Filters apply independently in either mode.
 struct MeetingTimelineSelection {
@@ -32,9 +49,9 @@ struct MeetingTimelineView: View {
     let duration: Double
     let hasAudio: Bool
     let seek: (MeetingTimelineMoment) -> Void
+    @ObservedObject var navigation: MeetingTimelineNavigation
     @State private var included = Set(MeetingTimelineMoment.Kind.allCases)
     @State private var position = 0.0
-    @State private var hour = 0
     @State private var query = ""
     @State private var resultPage = 0
 
@@ -54,27 +71,50 @@ struct MeetingTimelineView: View {
                     .font(GraphiteFocusSwiftUI.metadataFont).foregroundStyle(muted)
             }
             filters
-            navigation
+            navigationControls
+            if let jump = navigation.jump,
+               let source = moments.first(where: { $0.id == "transcript-\(jump.segmentID)" }) {
+                HStack(alignment: .top, spacing: GraphiteFocusPresentation.Space.compact) {
+                    Text("Source · \(Self.time(jump.seconds))")
+                        .font(GraphiteFocusSwiftUI.numeric).foregroundStyle(accent)
+                    Text(source.text).font(GraphiteFocusSwiftUI.body)
+                }
+                .accessibilityElement(children: .combine)
+            }
             Divider()
             results
         }
         .graphitePanel()
+        .onReceive(navigation.$jump.compactMap { $0 }) { jump in
+            query = ""
+            included.insert(jump.kind)
+            position = floor(jump.seconds / MeetingTimelineSelection.window) * MeetingTimelineSelection.window
+            resultPage = 0
+        }
     }
 
     private var filters: some View {
         HStack(spacing: GraphiteFocusPresentation.Space.compact) {
                 ForEach(MeetingTimelineMoment.Kind.allCases, id: \.self) { kind in
                     Button(kind.rawValue) {
+                        navigation.clear()
+                        resultPage = 0
                         if included.contains(kind) { included.remove(kind) } else { included.insert(kind) }
                     }
-                    .buttonStyle(.bordered).font(GraphiteFocusSwiftUI.control)
-                    .tint(included.contains(kind) ? accent : GraphiteFocusSwiftUI.secondary)
+                    .buttonStyle(.plain).font(GraphiteFocusSwiftUI.control)
+                    .foregroundStyle(included.contains(kind) ? accent : muted)
+                    .padding(.horizontal, GraphiteFocusPresentation.Space.compact)
+                    .padding(.vertical, GraphiteFocusPresentation.Space.primitive)
+                    .background(included.contains(kind) ? accent.opacity(0.15) : GraphiteFocusSwiftUI.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: GraphiteFocusPresentation.Radius.compact))
+                    .overlay(RoundedRectangle(cornerRadius: GraphiteFocusPresentation.Radius.compact)
+                        .strokeBorder(included.contains(kind) ? accent : GraphiteFocusSwiftUI.stroke))
                     .accessibilityAddTraits(included.contains(kind) ? .isSelected : [])
                 }
         }
     }
 
-    private var navigation: some View {
+    private var navigationControls: some View {
         VStack(alignment: .leading) {
             searchControls
             windowControls
@@ -85,18 +125,20 @@ struct MeetingTimelineView: View {
             HStack {
                 hourPicker
                 TextField("Search entire recording…", text: $query).textFieldStyle(.roundedBorder)
-                    .onChange(of: query) { _ in resultPage = 0 }
+                    .onChange(of: query) { _ in resultPage = 0; if !query.isEmpty { navigation.clear() } }
                     .accessibilityLabel("Search entire recording")
             }.font(GraphiteFocusSwiftUI.metadataFont)
     }
 
     private var hourPicker: some View {
-        Picker("Jump to", selection: $hour) {
+        Picker("Jump to", selection: Binding(
+            get: { Int(start / 3600) },
+            set: { selected in position = Double(selected * 3600); resultPage = 0; navigation.clear() }
+        )) {
             ForEach(0..<hourCount, id: \.self) { index in
-                Text("Hour \(index + 1)").tag(index)
+                Text("Hour \(index + 1) · \(Self.time(Double(index * 3600)))–\(Self.time(min(duration, Double((index + 1) * 3600))))").tag(index)
             }
-        }.frame(minWidth: 170) // graphite-focus-native-exception: native hour picker minimum width
-        .onChange(of: hour) { newHour in position = Double(newHour * 3600) }
+        }.frame(minWidth: 210) // graphite-focus-native-exception: native hour picker minimum width
     }
 
     private var visibleCount: Int {
@@ -106,19 +148,21 @@ struct MeetingTimelineView: View {
     private var windowControls: some View {
             HStack {
                 if query.isEmpty {
-                    Text("\(Self.time(start))–\(Self.time(max(start, min(start + MeetingTimelineSelection.window, duration)))) · 15 minute window")
+                    Text("\(Self.time(start))–\(Self.time(max(start, min(start + MeetingTimelineSelection.window, duration)))) · \(visibleCount) events · 15 minute window")
                 } else {
                     Text("Search results across entire recording")
                 }
                 Spacer()
                 Button("Previous") {
-                    if query.isEmpty { position = max(0, start - MeetingTimelineSelection.window) }
-                    else { resultPage = max(0, resultPage - 1) }
-                }.disabled(query.isEmpty ? start == 0 : resultPage == 0)
+                    navigation.clear()
+                    if resultPage > 0 { resultPage -= 1 }
+                    else if query.isEmpty { position = max(0, start - MeetingTimelineSelection.window) }
+                }.disabled(resultPage == 0 && (query.isEmpty ? start == 0 : true))
                 Button("Next") {
-                    if query.isEmpty { position = min(lastWindow, start + MeetingTimelineSelection.window) }
-                    else { resultPage += 1 }
-                }.disabled(query.isEmpty ? start >= lastWindow : (resultPage + 1) * 100 >= visibleCount)
+                    navigation.clear()
+                    if (resultPage + 1) * 100 < visibleCount { resultPage += 1 }
+                    else if query.isEmpty { position = min(lastWindow, start + MeetingTimelineSelection.window); resultPage = 0 }
+                }.disabled((resultPage + 1) * 100 >= visibleCount && (query.isEmpty ? start >= lastWindow : true))
             }.font(GraphiteFocusSwiftUI.metadataFont).foregroundStyle(muted)
     }
 
@@ -131,7 +175,7 @@ struct MeetingTimelineView: View {
                     .foregroundStyle(muted).padding(.vertical, GraphiteFocusPresentation.Space.page)
             }
             // A broad search can return many hits; cap the rendered batch while retaining whole-recording matches.
-            ForEach(Array(visible.dropFirst(query.isEmpty ? 0 : resultPage * 100).prefix(100))) { moment in
+            ForEach(Array(visible.dropFirst(resultPage * 100).prefix(100))) { moment in
                 HStack(alignment: .top, spacing: GraphiteFocusPresentation.Space.panel) {
                     Button(Self.time(moment.seconds)) { seek(moment) }
                         .buttonStyle(.borderless).font(GraphiteFocusSwiftUI.numeric)
@@ -143,10 +187,15 @@ struct MeetingTimelineView: View {
                             .font(GraphiteFocusSwiftUI.caption).foregroundStyle(accent)
                         Text(moment.text).font(GraphiteFocusSwiftUI.rowTitle).foregroundStyle(ink)
                         Text(moment.context).font(GraphiteFocusSwiftUI.metadataFont).foregroundStyle(muted)
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(GraphiteFocusPresentation.Space.dense)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(GraphiteFocusPresentation.Space.dense)
+                .background(Color(nsColor: GraphiteFocusSwiftUI.colors.surfaceRaised).opacity(0.35))
+                .clipShape(RoundedRectangle(cornerRadius: GraphiteFocusPresentation.Radius.compact))
+                .overlay(RoundedRectangle(cornerRadius: GraphiteFocusPresentation.Radius.compact)
+                    .strokeBorder(moment.id == "transcript-\(navigation.jump?.segmentID ?? "")" ? accent : GraphiteFocusSwiftUI.stroke))
             }
-            if !query.isEmpty && visible.count > 100 {
+            if visible.count > 100 {
                 Text("Results \(resultPage * 100 + 1)–\(min((resultPage + 1) * 100, visible.count)) of \(visible.count)")
                     .foregroundStyle(muted)
             }

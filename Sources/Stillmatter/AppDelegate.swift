@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let store = SettingsStore(userDefaults: defaults)
         var settings = store.settings
         settings.stillmatterRootURL = URL(fileURLWithPath: fixtureRoot, isDirectory: true)
+        if let mediaRoot = ProcessInfo.processInfo.environment["STILLMATTER_VALIDATION_RECORDING_MEDIA_ROOT"] {
+            settings.recordingMediaURL = URL(fileURLWithPath: mediaRoot, isDirectory: true)
+        }
         store.settings = settings
         return store
     }()
@@ -251,11 +254,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         weeklyAttentionID = nil
     }
 
+    private func titleReviewSourceAvailable(_ item: InboxItem) -> Bool {
+        guard let root = settingsStore.settings.stillmatterRootURL, let path = item.sourceRef else { return false }
+        let vault = WorkspaceVault(workspaceRootURL: root, appSupportRootURL: Self.applicationSupportURL)
+        return (try? vault.versionOfMarkdown(relativePath: path)) != nil
+    }
+
     private func refreshInboxAttention() {
         attention.refreshInbox { [weak self] item in
             guard let self = self else { return false }
             return self.weeklyReportPromptCoordinator.state == .idle
                 && item.kind == .titleReview
+                && self.titleReviewSourceAvailable(item)
                 && Date().timeIntervalSince(self.titleReviewLastPrompt[item.id] ?? .distantPast) >= 3600
         }
     }
@@ -268,8 +278,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               let inbox = tasksInbox, let root = settingsStore.settings.stillmatterRootURL else { return }
         do {
             let pending = try inbox.items(category: .required).filter { $0.kind == .titleReview }
-            guard let item = requested == nil ? pending.first : pending.first(where: { $0.id == requested?.id }) else { return }
+            guard let item = requested == nil ? pending.first(where: titleReviewSourceAvailable)
+                : pending.first(where: { $0.id == requested?.id }) else { return }
             guard explicit || Date().timeIntervalSince(titleReviewLastPrompt[item.id] ?? .distantPast) >= 3600 else { return }
+            guard titleReviewSourceAvailable(item) else {
+                if explicit {
+                    let missing = NSAlert()
+                    missing.messageText = "Meeting unavailable"
+                    missing.informativeText = "This meeting is not in the current workspace. Select its original workspace in Settings to review its title. The pending review has been kept."
+                    missing.addButton(withTitle: "OK")
+                    missing.runModal()
+                }
+                return
+            }
             titleReviewIsPresenting = true
             defer { titleReviewIsPresenting = false }
             let alert = NSAlert()
@@ -411,6 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     jobStore: self?.jobStore,
                     inbox: self?.tasksInbox,
                     searchIndex: self?.searchIndex,
+                    recordingMediaURL: self?.settingsStore.settings.recordingMediaURL,
                     captureSnapshot: { [weak self] in self?.captureService?.snapshot },
                     retryUnavailableReason: { [weak self] type in
                         guard let self else { return "Processing is unavailable." }

@@ -63,6 +63,18 @@ final class FasterWhisperRuntimeTests: XCTestCase {
         XCTAssertEqual(TranscriptionModelChoice.full.repository, "Systran/faster-whisper-large-v3")
     }
 
+    func testInstallerConstrainsPyAVAndChecksAudioDecodeBeforePromotingModel() {
+        XCTAssertEqual(FasterWhisperModelAcquirer.pythonPackageRequirements,
+                       ["faster-whisper==1.2.1", "av>=11,<19"])
+        let check = FasterWhisperModelAcquirer.transcriptionScript
+        XCTAssertTrue(check.contains("decode_audio(sample.name)"),
+                      "A model-only check accepts runtimes that cannot decode recordings")
+        if let decode = check.range(of: "decode_audio(sample.name)"),
+           let model = check.range(of: "WhisperModel(sys.argv[2]") {
+            XCTAssertLessThan(decode.lowerBound, model.lowerBound)
+        }
+    }
+
     func testPythonSelectionSkipsVersionWithoutONNXRuntimeWheels() {
         let python314 = URL(fileURLWithPath: "/python3.14")
         let python313 = URL(fileURLWithPath: "/python3.13")

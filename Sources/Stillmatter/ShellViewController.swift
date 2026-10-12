@@ -541,7 +541,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             (searchResultsView, searchResultsView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large))
         ]
         contentBottomConstraints = bottomConstraints
-        meetingViewportHeight = meetingManagementView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor, constant: -GraphiteFocusPresentation.Space.panel * 2)
+        meetingViewportHeight = meetingManagementView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor)
 
         NSLayoutConstraint.activate([
             contentTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GraphiteFocusPresentation.Space.large),
@@ -552,9 +552,9 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             captureRecordingView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
             captureRecordingView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
             captureRecordingView.topAnchor.constraint(equalTo: contentTitle.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
-            meetingManagementView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
-            meetingManagementView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
-            meetingManagementView.topAnchor.constraint(equalTo: container.topAnchor, constant: GraphiteFocusPresentation.Space.panel),
+            meetingManagementView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            meetingManagementView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            meetingManagementView.topAnchor.constraint(equalTo: container.topAnchor),
             proposalReviewView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
             proposalReviewView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
             proposalReviewView.topAnchor.constraint(equalTo: todayWorkbenchView.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
@@ -1037,6 +1037,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         stateStore.state.select(.meetings)
         view.layoutSubtreeIfNeeded()
         meetingManagementView.validateCaptionLayoutFixture()
+        meetingManagementView.validateTimelineSelectionFixture()
         meetingManagementView.validateAudioTransportFixture()
         let meetingTop = meetingManagementView.convert(NSPoint(x: 0, y: meetingManagementView.bounds.height), to: view).y
         let detailTop = detailContainer.convert(.zero, to: view).y

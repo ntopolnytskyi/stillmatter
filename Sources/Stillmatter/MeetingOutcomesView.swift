@@ -4,7 +4,7 @@ struct MeetingOutcomeRow: Identifiable {
     let id: String
     let text: String
     let detail: String
-    let citations: [(label: String, segmentID: String, seconds: Double?)]
+    let citations: [(label: String, segmentID: String, startSeconds: Double, endSeconds: Double, seconds: Double?)]
 }
 
 struct MeetingOutcomeGroup: Identifiable {

@@ -91,6 +91,7 @@ public enum OperationalStoreError: Error, Equatable, CustomStringConvertible {
 /// Application service for the rebuildable SQLite-backed operational Inbox.
 /// Canonical Markdown remains outside this store.
 public final class TasksInbox {
+    let databaseURL: URL
     private let database: SQLiteDatabase
     private let now: () -> String
     private let lock = NSRecursiveLock()
@@ -98,6 +99,7 @@ public final class TasksInbox {
     public init(databaseURL: URL, now: @escaping () -> String = TasksInbox.systemTimestamp) throws {
         let parentURL = databaseURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        self.databaseURL = databaseURL.standardizedFileURL.resolvingSymlinksInPath()
         database = try SQLiteDatabase(url: databaseURL)
         self.now = now
         try migrate()

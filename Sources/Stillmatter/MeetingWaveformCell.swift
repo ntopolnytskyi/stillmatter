@@ -8,17 +8,20 @@ final class MeetingWaveformCell: NSSliderCell {
     }
 
     override func drawBar(inside rect: NSRect, flipped: Bool) {
-        guard let view = controlView, !levels.isEmpty else { return }
+        guard let view = controlView else { return }
         let bounds = view.bounds.insetBy(dx: 10, dy: 5)
         guard bounds.width > 0, bounds.height > 0 else { return }
-        let slot = bounds.width / CGFloat(levels.count)
+        // Sampling can fail (or be pending) even when the source is playable. Keep a
+        // visible, full-width seek track instead of making the slider appear disabled.
+        let samples = levels.isEmpty ? [CGFloat](repeating: 0.08, count: 96) : levels
+        let slot = bounds.width / CGFloat(samples.count)
         let barWidth = max(1, min(3, slot - 2))
         let fraction = CGFloat((doubleValue - minValue) / max(maxValue - minValue, 0.01))
-        for (index, level) in levels.enumerated() {
+        for (index, level) in samples.enumerated() {
             let height = max(3, min(bounds.height, level * bounds.height))
             let bar = NSRect(x: bounds.minX + CGFloat(index) * slot + (slot - barWidth) / 2,
                              y: bounds.midY - height / 2, width: barWidth, height: height)
-            (CGFloat(index) / CGFloat(levels.count) < fraction ? colors.accent : colors.textMetadata)
+            (CGFloat(index) / CGFloat(samples.count) < fraction ? colors.accent : colors.textMetadata)
                 .withAlphaComponent(isEnabled ? 1 : 0.5).setFill()
             NSBezierPath(roundedRect: bar, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
         }
