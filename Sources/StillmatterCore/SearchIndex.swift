@@ -7,10 +7,7 @@ public enum SearchChunkKind: String, CaseIterable, Hashable, Codable {
     case transcript
     case metadata
     case todo
-    case activity
     case project
-    case report
-    case brief
     case markdown
 
     public var displayName: String {
@@ -20,10 +17,7 @@ public enum SearchChunkKind: String, CaseIterable, Hashable, Codable {
         case .transcript: return "Transcript"
         case .metadata: return "Metadata"
         case .todo: return "Todo Item"
-        case .activity: return "Activity Item"
         case .project: return "Project"
-        case .report: return "Report"
-        case .brief: return "Brief"
         case .markdown: return "Markdown"
         }
     }
@@ -48,12 +42,7 @@ public struct SearchResult: Equatable {
     public let transcriptEndSeconds: Double?
 
     public var displayKindName: String {
-        let lowercasedPath = sourcePath.lowercased()
-        if kind == .report && lowercasedPath.hasPrefix("reports/weekly/") { return "Weekly Report" }
-        if kind == .report && lowercasedPath.hasPrefix("reports/daily/") { return "Daily Report" }
-        if kind == .brief && lowercasedPath.hasPrefix("briefs/daily/") { return "Daily Brief" }
-        if kind == .brief && lowercasedPath.hasPrefix("briefs/weekly/") { return "Weekly Brief" }
-        return kind.displayName
+        kind.displayName
     }
 
     public init(
@@ -428,10 +417,7 @@ public final class SearchIndex {
         if filename.hasPrefix("transcript.") { return .transcript }
         if filename == "recording.localref.json" { return .metadata }
         if path.hasPrefix("todos/") { return .todo }
-        if path.hasPrefix("activities/") { return .activity }
         if path.hasPrefix("projects/") { return .project }
-        if path.hasPrefix("reports/") { return .report }
-        if path.hasPrefix("briefs/") { return .brief }
         return .markdown
     }
 

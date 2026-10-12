@@ -30,6 +30,33 @@ final class JobsTests: XCTestCase {
         XCTAssertEqual(try reopened.details(id: job.id).logs.map(\.message), ["Job queued"])
     }
 
+    func testJobStoreObservationPublishesRelevantMeetingTransitionsAndCanBeCancelled() throws {
+        let fixture = try JobsFixture()
+        let store = try fixture.openStore()
+        let lock = NSLock()
+        var changes: [JobStoreChange] = []
+        let observer = store.observeChanges { change in
+            lock.lock(); changes.append(change); lock.unlock()
+        }
+        let manifest = JobManifest(type: "meeting.test", title: "Observe meeting", executionClass: .lightweight,
+            stages: [JobStageDefinition(id: "run", title: "Run")],
+            sourceArtifacts: [JobArtifactReference(relativePath: "Meetings/kickoff/meeting.md", role: "meeting-doorway")])
+        let executor = ControlledJobExecutor()
+        let scheduler = JobScheduler(store: store, executor: executor)
+        _ = try scheduler.enqueue(id: "observed-meeting-job", manifest: manifest)
+        waitUntil { lock.lock(); defer { lock.unlock() }; return changes.contains { $0.status == .running } }
+        lock.lock(); let beforeRemoval = changes; lock.unlock()
+        XCTAssertTrue(beforeRemoval.contains { $0.status == .queued && $0.meetingPaths == ["Meetings/kickoff/meeting.md"] })
+        XCTAssertTrue(beforeRemoval.contains { $0.status == .running && $0.meetingPaths == ["Meetings/kickoff/meeting.md"] })
+
+        store.removeChangeObserver(observer)
+        executor.complete(jobID: "observed-meeting-job", with: .success(JobStageResult()))
+        waitUntil { (try? store.job(id: "observed-meeting-job")?.status) == .succeeded }
+        lock.lock(); let afterRemoval = changes; lock.unlock()
+        _ = try store.enqueue(id: "unobserved-meeting-job", manifest: manifest)
+        XCTAssertEqual(afterRemoval, beforeRemoval)
+    }
+
     func testConcurrentReprocessEnqueuesAcrossSeparateStoreConnectionsRejectSameMeeting() throws {
         let fixture = try JobsFixture()
         let first = try fixture.openStore()
@@ -73,6 +100,179 @@ final class JobsTests: XCTestCase {
         XCTAssertEqual(successes, 1)
         XCTAssertEqual(try first.jobs().filter { $0.manifest.metadata["capture_session_id"] == "meeting-1" }.count, 1)
         XCTAssertNotNil(try first.job(id: "unrelated"))
+    }
+
+    func testWorkspaceBoundSchedulerQuarantinesLegacyAndOtherWorkspaceJobsAcrossReopen() throws {
+        let fixture = try JobsFixture()
+        var writer: JobStore? = try fixture.openStore()
+        let old = fixture.rootURL.appendingPathComponent("Old")
+        let next = fixture.rootURL.appendingPathComponent("Next")
+        let manifest = fixture.manifest(id: "job", executionClass: .heavy)
+        _ = try writer?.enqueue(id: "legacy", manifest: manifest)
+        _ = try writer?.enqueue(id: "old", manifest: manifest.owned(by: old))
+        _ = try writer?.enqueue(id: "next", manifest: manifest.owned(by: next))
+        writer = nil
+        let store = try fixture.openStore()
+        let executor = ControlledJobExecutor()
+        let scheduler = JobScheduler(store: store, executor: executor, workspaceRootURL: next)
+        scheduler.start()
+        waitUntil { executor.startedIDs == ["next"] }
+        XCTAssertEqual(try store.job(id: "legacy")?.status, .queued)
+        XCTAssertEqual(try store.job(id: "old")?.status, .queued)
+        XCTAssertThrowsError(try scheduler.retry(id: "legacy"))
+        XCTAssertThrowsError(try scheduler.retry(id: "old"))
+        executor.complete(jobID: "next", with: .success(JobStageResult()))
+        waitUntil { (try? store.job(id: "next")?.status) == .succeeded }
+        XCTAssertEqual(executor.startedIDs, ["next"])
+    }
+
+    func testPausedOldWorkspaceJobSurvivesSwitchAndRestartAndResumesOnlyOnReturn() throws {
+        let fixture = try JobsFixture()
+        let old = fixture.rootURL.appendingPathComponent("Old")
+        let next = fixture.rootURL.appendingPathComponent("Next")
+        var store: JobStore? = try fixture.openStore()
+        let oldWorker = ControlledJobExecutor()
+        var oldScheduler: JobScheduler? = JobScheduler(store: try XCTUnwrap(store), executor: oldWorker,
+            workspaceRootURL: old)
+        let manifest = fixture.manifest(id: "durable", executionClass: .heavy).owned(by: old)
+        _ = try oldScheduler?.enqueue(id: "active", manifest: manifest)
+        _ = try oldScheduler?.enqueue(id: "waiting", manifest: manifest)
+        waitUntil { oldWorker.startedIDs == ["active"] }
+        oldScheduler?.pauseSynchronously()
+        oldWorker.complete(jobID: "active", with: .success(JobStageResult()))
+        waitUntil { (try? store?.job(id: "active")?.status) == .succeeded }
+        XCTAssertEqual(try store?.job(id: "waiting")?.status, .queued)
+        oldScheduler?.stop()
+        oldScheduler = nil
+        store = nil
+
+        // A new process opens the same operational SQLite store, without changing owners.
+        let reopened = try fixture.openStore()
+        let nextWorker = ControlledJobExecutor()
+        let nextScheduler = JobScheduler(store: reopened, executor: nextWorker, workspaceRootURL: next)
+        nextScheduler.start()
+        XCTAssertEqual(try reopened.job(id: "waiting")?.manifest.workspaceOwner,
+            old.standardizedFileURL.resolvingSymlinksInPath().path)
+        XCTAssertEqual(try reopened.job(id: "waiting")?.status, .queued)
+        XCTAssertTrue(nextWorker.startedIDs.isEmpty)
+        XCTAssertThrowsError(try nextScheduler.retry(id: "waiting"))
+        nextScheduler.stop()
+        let returnWorker = ControlledJobExecutor()
+        let returned = JobScheduler(store: reopened, executor: returnWorker, workspaceRootURL: old)
+        returned.start()
+        waitUntil { returnWorker.startedIDs == ["waiting"] }
+        returnWorker.complete(jobID: "waiting", with: .success(JobStageResult()))
+        waitUntil { (try? reopened.job(id: "waiting")?.status) == .succeeded }
+        XCTAssertEqual(try reopened.job(id: "waiting")?.manifest.workspaceOwner,
+            old.standardizedFileURL.resolvingSymlinksInPath().path)
+        returned.stop()
+    }
+
+    func testWorkspaceRuntimeBarrierCancelInvalidDestinationAndRetry() throws {
+        let fixture = try JobsFixture()
+        let old = fixture.rootURL.appendingPathComponent("Old")
+        let next = fixture.rootURL.appendingPathComponent("Next")
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: next, withIntermediateDirectories: true)
+        let suite = "WorkspaceBarrier-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(userDefaults: defaults)
+        settings.settings.stillmatterRootURL = old
+        let runtime = WorkspaceRuntime()
+        XCTAssertTrue(runtime.activate(settings.settings))
+        let store = try fixture.openStore()
+        let worker = ControlledJobExecutor()
+        let scheduler = JobScheduler(store: store, executor: worker, workspaceRootURL: old)
+        _ = try scheduler.enqueue(id: "active", manifest: fixture.manifest(id: "active", executionClass: .heavy).owned(by: old))
+        waitUntil { worker.startedIDs == ["active"] }
+        settings.requestWorkspace(.init(root: next, media: nil))
+        XCTAssertFalse(runtime.retryPendingSelection(settingsStore: settings, jobStore: store, schedulers: [scheduler]))
+        XCTAssertEqual(settings.settings.stillmatterRootURL, old)
+        settings.cancelPendingWorkspace()
+        runtime.resumeAfterCancellation(settingsStore: settings, schedulers: [scheduler])
+        XCTAssertFalse(runtime.processingPausedForPendingSwitch)
+        settings.requestWorkspace(.init(root: next, media: nil))
+        XCTAssertFalse(runtime.retryPendingSelection(settingsStore: settings, jobStore: store, schedulers: [scheduler]))
+        worker.complete(jobID: "active", with: .success(JobStageResult()))
+        waitUntil { (try? store.job(id: "active")?.status) == .succeeded }
+        _ = try store.enqueue(id: "waiting", manifest: fixture.manifest(id: "waiting", executionClass: .heavy).owned(by: old))
+        let missing = fixture.rootURL.appendingPathComponent("Missing")
+        settings.requestWorkspace(.init(root: missing, media: nil))
+        XCTAssertFalse(runtime.retryPendingSelection(settingsStore: settings, jobStore: store, schedulers: [scheduler]))
+        XCTAssertNotNil(settings.pendingWorkspaceError)
+        XCTAssertEqual(settings.settings.stillmatterRootURL, old)
+        waitUntil { worker.startedIDs.contains("waiting") }
+        settings.requestWorkspace(.init(root: next, media: nil))
+        XCTAssertFalse(runtime.retryPendingSelection(settingsStore: settings, jobStore: store, schedulers: [scheduler]))
+        worker.complete(jobID: "waiting", with: .success(JobStageResult()))
+        waitUntil { (try? store.job(id: "waiting")?.status) == .succeeded }
+        XCTAssertTrue(runtime.retryPendingSelection(settingsStore: settings, jobStore: store, schedulers: [scheduler]))
+        runtime.didActivateSelection()
+        XCTAssertEqual(settings.settings.stillmatterRootURL, next)
+        XCTAssertEqual(try store.job(id: "waiting")?.manifest.workspaceOwner,
+            old.standardizedFileURL.resolvingSymlinksInPath().path)
+        scheduler.stop()
+    }
+
+    func testMeetingRenameDoesNotRewriteOtherWorkspaceOrUnownedJobs() throws {
+        let fixture = try JobsFixture()
+        let store = try fixture.openStore()
+        let first = fixture.rootURL.appendingPathComponent("First")
+        let second = fixture.rootURL.appendingPathComponent("Second")
+        let manifest = JobManifest(type: "meeting.transcription", title: "Rename", executionClass: .heavy,
+            stages: [JobStageDefinition(id: "run", title: "Run")],
+            sourceArtifacts: [JobArtifactReference(relativePath: "Meetings/old/meeting.md", role: "meeting-doorway")])
+        _ = try store.enqueue(id: "first", manifest: manifest.owned(by: first))
+        _ = try store.enqueue(id: "second", manifest: manifest.owned(by: second))
+        _ = try store.enqueue(id: "legacy", manifest: manifest)
+        let worker = ControlledJobExecutor()
+        let scheduler = JobScheduler(store: store, executor: worker, workspaceRootURL: first)
+        scheduler.start()
+        waitUntil { worker.startedIDs == ["first"] }
+        worker.complete(jobID: "first", with: .success(JobStageResult()))
+        waitUntil { (try? store.job(id: "first")?.status) == .succeeded }
+        // Queued work in the other workspace must not prevent this rename.
+        try store.rewriteMeetingReferences(from: "Meetings/old", to: "Meetings/new", workspaceRootURL: first)
+        XCTAssertEqual(try store.job(id: "first")?.manifest.sourceArtifacts.first?.relativePath, "Meetings/new/meeting.md")
+        XCTAssertEqual(try store.job(id: "second")?.manifest.sourceArtifacts.first?.relativePath, "Meetings/old/meeting.md")
+        XCTAssertEqual(try store.job(id: "legacy")?.manifest.sourceArtifacts.first?.relativePath, "Meetings/old/meeting.md")
+    }
+
+    func testWorkspaceHandoffBarrierWaitsForRunningStageWithoutStartingAnotherOldJob() throws {
+        let fixture = try JobsFixture()
+        let store = try fixture.openStore()
+        let worker = ControlledJobExecutor()
+        let oldRoot = fixture.rootURL.appendingPathComponent("Old")
+        let scheduler = JobScheduler(store: store, executor: worker, workspaceRootURL: oldRoot)
+        for id in ["first", "second"] {
+            _ = try scheduler.enqueue(id: id, manifest: fixture.manifest(id: id, executionClass: .heavy).owned(by: oldRoot))
+        }
+        waitUntil { worker.startedIDs == ["first"] }
+        scheduler.pauseSynchronously()
+        XCTAssertEqual(try store.jobs(status: .running).map(\.id), ["first"])
+        worker.complete(jobID: "first", with: .success(JobStageResult()))
+        waitUntil { (try? store.job(id: "first")?.status) == .succeeded }
+        XCTAssertTrue(try store.jobs(status: .running).isEmpty)
+        XCTAssertEqual(try store.job(id: "second")?.status, .queued)
+        XCTAssertEqual(worker.startedIDs, ["first"])
+    }
+
+    func testStoppedSchedulerDoesNotStartQueuedWorkAfterLateCompletionOrRestart() throws {
+        let fixture = try JobsFixture()
+        let store = try fixture.openStore()
+        let worker = ControlledJobExecutor()
+        let scheduler = JobScheduler(store: store, executor: worker)
+        _ = try scheduler.enqueue(id: "first", manifest: fixture.manifest(id: "first", executionClass: .heavy))
+        _ = try scheduler.enqueue(id: "second", manifest: fixture.manifest(id: "second", executionClass: .heavy))
+        waitUntil { worker.startedIDs == ["first"] }
+        scheduler.stop()
+        worker.complete(jobID: "first", with: .success(JobStageResult()))
+        waitUntil { (try? store.job(id: "first")?.status) == .succeeded }
+        scheduler.start()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(worker.startedIDs, ["first"])
+        XCTAssertEqual(try store.job(id: "second")?.status, .queued)
     }
 
     func testSchedulerRunsHeavyJobsSeriallyAndThrottlesLightweightJobs() throws {

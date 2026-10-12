@@ -5,9 +5,9 @@ final class AttentionDeliveryTests: XCTestCase {
     func testNonCriticalRequiredPromptWaitsForRecordingToEnd() {
         var deliveries: [AttentionDelivery] = []
         let coordinator = AttentionDeliveryCoordinator { deliveries.append($0) }
-        let target = AttentionTarget.weeklyReport("2026-W38")
+        let target = AttentionTarget.titleReview("meeting-review")
         coordinator.setEnvironment(isMeetingOrRecordingActive: true, isAppFocused: true)
-        coordinator.offer(AttentionRequest(target: target, title: "Weekly Report", kind: .required))
+        coordinator.offer(AttentionRequest(target: target, title: "Meeting title", kind: .required))
         XCTAssertTrue(deliveries.isEmpty)
 
         coordinator.setEnvironment(isMeetingOrRecordingActive: false, isAppFocused: true)
@@ -18,7 +18,7 @@ final class AttentionDeliveryTests: XCTestCase {
         var deliveries: [AttentionDelivery] = []
         let coordinator = AttentionDeliveryCoordinator { deliveries.append($0) }
         coordinator.setEnvironment(isMeetingOrRecordingActive: false, isAppFocused: false)
-        let request = AttentionRequest(target: .weeklyReport("2026-W38"), title: "Weekly Report", kind: .required)
+        let request = AttentionRequest(target: .titleReview("meeting-review"), title: "Meeting title", kind: .required)
         coordinator.offer(request)
         coordinator.offer(request)
         XCTAssertEqual(deliveries, [.notification(request)])
@@ -74,7 +74,7 @@ final class AttentionDeliveryTests: XCTestCase {
     func testFocusedAttentionShowsNonBlockingNoticeOnce() {
         var deliveries: [AttentionDelivery] = []
         let coordinator = AttentionDeliveryCoordinator { deliveries.append($0) }
-        let request = AttentionRequest(target: .inboxItem("overdue"), title: "Todo overdue", kind: .attention)
+        let request = AttentionRequest(target: .inboxItem("failed-job"), title: "Processing failed", kind: .attention)
         coordinator.setEnvironment(isMeetingOrRecordingActive: false, isAppFocused: true)
         coordinator.offer(request)
         coordinator.offer(request)

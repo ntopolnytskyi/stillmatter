@@ -13,11 +13,6 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.searchExcludedPatterns, [])
         XCTAssertEqual(settings.transcriptionModelChoice, .recommended)
         XCTAssertEqual(settings.teamsRecordingMode, .ask)
-        XCTAssertEqual(settings.workingHours.weekdays, [.monday, .tuesday, .wednesday, .thursday, .friday])
-        XCTAssertEqual(settings.workingHours.startTime, TimeOfDay(hour: 9, minute: 0))
-        XCTAssertEqual(settings.workingHours.endTime, TimeOfDay(hour: 19, minute: 0))
-        XCTAssertEqual(settings.workingHours.endOfWeekDay, .friday)
-        XCTAssertEqual(settings.workingHours.endOfWeekTime, TimeOfDay(hour: 19, minute: 0))
     }
 
     func testSettingsPersistAcrossStoreInstances() {
@@ -32,12 +27,6 @@ final class AppSettingsTests: XCTestCase {
             recordingMediaURL: URL(fileURLWithPath: "/Users/example/Stillmatter Media"),
             launchAtLoginEnabled: true,
             calendarSourceSelection: .selected(["work", "personal"]),
-            workingHours: WorkingHoursSettings(
-                startTime: TimeOfDay(hour: 8, minute: 30),
-                endTime: TimeOfDay(hour: 18, minute: 15),
-                endOfWeekDay: .thursday,
-                endOfWeekTime: TimeOfDay(hour: 16, minute: 45)
-            ),
             searchExcludedPatterns: ["Private/**", "Vendors/**"],
             transcriptionModelChoice: .full,
             teamsRecordingMode: .automatic
@@ -61,14 +50,7 @@ final class AppSettingsTests: XCTestCase {
     func testOlderStoredSettingsDecodeWithAllCalendarsSelected() throws {
         let data = Data("""
             {
-              "launchAtLoginEnabled": false,
-              "workingHours": {
-                "weekdays": [2, 3, 4, 5, 6],
-                "startTime": {"hour": 9, "minute": 0},
-                "endTime": {"hour": 19, "minute": 0},
-                "endOfWeekDay": 6,
-                "endOfWeekTime": {"hour": 19, "minute": 0}
-              }
+              "launchAtLoginEnabled": false
             }
             """.utf8)
 
@@ -97,14 +79,7 @@ final class AppSettingsTests: XCTestCase {
         let data = Data("""
             {
               "launchAtLoginEnabled": false,
-              "selectedCalendarIdentifiers": ["work", "personal"],
-              "workingHours": {
-                "weekdays": [2, 3, 4, 5, 6],
-                "startTime": {"hour": 9, "minute": 0},
-                "endTime": {"hour": 19, "minute": 0},
-                "endOfWeekDay": 6,
-                "endOfWeekTime": {"hour": 19, "minute": 0}
-              }
+              "selectedCalendarIdentifiers": ["work", "personal"]
             }
             """.utf8)
 
@@ -113,11 +88,5 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.calendarSourceSelection, .selected(["work", "personal"]))
     }
 
-    func testTimeOfDayParsesAndRejectsInvalidValues() {
-        XCTAssertEqual(TimeOfDay.parse("09:00"), TimeOfDay(hour: 9, minute: 0))
-        XCTAssertEqual(TimeOfDay.parse("19:30"), TimeOfDay(hour: 19, minute: 30))
-        XCTAssertNil(TimeOfDay.parse("24:00"))
-        XCTAssertNil(TimeOfDay.parse("12:60"))
-        XCTAssertNil(TimeOfDay.parse("nope"))
-    }
+
 }

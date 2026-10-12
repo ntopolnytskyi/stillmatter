@@ -109,6 +109,6 @@ public final class RecordingRecoveryService {
             selection: transcriptionAudio,
             language: .english
         )
-        return try jobStore.enqueue(manifest: manifest)
+        return try jobStore.enqueue(manifest: manifest.owned(by: vault.rootURL))
     }
 }

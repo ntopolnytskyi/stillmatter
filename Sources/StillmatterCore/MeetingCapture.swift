@@ -338,7 +338,6 @@ public final class MeetingCaptureService {
         try replaceProcessingSection(relativePath: stoppedSession.meetingRelativePath)
         let job = try enqueueProcessingJob(for: stoppedSession)
         try transition(.captureStopped)
-        try transition(.finalized)
         if stoppedSession.title.hasPrefix("Untitled Meeting at ") {
             try inbox?.requireTitleReview(
                 id: MeetingTitleReviewService.reviewID(sessionID: stoppedSession.id),
@@ -346,6 +345,8 @@ public final class MeetingCaptureService {
                 sourceRef: stoppedSession.meetingRelativePath
             )
         }
+        // Publish idle only after the durable old-workspace Job and title-review handoffs.
+        try transition(.finalized)
         return job
     }
 
@@ -368,7 +369,7 @@ public final class MeetingCaptureService {
             bundle: bundle,
             selection: transcriptionAudio,
             language: language
-        ))
+        ).owned(by: vault.rootURL))
         processingStatus.append("Transcript regeneration queued in \(language.displayName)")
         notifyObservers()
         return job
@@ -382,11 +383,6 @@ public final class MeetingCaptureService {
         )
         notifyObservers()
     }
-
-    public func beginDetection() throws { try transition(.detectionStarted) }
-    public func endDetection() throws { try transition(.detectionEnded) }
-    public func markRecovered() throws { try transition(.recovered) }
-    public func resetRecovered() throws { try transition(.reset) }
 
     private func transition(_ event: CaptureEvent) throws {
         try machine.apply(event)
@@ -502,7 +498,7 @@ public final class MeetingCaptureService {
                 selection: transcriptionAudio,
                 language: transcriptionLanguage
             )
-            return try jobStore.enqueue(manifest: manifest)
+            return try jobStore.enqueue(manifest: manifest.owned(by: vault.rootURL))
         }
         let manifest = JobManifest(
             type: "meeting-capture-placeholder",
@@ -518,7 +514,7 @@ public final class MeetingCaptureService {
             metadata: ["capture_session_id": session.id],
             maxAutomaticRetries: 1
         )
-        return try jobStore.enqueue(manifest: manifest)
+        return try jobStore.enqueue(manifest: manifest.owned(by: vault.rootURL))
     }
 
     private func availableMeetingPath(title: String, at date: Date) throws -> String {

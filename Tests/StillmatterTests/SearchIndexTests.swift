@@ -10,16 +10,13 @@ final class SearchIndexTests: XCTestCase {
         try fixture.write("WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nAurora transcript evidence.\n", to: "Meetings/2026/01/19/09-00-sync/transcript.vtt")
         try fixture.write("{\"recording\":\"Aurora planning\",\"duration\":42}", to: "Meetings/2026/01/19/09-00-sync/recording.localref.json")
         try fixture.write("# Todos\n\n## Queue\n\n- [ ] Prepare Aurora launch\n", to: "Todos/todo.md")
-        try fixture.write("---\nstillmatter_type: activity\n---\n# Aurora rollout\n", to: "Activities/2026/01/2026-01-19-aurora.md")
         try fixture.write("# Aurora project\n", to: "Projects/Aurora.md")
-        try fixture.write("# Aurora weekly report\n", to: "Reports/Weekly/2026-W03.md")
-        try fixture.write("# Aurora daily brief\n", to: "Briefs/Daily/2026-01-19.md")
         let index = try fixture.openIndex()
 
         try index.startupScan()
 
         let kinds = Set(try index.search("Aurora").map(\.kind))
-        XCTAssertTrue(kinds.isSuperset(of: [.meeting, .summary, .transcript, .metadata, .todo, .activity, .project, .report, .brief]))
+        XCTAssertTrue(kinds.isSuperset(of: [.meeting, .summary, .transcript, .metadata, .todo, .project]))
         let todoResults = try index.search("Aurora", filter: SearchFilter(kinds: [.todo]))
         XCTAssertEqual(todoResults.map(\.sourcePath), ["Todos/todo.md"])
         XCTAssertEqual(todoResults.first?.body, "Prepare Aurora launch")
@@ -84,7 +81,7 @@ final class SearchIndexTests: XCTestCase {
     func testMarkdownSearchReturnsTheMatchingHeadingChunk() throws {
         let fixture = try SearchIndexFixture()
         try fixture.write("""
-        # Weekly Report
+        # Project notes
 
         ## Decisions
 
@@ -93,7 +90,7 @@ final class SearchIndexTests: XCTestCase {
         ## Risks
 
         Cloud cover may delay transmission.
-        """, to: "Reports/Weekly/2026-W03.md")
+        """, to: "Projects/Notes.md")
         let index = try fixture.openIndex()
         try index.startupScan()
 
@@ -139,14 +136,14 @@ final class SearchIndexTests: XCTestCase {
 
     func testFrontmatterAndMetadataInsideExcludedMediaRemainSearchable() throws {
         let fixture = try SearchIndexFixture()
-        try fixture.write("---\nstillmatter_type: activity\nproject: Zephyr\n---\n# Work\n\nOrdinary notes.\n", to: "Activities/work.md")
+        try fixture.write("---\nstillmatter_type: project\nproject: Zephyr\n---\n# Work\n\nOrdinary notes.\n", to: "Projects/work.md")
         try fixture.write("{\"recording\":\"Zephyr session\"}", to: "Media/call/recording.localref.json")
         try fixture.write("do not index Zephyr audio", to: "Media/call/audio.m4a")
         let index = try fixture.openIndex(excludedPatterns: ["Media/**"])
         try index.startupScan()
 
         XCTAssertEqual(Set(try index.search("Zephyr").map(\.kind)), [.metadata])
-        XCTAssertEqual(Set(try index.search("Zephyr").map(\.sourcePath)), ["Activities/work.md", "Media/call/recording.localref.json"])
+        XCTAssertEqual(Set(try index.search("Zephyr").map(\.sourcePath)), ["Projects/work.md", "Media/call/recording.localref.json"])
     }
 
     func testRecoveryRebuildRecreatesACorruptDatabase() throws {
@@ -161,18 +158,18 @@ final class SearchIndexTests: XCTestCase {
 
     func testIncrementalFileEventsReplaceAndRemoveIndexedChunks() throws {
         let fixture = try SearchIndexFixture()
-        try fixture.write("# Activity\n\nOld telescope notes.\n", to: "Activities/sky.md")
+        try fixture.write("# Project\n\nOld telescope notes.\n", to: "Projects/sky.md")
         let index = try fixture.openIndex()
         try index.startupScan()
 
-        try fixture.write("# Activity\n\nNew observatory notes.\n", to: "Activities/sky.md")
-        try index.update(relativePath: "Activities/sky.md")
+        try fixture.write("# Project\n\nNew observatory notes.\n", to: "Projects/sky.md")
+        try index.update(relativePath: "Projects/sky.md")
 
         XCTAssertTrue(try index.search("telescope").isEmpty)
-        XCTAssertEqual(try index.search("observatory").map(\.kind), [.activity])
+        XCTAssertEqual(try index.search("observatory").map(\.kind), [.project])
 
-        try fixture.remove("Activities/sky.md")
-        try index.update(relativePath: "Activities/sky.md")
+        try fixture.remove("Projects/sky.md")
+        try index.update(relativePath: "Projects/sky.md")
 
         XCTAssertTrue(try index.search("observatory").isEmpty)
     }

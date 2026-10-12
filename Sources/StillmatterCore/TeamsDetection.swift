@@ -90,10 +90,6 @@ public struct TeamsDetectionSnapshot: Equatable {
     public let isMeetingDetected: Bool
     public let captureDecision: TeamsDetectionCaptureDecision
 
-    public var unavailableSignalCount: Int {
-        signals.filter { $0.availability == .unavailable }.count
-    }
-
     public func signal(_ kind: TeamsDetectionSignalKind) -> TeamsDetectionSignal? {
         signals.first { $0.kind == kind }
     }

@@ -71,6 +71,19 @@ public struct GeneratedArtifactExpectation: Codable, Equatable {
 /// A versioned, persisted contract for one app-owned unit of work.
 public struct JobManifest: Codable, Equatable {
     public static let currentVersion = 1
+    public static let workspaceOwnerKey = "stillmatter_workspace_root"
+
+    /// Existing manifests without this field have unknown provenance and must not be
+    /// scheduled by a workspace-bound runtime. No database or manifest version migration.
+    public var workspaceOwner: String? { metadata[Self.workspaceOwnerKey] }
+
+    public func owned(by root: URL) -> JobManifest {
+        var tagged = metadata
+        tagged[Self.workspaceOwnerKey] = root.standardizedFileURL.resolvingSymlinksInPath().path
+        return JobManifest(version: version, type: type, title: title, executionClass: executionClass,
+                           stages: stages, sourceArtifacts: sourceArtifacts, expectedOutputs: expectedOutputs,
+                           metadata: tagged, maxAutomaticRetries: maxAutomaticRetries)
+    }
 
     public let version: Int
     public let type: String
@@ -134,6 +147,18 @@ public struct JobLogEntry: Equatable {
 public struct JobDetails: Equatable {
     public let job: JobRecord
     public let logs: [JobLogEntry]
+}
+
+public struct JobStoreChange: Equatable {
+    public let jobID: String
+    public let status: JobStatus
+    public let meetingPaths: [String]
+
+    public init(jobID: String, status: JobStatus, meetingPaths: [String]) {
+        self.jobID = jobID
+        self.status = status
+        self.meetingPaths = meetingPaths
+    }
 }
 
 public struct GeneratedArtifact: Equatable {
@@ -259,10 +284,12 @@ public enum JobsError: Error, Equatable, CustomStringConvertible {
 
 /// SQLite-backed operational state for typed jobs. Canonical workspace content is never stored here.
 public final class JobStore {
+    private let databaseURL: URL
     private let database: JobSQLiteDatabase
     private let now: () -> String
     private let inbox: TasksInbox?
     private let lock = NSRecursiveLock()
+    private var changeObservers: [UUID: (JobStoreChange) -> Void] = [:]
 
     public init(
         databaseURL: URL,
@@ -270,6 +297,7 @@ public final class JobStore {
         now: @escaping () -> String = TasksInbox.systemTimestamp
     ) throws {
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        self.databaseURL = databaseURL.standardizedFileURL.resolvingSymlinksInPath()
         database = try JobSQLiteDatabase(url: databaseURL)
         self.inbox = inbox
         self.now = now
@@ -277,10 +305,26 @@ public final class JobStore {
         try recoverInterruptedJobs()
     }
 
+    public func observeChanges(_ observer: @escaping (JobStoreChange) -> Void) -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        let id = UUID()
+        changeObservers[id] = observer
+        return id
+    }
+
+    public func removeChangeObserver(_ id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        changeObservers.removeValue(forKey: id)
+    }
+
     public func enqueue(id: String = UUID().uuidString, manifest: JobManifest) throws -> JobRecord {
         lock.lock()
         defer { lock.unlock() }
-        return try enqueueUnlocked(id: id, manifest: manifest)
+        let job = try enqueueUnlocked(id: id, manifest: manifest)
+        notifyChange(job)
+        return job
     }
 
     /// Serialize the Meeting guard and insert across JobStore connections, not just threads
@@ -295,10 +339,42 @@ public final class JobStore {
             }
             _ = try enqueueUnlocked(id: id, manifest: manifest, inTransaction: true)
         }
-        return try requireRecordUnlocked(id: id)
+        let job = try requireRecordUnlocked(id: id)
+        notifyChange(job)
+        return job
     }
 
     private var renamingMeeting = false
+
+    func sharesDatabase(with inbox: TasksInbox) -> Bool { databaseURL == inbox.databaseURL }
+
+    private func inboxFor(_ job: JobRecord) throws -> TasksInbox? {
+        guard let owner = job.manifest.workspaceOwner else { return inbox }
+        return try inbox?.scoped(to: URL(fileURLWithPath: owner, isDirectory: true))
+    }
+
+    /// The Job transaction already owns the write lock on this SQLite file. Rewrite
+    /// Inbox references through that same connection so a second connection cannot
+    /// deadlock against it. The enclosing Job transaction rolls these changes back.
+    func rewriteInboxReferencesInRename(from oldDirectory: String, to newDirectory: String, inbox: TasksInbox) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard renamingMeeting, sharesDatabase(with: inbox) else {
+            throw JobsError.invalidManifest("Inbox references require the shared rename transaction.")
+        }
+        for table in ["inbox_items", "proposal_reviews"] {
+            let idColumn = table == "inbox_items" ? "id" : "proposal_id"
+            let entries: [(String, String)] = try database.query(
+                "SELECT \(idColumn), source_ref FROM \(table) WHERE source_ref IS NOT NULL"
+            ) { (JobSQLiteDatabase.text($0, column: 0), JobSQLiteDatabase.text($0, column: 1)) }
+            for (id, source) in entries where inbox.ownsStoredID(id) {
+                let updated = source.replacingOccurrences(of: oldDirectory + "/", with: newDirectory + "/")
+                guard updated != source else { continue }
+                try database.run("UPDATE \(table) SET source_ref = ? WHERE \(idColumn) = ?",
+                    bindings: [.text(updated), .text(id)])
+            }
+        }
+    }
 
     /// Hold a cross-connection write transaction while the folder and its references move.
     /// An enqueue cannot slip between the active-Job check and the move.
@@ -317,12 +393,14 @@ public final class JobStore {
     }
 
     /// Repoint persisted inactive Job manifests after a canonical Meeting move.
-    public func rewriteMeetingReferences(from oldDirectory: String, to newDirectory: String) throws {
+    public func rewriteMeetingReferences(from oldDirectory: String, to newDirectory: String, workspaceRootURL: URL? = nil) throws {
         lock.lock()
         defer { lock.unlock() }
         let rewrite = {
             let records = try self.jobsUnlocked()
             for job in records {
+                if let workspaceRootURL,
+                   job.manifest.workspaceOwner != workspaceRootURL.standardizedFileURL.resolvingSymlinksInPath().path { continue }
                 let data = try JSONEncoder().encode(job.manifest)
                 let raw = try JSONSerialization.jsonObject(with: data)
                 func rewrite(_ value: Any) -> Any {
@@ -424,7 +502,8 @@ public final class JobStore {
             throw JobsError.jobNotRetryable(id)
         }
         try resetUnlocked(job: job, fromStageID: failedStage.definition.id, logMessage: "Manual retry requested")
-        try inbox?.removeItem(id: inboxID(jobID: id))
+        try inboxFor(job)?.removeItem(id: inboxID(jobID: id))
+        notifyChange(try requireRecordUnlocked(id: id))
     }
 
     /// Atomically rejects active work belonging to the Meeting and resets its failed Job.
@@ -447,7 +526,8 @@ public final class JobStore {
             guard job.status == .failed, let failedStage = job.stages.first(where: { $0.status == .failed }) else { throw JobsError.jobNotRetryable(id) }
             try resetUnlocked(job: job, fromStageID: failedStage.definition.id, logMessage: "Manual retry requested", inTransaction: true)
         }
-        try inbox?.removeItem(id: inboxID(jobID: id))
+        try inboxFor(try requireRecordUnlocked(id: id))?.removeItem(id: inboxID(jobID: id))
+        notifyChange(try requireRecordUnlocked(id: id))
     }
 
     /// Explicitly reruns a stage and every later stage while retaining prior successful stages.
@@ -460,7 +540,8 @@ public final class JobStore {
             throw JobsError.jobNotRetryable(id)
         }
         try resetUnlocked(job: job, fromStageID: stageID, logMessage: "Rerun requested from stage \(stageID)")
-        try inbox?.removeItem(id: inboxID(jobID: id))
+        try inboxFor(job)?.removeItem(id: inboxID(jobID: id))
+        notifyChange(try requireRecordUnlocked(id: id))
     }
 
     public func dismiss(id: String) throws {
@@ -475,7 +556,8 @@ public final class JobStore {
             )
             try appendLogUnlocked(jobID: id, level: "info", message: "Failure dismissed")
         }
-        try inbox?.removeItem(id: inboxID(jobID: id))
+        try inboxFor(job)?.removeItem(id: inboxID(jobID: id))
+        notifyChange(try requireRecordUnlocked(id: id))
     }
 
     fileprivate func beginNextStage(jobID: String) throws -> (JobRecord, JobStageDefinition)? {
@@ -496,7 +578,9 @@ public final class JobStore {
             )
             try appendLogUnlocked(jobID: jobID, level: "info", message: "Started stage \(stage.definition.id)")
         }
-        return (try requireRecordUnlocked(id: jobID), stage.definition)
+        let updated = try requireRecordUnlocked(id: jobID)
+        notifyChange(updated)
+        return (updated, stage.definition)
     }
 
     fileprivate func completeStage(jobID: String, stageID: String, messages: [String]) throws {
@@ -522,9 +606,9 @@ public final class JobStore {
             )
             try appendLogUnlocked(jobID: jobID, level: "info", message: "Completed stage \(stageID)")
         }
-        if try requireRecordUnlocked(id: jobID).status == .succeeded {
-            try inbox?.removeItem(id: inboxID(jobID: jobID))
-        }
+        let updated = try requireRecordUnlocked(id: jobID)
+        if updated.status == .succeeded { try inboxFor(updated)?.removeItem(id: inboxID(jobID: jobID)) }
+        notifyChange(updated)
     }
 
     fileprivate func failStage(jobID: String, stageID: String, error: Error) throws -> Bool {
@@ -559,12 +643,13 @@ public final class JobStore {
             )
         }
         if !willRetry {
-            try inbox?.recordFailedJob(
+            try inboxFor(job)?.recordFailedJob(
                 id: inboxID(jobID: jobID),
                 title: "\(job.manifest.title) failed",
                 details: message
             )
         }
+        notifyChange(try requireRecordUnlocked(id: jobID))
         return willRetry
     }
 
@@ -737,6 +822,16 @@ public final class JobStore {
         )
     }
 
+    private func notifyChange(_ job: JobRecord) {
+        let paths = Set((job.manifest.sourceArtifacts.map(\.relativePath) +
+                         job.manifest.expectedOutputs.map(\.relativePath)).filter {
+            $0 == "Meetings" || $0.hasPrefix("Meetings/")
+        }).sorted()
+        let change = JobStoreChange(jobID: job.id, status: job.status, meetingPaths: paths)
+        let observers = Array(changeObservers.values)
+        for observer in observers { observer(change) }
+    }
+
     private func inboxID(jobID: String) -> String { "job:\(jobID)" }
 }
 
@@ -746,6 +841,7 @@ public final class JobScheduler {
     private let executor: JobExecuting
     private let lightweightLimit: Int
     private let eligibleJobTypes: Set<String>?
+    private let workspaceOwner: String?
     private let heavyExecutionGate: JobHeavyExecutionGate
     private let heavyGateOwner = UUID()
     private let validators: [String: GeneratedArtifactValidator]
@@ -754,12 +850,14 @@ public final class JobScheduler {
     private var activeHeavyJobID: String?
     private var activeLightweightJobIDs: Set<String> = []
     private var isPaused = false
+    private var isStopped = false
 
     public init(
         store: JobStore,
         executor: JobExecuting,
         lightweightLimit: Int = 2,
         eligibleJobTypes: Set<String>? = nil,
+        workspaceRootURL: URL? = nil,
         heavyExecutionGate: JobHeavyExecutionGate = JobHeavyExecutionGate(),
         validators: [String: GeneratedArtifactValidator] = [
             "json": JSONGeneratedArtifactValidator(),
@@ -772,6 +870,7 @@ public final class JobScheduler {
         self.executor = executor
         self.lightweightLimit = max(1, lightweightLimit)
         self.eligibleJobTypes = eligibleJobTypes
+        self.workspaceOwner = workspaceRootURL?.standardizedFileURL.resolvingSymlinksInPath().path
         self.heavyExecutionGate = heavyExecutionGate
         self.validators = validators
         self.onWorkQueuedWhilePaused = onWorkQueuedWhilePaused
@@ -779,6 +878,9 @@ public final class JobScheduler {
 
     @discardableResult
     public func enqueue(id: String = UUID().uuidString, manifest: JobManifest) throws -> JobRecord {
+        if let workspaceOwner, manifest.workspaceOwner != workspaceOwner {
+            throw JobsError.invalidManifest("Cannot enqueue a Job without this workspace's ownership identity.")
+        }
         let record = try store.enqueue(id: id, manifest: manifest)
         start()
         return record
@@ -786,8 +888,9 @@ public final class JobScheduler {
 
     public func start() {
         stateQueue.async { [weak self] in
-            self?.isPaused = false
-            self?.scheduleAvailableWork()
+            guard let self, !self.isStopped else { return }
+            self.isPaused = false
+            self.scheduleAvailableWork()
         }
     }
 
@@ -795,17 +898,38 @@ public final class JobScheduler {
         stateQueue.async { [weak self] in self?.isPaused = true }
     }
 
+    /// Prevents new stages before a workspace switch while an already-running stage finishes.
+    public func pauseSynchronously() {
+        stateQueue.sync { isPaused = true }
+    }
+
+    /// Terminal, synchronous barrier for application shutdown. Running stages may persist their
+    /// result but can neither resume this scheduler nor start another stage afterwards.
+    public func stop() {
+        stateQueue.sync { isStopped = true; isPaused = true }
+    }
+
     public func retry(id: String) throws {
+        try requireOwnedJob(id: id)
         try store.retry(id: id)
         start()
     }
 
     public func retry(id: String, meetingRelativePath: String, captureSessionID: String? = nil) throws {
+        try requireOwnedJob(id: id)
         try store.retry(id: id, meetingRelativePath: meetingRelativePath, captureSessionID: captureSessionID)
         start()
     }
 
+    private func requireOwnedJob(id: String) throws {
+        guard let workspaceOwner else { return }
+        guard try store.job(id: id)?.manifest.workspaceOwner == workspaceOwner else {
+            throw JobsError.invalidManifest("Job workspace is unverified or belongs to another workspace. Return to its original workspace or resolve its ownership before retrying.")
+        }
+    }
+
     public func rerun(id: String, fromStageID stageID: String) throws {
+        try requireOwnedJob(id: id)
         try store.rerun(id: id, fromStageID: stageID)
         start()
     }
@@ -819,10 +943,11 @@ public final class JobScheduler {
     }
 
     private func scheduleAvailableWork() {
-        guard !isPaused else { return }
+        guard !isPaused, !isStopped else { return }
         do {
             let queued = try store.jobs(status: .queued)
-            for job in queued where eligibleJobTypes?.contains(job.manifest.type) ?? true {
+            for job in queued where (eligibleJobTypes?.contains(job.manifest.type) ?? true)
+                && (workspaceOwner == nil || job.manifest.workspaceOwner == workspaceOwner) {
                 switch job.manifest.executionClass {
                 case .heavy:
                     guard activeHeavyJobID == nil else { continue }

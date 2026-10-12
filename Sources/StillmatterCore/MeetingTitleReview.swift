@@ -13,18 +13,22 @@ public final class MeetingTitleReviewService {
     private let inbox: TasksInbox
     private let jobs: JobStore?
     private let index: SearchIndex?
+    private let enforceWorkspaceOwner: Bool
 
-    public init(vault: WorkspaceVault, inbox: TasksInbox, jobStore: JobStore? = nil, searchIndex: SearchIndex? = nil) {
+    public init(vault: WorkspaceVault, inbox: TasksInbox, jobStore: JobStore? = nil, searchIndex: SearchIndex? = nil,
+                enforceWorkspaceOwner: Bool = false) {
         self.vault = vault
         self.inbox = inbox
         self.jobs = jobStore
         self.index = searchIndex
+        self.enforceWorkspaceOwner = enforceWorkspaceOwner
     }
 
     public static func reviewID(sessionID: String) -> String { "meeting-title:\(sessionID)" }
 
     @discardableResult
     public func accept(id: String, title: String) throws -> String {
+        if enforceWorkspaceOwner { try inbox.requireOwner(vault.rootURL) }
         guard let item = try inbox.items(category: .required).first(where: { $0.id == id && $0.kind == .titleReview }),
               let path = item.sourceRef else { throw MeetingTitleReviewError.notPending }
         let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,8 +44,14 @@ public final class MeetingTitleReviewService {
             throw MeetingTitleReviewError.notMeeting
         }
         let oldTitle = String(titleLine.dropFirst(7))
-        guard oldTitle.hasPrefix("Untitled Meeting at ") else { throw MeetingTitleReviewError.changedTitle }
         guard heading == "# \(oldTitle)" else { throw MeetingTitleReviewError.changedTitle }
+        // A previous attempt may have updated Markdown before the Inbox deletion
+        // encountered an external SQLite lock. Completing it is safe and idempotent.
+        if oldTitle == cleaned {
+            try inbox.removeItem(id: id)
+            return path
+        }
+        guard oldTitle.hasPrefix("Untitled Meeting at ") else { throw MeetingTitleReviewError.changedTitle }
         let updated = text.replacingOccurrences(of: titleLine + "\n", with: "title: \(cleaned)\n")
             .replacingOccurrences(of: heading + "\n", with: "# \(cleaned)\n")
         let words = cleaned.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
@@ -51,12 +61,22 @@ public final class MeetingTitleReviewService {
         let basename = (directory as NSString).lastPathComponent
         let timePrefix = basename.components(separatedBy: "-untitled-meeting").first ?? basename
         var finalPath = path
-        if !slug.isEmpty, basename.contains("-untitled-meeting"),
+        // Moving a Meeting folder while transcription owns the original path would
+        // invalidate its inputs. The title is still editable during processing; only
+        // the optional folder rename waits until no Job is active.
+        let session = text.components(separatedBy: "\n").first(where: { $0.hasPrefix("capture_session_id: ") })
+            .map { String($0.dropFirst("capture_session_id: ".count)) }
+        let active = try jobs?.jobs().contains { job in
+            (job.status == .queued || job.status == .running) &&
+                (!enforceWorkspaceOwner || job.manifest.workspaceOwner == vault.rootURL.standardizedFileURL.resolvingSymlinksInPath().path) &&
+                MeetingManagementService.owns(job, session: session, path: path)
+        } ?? false
+        if !active, !slug.isEmpty, basename.contains("-untitled-meeting"),
            !directory.contains(".."), !cleaned.contains("/") {
             let candidate = "\(parent)/\(timePrefix)-\(slug)/meeting.md"
             if candidate != path {
                 finalPath = try MeetingManagementService(vault: vault, jobStore: jobs, inbox: inbox,
-                    searchIndex: index).rename(meetingID: path, title: cleaned,
+                    searchIndex: index, enforceWorkspaceOwner: enforceWorkspaceOwner).rename(meetingID: path, title: cleaned,
                     expectedVersion: current.version).row.meetingRelativePath
             } else {
                 _ = try vault.writeMarkdown(Data(updated.utf8), relativePath: path, expectedVersion: current.version)

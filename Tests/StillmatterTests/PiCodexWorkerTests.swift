@@ -181,7 +181,7 @@ private final class PiWorkerFixture {
                 ),
                 PiWorkflowOutput(relativePath: "Generated/kickoff-proposals.json", kind: .proposalJSON)
             ],
-            forbiddenMutations: ["Todos/todo.md", "Activities/**", "Meetings/**"],
+            forbiddenMutations: ["Todos/todo.md", "Meetings/**"],
             timeoutSeconds: 120
         )
     }

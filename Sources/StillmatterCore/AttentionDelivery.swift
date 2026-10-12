@@ -2,7 +2,6 @@ import Foundation
 
 /// Durable navigation identity; titles are display-only and never used to route actions.
 public enum AttentionTarget: Hashable, Codable {
-    case weeklyReport(String)
     case titleReview(String)
     case inboxItem(String)
     case captureFailure(String)

@@ -61,7 +61,7 @@ final class WorkspaceVaultTests: XCTestCase {
     func testMarkdownTransactionChangesNothingWhenAnyVersionConflicts() throws {
         let fixture = try VaultFixture()
         let vault = fixture.vault()
-        let firstPath = "Briefs/Weekly/2026-W38.md"
+        let firstPath = "Notes/planning.md"
         let secondPath = "Todos/todo.md"
         let firstVersion = try vault.writeMarkdown(Data("draft\n".utf8), relativePath: firstPath, expectedVersion: nil)
         let staleSecondVersion = try vault.writeMarkdown(Data("todos before\n".utf8), relativePath: secondPath, expectedVersion: nil)
@@ -92,7 +92,7 @@ final class WorkspaceVaultTests: XCTestCase {
         let fixture = try VaultFixture()
         let vault = fixture.vault()
         let todoVersion = try vault.writeMarkdown(Data("before todo\n".utf8), relativePath: "Todos/todo.md", expectedVersion: nil)
-        let briefVersion = try vault.writeMarkdown(Data("before brief\n".utf8), relativePath: "Briefs/Weekly/2026-W38.md", expectedVersion: nil)
+        let noteVersion = try vault.writeMarkdown(Data("before note\n".utf8), relativePath: "Notes/planning.md", expectedVersion: nil)
 
         try vault.replaceMarkdownTransaction([
             WorkspaceMarkdownReplacement(
@@ -101,18 +101,18 @@ final class WorkspaceVaultTests: XCTestCase {
                 expectedVersion: todoVersion
             ),
             WorkspaceMarkdownReplacement(
-                relativePath: "Briefs/Weekly/2026-W38.md",
-                data: Data("after brief\n".utf8),
-                expectedVersion: briefVersion
+                relativePath: "Notes/planning.md",
+                data: Data("after note\n".utf8),
+                expectedVersion: noteVersion
             )
         ])
 
         XCTAssertEqual(try String(contentsOf: fixture.workspaceRoot.appendingPathComponent("Todos/todo.md")), "after todo\n")
-        XCTAssertEqual(try String(contentsOf: fixture.workspaceRoot.appendingPathComponent("Briefs/Weekly/2026-W38.md")), "after brief\n")
+        XCTAssertEqual(try String(contentsOf: fixture.workspaceRoot.appendingPathComponent("Notes/planning.md")), "after note\n")
 
         let snapshot = try fixture.onlySnapshot(in: fixture.appSupportRoot)
         XCTAssertEqual(try String(contentsOf: snapshot.appendingPathComponent("Todos/todo.md")), "before todo\n")
-        XCTAssertEqual(try String(contentsOf: snapshot.appendingPathComponent("Briefs/Weekly/2026-W38.md")), "before brief\n")
+        XCTAssertEqual(try String(contentsOf: snapshot.appendingPathComponent("Notes/planning.md")), "before note\n")
     }
 
     func testMoveSnapshotsSourceBeforeCrossFileOperation() throws {

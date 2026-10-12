@@ -5,8 +5,6 @@ public enum TodoStatus: Equatable {
     case done
     case blocked
     case canceled
-
-    var isTerminal: Bool { self == .done || self == .canceled }
 }
 
 struct TodoMarkdownCheckbox {

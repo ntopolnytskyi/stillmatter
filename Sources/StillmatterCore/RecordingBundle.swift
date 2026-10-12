@@ -199,6 +199,34 @@ public final class RecordingBundleFinalizer: RecordingBundleFinalizing {
         }
     }
 
+    /// Playback-only verification after a recording media directory has moved. The sidecar
+    /// and doorway remain immutable; every referenced artifact must have the same basename,
+    /// recorded presence, and (where supplied) SHA-256 in the candidate directory.
+    public func validatedRelocatedAudio(track: RecordingBundleTrack, originalDirectory: URL, relocatedDirectory: URL) throws -> String {
+        let originals = [track.recoveryFilePath, track.finalFilePath, track.metadataFilePath, track.preferredAudioFilePath]
+        guard originals.allSatisfy({ URL(fileURLWithPath: $0).deletingLastPathComponent().standardizedFileURL == originalDirectory.standardizedFileURL }),
+              track.preferredAudioFilePath == track.recoveryFilePath || track.preferredAudioFilePath == track.finalFilePath,
+              Set(originals.prefix(3).map { URL(fileURLWithPath: $0).lastPathComponent }).count == 3 else {
+            throw RecordingBundleError.changedArtifact(track.preferredAudioFilePath)
+        }
+        for (path, expected, hash) in [
+            (track.recoveryFilePath, track.recoveryFileExists, track.recoveryFileSHA256),
+            (track.finalFilePath, track.finalFileExists, track.finalFileSHA256),
+            (track.metadataFilePath, track.metadataFileExists, nil)
+        ] {
+            let candidate = relocatedDirectory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent).path
+            guard fileManager.fileExists(atPath: candidate) == expected else {
+                throw RecordingBundleError.changedArtifact(path)
+            }
+            if let hash, try sha256(path: candidate) != hash {
+                throw RecordingBundleError.changedArtifact(path)
+            }
+        }
+        let audio = relocatedDirectory.appendingPathComponent(URL(fileURLWithPath: track.preferredAudioFilePath).lastPathComponent).path
+        guard fileManager.isReadableFile(atPath: audio) else { throw RecordingBundleError.missingMicrophoneAudio(audio) }
+        return audio
+    }
+
     private func makeMicTrack(_ metadata: MicTrackRecordingMetadata) throws -> RecordingBundleTrack {
         try makeTrack(
             role: "microphone",

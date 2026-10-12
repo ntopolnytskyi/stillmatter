@@ -3,6 +3,74 @@ import XCTest
 @testable import StillmatterCore
 
 final class MeetingTitleReviewTests: XCTestCase {
+    func testStaleTitleActionAndCollidingDoorwaysCannotApplyAReviewToB() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = try TasksInbox(databaseURL: root.appendingPathComponent("operations.sqlite"))
+        let a = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("A"), appSupportRootURL: root.appendingPathComponent("support"))
+        let b = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("B"), appSupportRootURL: root.appendingPathComponent("support"))
+        let path = "Meetings/2026/01/02/09-10-untitled-meeting/meeting.md"
+        let text = "---\ntype: meeting\ntitle: Untitled Meeting\n---\n# Untitled Meeting\n"
+        _ = try a.writeMarkdown(Data(text.utf8), relativePath: path, expectedVersion: nil)
+        _ = try b.writeMarkdown(Data(text.utf8), relativePath: path, expectedVersion: nil)
+        let inboxA = try base.scoped(to: a.rootURL)
+        let inboxB = try base.scoped(to: b.rootURL)
+        try inboxA.requireTitleReview(id: "same", title: "A", sourceRef: path)
+        XCTAssertThrowsError(try MeetingTitleReviewService(vault: b, inbox: inboxA, enforceWorkspaceOwner: true)
+            .accept(id: "same", title: "Wrong"))
+        XCTAssertThrowsError(try MeetingTitleReviewService(vault: b, inbox: inboxB, enforceWorkspaceOwner: true)
+            .accept(id: "same", title: "Wrong"))
+        XCTAssertEqual(String(decoding: try b.readMarkdown(relativePath: path).data, as: UTF8.self), text)
+        XCTAssertEqual(try inboxA.items(category: .required).map(\.id), ["same"])
+        try inboxB.requireTitleReview(id: "same", title: "B", sourceRef: path)
+        XCTAssertEqual(try inboxA.items(category: .required).map(\.title), ["A"])
+        XCTAssertEqual(try inboxB.items(category: .required).map(\.title), ["B"])
+    }
+
+    func testAcceptWithSharedJobAndInboxDatabaseDoesNotLockItself() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"),
+                                   appSupportRootURL: root.appendingPathComponent("support"))
+        let databaseURL = root.appendingPathComponent("operations.sqlite")
+        let inbox = try TasksInbox(databaseURL: databaseURL)
+        let jobs = try JobStore(databaseURL: databaseURL, inbox: inbox)
+        let path = "Meetings/2026/01/02/09-10-untitled-meeting/meeting.md"
+        let old = "Untitled Meeting at 2026-01-02 09:10"
+        _ = try vault.writeMarkdown(Data("---\ntype: meeting\ntitle: \(old)\n---\n# \(old)\n".utf8),
+                                    relativePath: path, expectedVersion: nil)
+        try inbox.requireTitleReview(id: "meeting-title:shared", title: "Review", sourceRef: path)
+        let moved = try MeetingTitleReviewService(vault: vault, inbox: inbox, jobStore: jobs)
+            .accept(id: "meeting-title:shared", title: "Project Sync")
+        XCTAssertEqual(moved, "Meetings/2026/01/02/09-10-project-sync/meeting.md")
+        XCTAssertTrue(try inbox.items(category: .required).isEmpty)
+        XCTAssertNil(try vault.versionOfMarkdown(relativePath: path))
+    }
+
+    func testAcceptWhileTranscriptionIsQueuedUpdatesTitleWithoutMovingJobSources() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"),
+                                   appSupportRootURL: root.appendingPathComponent("support"))
+        let databaseURL = root.appendingPathComponent("operations.sqlite")
+        let inbox = try TasksInbox(databaseURL: databaseURL)
+        let jobs = try JobStore(databaseURL: databaseURL, inbox: inbox)
+        let path = "Meetings/2026/01/02/09-10-untitled-meeting/meeting.md"
+        let old = "Untitled Meeting at 2026-01-02 09:10"
+        _ = try vault.writeMarkdown(Data("---\ntype: meeting\ntitle: \(old)\n---\n# \(old)\n".utf8),
+                                    relativePath: path, expectedVersion: nil)
+        try inbox.requireTitleReview(id: "meeting-title:active", title: "Review", sourceRef: path)
+        _ = try jobs.enqueue(manifest: JobManifest(type: "transcription", title: "Transcribe", executionClass: .heavy,
+            stages: [JobStageDefinition(id: "transcribe", title: "Transcribe")],
+            sourceArtifacts: [JobArtifactReference(relativePath: path, role: "meeting")]))
+        let kept = try MeetingTitleReviewService(vault: vault, inbox: inbox, jobStore: jobs)
+            .accept(id: "meeting-title:active", title: "Project Sync")
+        XCTAssertEqual(kept, path)
+        XCTAssertTrue(String(decoding: try vault.readMarkdown(relativePath: path).data, as: UTF8.self).contains("title: Project Sync"))
+        XCTAssertTrue(try inbox.items(category: .required).isEmpty)
+        XCTAssertEqual(try jobs.jobs().first?.manifest.sourceArtifacts.first?.relativePath, path)
+    }
+
     func testAcceptMovesDoorwayWithoutOldAlias() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -49,6 +49,7 @@ public enum WorkspaceVaultError: Error, Equatable {
 
 public final class WorkspaceVault {
     private let workspaceRootURL: URL
+    public var rootURL: URL { workspaceRootURL }
     private let appSupportRootURL: URL
     private let snapshotsURL: URL
     private let retentionPolicy: WorkspaceSnapshotRetentionPolicy

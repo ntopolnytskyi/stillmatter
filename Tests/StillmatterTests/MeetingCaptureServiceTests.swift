@@ -42,6 +42,12 @@ final class MeetingCaptureServiceTests: XCTestCase {
         let inbox = try TasksInbox(databaseURL: fixture.appSupportRoot.appendingPathComponent("inbox.sqlite"))
         var now = fixture.now
         let service = fixture.service(now: { now }, inbox: inbox)
+        var idlePublishedAfterReview = false
+        service.observe { snapshot in
+            if snapshot.state == .idle && snapshot.meetingRelativePath != nil {
+                idlePublishedAfterReview = (try? inbox.items(category: .required).contains { $0.kind == .titleReview }) == true
+            }
+        }
         let session = try service.startManual()
         XCTAssertTrue(try inbox.items(category: .required).isEmpty)
         now = now.addingTimeInterval(10 * 60)
@@ -50,6 +56,7 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertEqual(reviews.map(\.kind), [.titleReview])
         XCTAssertEqual(reviews.first?.sourceRef, session.meetingRelativePath)
         XCTAssertEqual(reviews.first?.title, "Untitled meeting 09:30-09:40")
+        XCTAssertTrue(idlePublishedAfterReview, "Idle must not expose a workspace switch before title review is persisted")
     }
 
     func testManualStartCreatesDoorwayNoteAndEntersRecordingImmediately() throws {

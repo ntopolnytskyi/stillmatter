@@ -18,8 +18,31 @@ public struct MeetingJobPresentation: Equatable, Identifiable { public let jobID
     public var id: String { jobID }
     public init(jobID: String, title: String, status: JobStatus, stage: String?, error: String?, attemptCount: Int = 0, retryReason: String? = nil) { self.jobID=jobID; self.title=title; self.status=status; self.stage=stage; self.error=error; self.attemptCount=attemptCount; self.retryReason=retryReason }
 }
-public struct MeetingCitation: Equatable { public let segmentID: String; public let startSeconds: Double; public let endSeconds: Double; public let seekSeconds: Double?
-    public init(segmentID: String, startSeconds: Double, endSeconds: Double, seekSeconds: Double? = nil) { self.segmentID=segmentID; self.startSeconds=startSeconds; self.endSeconds=endSeconds; self.seekSeconds=seekSeconds }
+public struct MeetingCitation: Equatable {
+    public let segmentID: String
+    public let startSeconds: Double
+    public let endSeconds: Double
+    public let seekSeconds: Double?
+
+    public init(segmentID: String, startSeconds: Double, endSeconds: Double, seekSeconds: Double? = nil) {
+        self.segmentID = segmentID
+        self.startSeconds = startSeconds
+        self.endSeconds = endSeconds
+        self.seekSeconds = seekSeconds
+    }
+
+    public func matches(_ segment: MeetingTranscriptSegment) -> Bool {
+        segment.id == segmentID && startSeconds.isFinite && endSeconds.isFinite &&
+            abs(segment.startSeconds - startSeconds) < 0.001 &&
+            abs(segment.endSeconds - endSeconds) < 0.001
+    }
+
+    public func validatedSeekSeconds(playbackDuration: Double?) -> Double? {
+        guard let seekSeconds, seekSeconds.isFinite, seekSeconds >= 0,
+              let playbackDuration, playbackDuration.isFinite,
+              seekSeconds <= playbackDuration else { return nil }
+        return seekSeconds
+    }
 }
 public struct MeetingCitedOutcome: Equatable { public let text: String; public let citations: [MeetingCitation]
     public init(text: String, citations: [MeetingCitation]) { self.text = text; self.citations = citations }
@@ -60,8 +83,9 @@ public struct MeetingPlayback: Equatable {
     }
 }
 public struct MeetingTranscriptSegment: Equatable, Identifiable { public let id: String; public let startSeconds: Double; public let endSeconds: Double; public let track: String; public let speaker: String; public let text: String; public let seekSeconds: Double? }
-public struct MeetingBrowserDetail: Equatable { public let decisions: [MeetingCitedOutcome]; public let openQuestions: [MeetingCitedOutcome]; public let transcript: [MeetingTranscriptSegment]; public let row: MeetingBrowserRow; public let doorwayText: String; public let doorwayVersion: WorkspaceFileVersion?; public let humanNotes: String; public let artifacts: [MeetingArtifact]; public let job: MeetingJobPresentation?; public let jobs: [MeetingJobPresentation]; public let summaryVersion: WorkspaceFileVersion?; public let summary: MeetingSummarySections?; public let extraction: MeetingSummaryExtraction?; public let myActionItems: [MeetingActionItem]; public let otherActionItems: [MeetingActionItem]; public let staleProposals: [ActionItemProposal]; public let playback: MeetingPlayback
-    public init(row: MeetingBrowserRow, doorwayText: String, doorwayVersion: WorkspaceFileVersion? = nil, humanNotes: String = "", artifacts: [MeetingArtifact] = [], job: MeetingJobPresentation? = nil, jobs: [MeetingJobPresentation] = [], summaryVersion: WorkspaceFileVersion? = nil, summary: MeetingSummarySections? = nil, extraction: MeetingSummaryExtraction? = nil, myActionItems: [MeetingActionItem] = [], otherActionItems: [MeetingActionItem] = [], staleProposals: [ActionItemProposal] = [], transcript: [MeetingTranscriptSegment] = [], decisions: [MeetingCitedOutcome] = [], openQuestions: [MeetingCitedOutcome] = [], playback: MeetingPlayback = MeetingPlayback(capability: .unavailable, message: "Recording Bundle unavailable")) { self.decisions=decisions; self.openQuestions=openQuestions; self.transcript=transcript; self.playback=playback; self.row=row; self.doorwayText=doorwayText; self.doorwayVersion=doorwayVersion; self.humanNotes=humanNotes; self.artifacts=artifacts; self.job=job; self.jobs=jobs; self.summaryVersion=summaryVersion; self.summary=summary; self.extraction=extraction; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.staleProposals=staleProposals }
+public struct MeetingActionDraft: Equatable { public let title: String; public let comment: String; public init(title: String, comment: String) { self.title = title; self.comment = comment } }
+public struct MeetingBrowserDetail: Equatable { public let actionDrafts: [String: MeetingActionDraft]; public let decisions: [MeetingCitedOutcome]; public let openQuestions: [MeetingCitedOutcome]; public let transcript: [MeetingTranscriptSegment]; public let row: MeetingBrowserRow; public let doorwayText: String; public let doorwayVersion: WorkspaceFileVersion?; public let humanNotes: String; public let artifacts: [MeetingArtifact]; public let job: MeetingJobPresentation?; public let jobs: [MeetingJobPresentation]; public let summaryVersion: WorkspaceFileVersion?; public let summary: MeetingSummarySections?; public let extraction: MeetingSummaryExtraction?; public let myActionItems: [MeetingActionItem]; public let otherActionItems: [MeetingActionItem]; public let staleProposals: [ActionItemProposal]; public let playback: MeetingPlayback
+    public init(row: MeetingBrowserRow, doorwayText: String, doorwayVersion: WorkspaceFileVersion? = nil, humanNotes: String = "", artifacts: [MeetingArtifact] = [], job: MeetingJobPresentation? = nil, jobs: [MeetingJobPresentation] = [], summaryVersion: WorkspaceFileVersion? = nil, summary: MeetingSummarySections? = nil, extraction: MeetingSummaryExtraction? = nil, myActionItems: [MeetingActionItem] = [], otherActionItems: [MeetingActionItem] = [], staleProposals: [ActionItemProposal] = [], transcript: [MeetingTranscriptSegment] = [], decisions: [MeetingCitedOutcome] = [], openQuestions: [MeetingCitedOutcome] = [], playback: MeetingPlayback = MeetingPlayback(capability: .unavailable, message: "Recording Bundle unavailable"), actionDrafts: [String: MeetingActionDraft] = [:]) { self.actionDrafts=actionDrafts; self.decisions=decisions; self.openQuestions=openQuestions; self.transcript=transcript; self.playback=playback; self.row=row; self.doorwayText=doorwayText; self.doorwayVersion=doorwayVersion; self.humanNotes=humanNotes; self.artifacts=artifacts; self.job=job; self.jobs=jobs; self.summaryVersion=summaryVersion; self.summary=summary; self.extraction=extraction; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.staleProposals=staleProposals }
 }
 public enum MeetingManagementError: Error, Equatable, LocalizedError { case unavailable; case malformed(String); case notFound(String); case retryRejected(String)
     public var errorDescription: String? { if case let .retryRejected(reason) = self { return reason }; return "Meeting processing is unavailable." }
@@ -69,20 +93,32 @@ public enum MeetingManagementError: Error, Equatable, LocalizedError { case unav
 
 public final class MeetingManagementService {
     private let vault: WorkspaceVault; private let jobs: JobStore?; private let inbox: TasksInbox?; private let index: SearchIndex?; private let captureSnapshot: () -> CaptureSnapshot?
+    private let enforceWorkspaceOwner: Bool
+    private func workspaceJobs() throws -> [JobRecord] {
+        let records = try jobs?.jobs() ?? []
+        guard enforceWorkspaceOwner else { return records }
+        let owner = vault.rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        return records.filter { $0.manifest.workspaceOwner == owner }
+    }
+    private let recordingMediaURL: URL?
     private let retryDispatcher: (String, String, String, String?) throws -> Void
     private let retryUnavailableReason: (String) -> String?
     private let onReprocessQueued: () -> Void
-    public init(vault: WorkspaceVault, jobStore: JobStore? = nil, inbox: TasksInbox? = nil, searchIndex: SearchIndex? = nil, captureSnapshot: @escaping () -> CaptureSnapshot? = { nil }, retryUnavailableReason: @escaping (String) -> String? = { _ in "Retry unavailable: processing is not configured." }, retryDispatcher: @escaping (String, String, String, String?) throws -> Void = { _, _, _, _ in throw MeetingManagementError.retryRejected("Retry unavailable: processing is not configured.") }, onReprocessQueued: @escaping () -> Void = {}) { self.vault=vault; self.jobs=jobStore; self.inbox=inbox; self.index=searchIndex; self.captureSnapshot=captureSnapshot; self.retryUnavailableReason=retryUnavailableReason; self.retryDispatcher=retryDispatcher; self.onReprocessQueued=onReprocessQueued }
+    private let onMeetingChanged: ([String]) -> Void
+    public init(vault: WorkspaceVault, jobStore: JobStore? = nil, inbox: TasksInbox? = nil, searchIndex: SearchIndex? = nil, recordingMediaURL: URL? = nil, captureSnapshot: @escaping () -> CaptureSnapshot? = { nil }, retryUnavailableReason: @escaping (String) -> String? = { _ in "Retry unavailable: processing is not configured." }, retryDispatcher: @escaping (String, String, String, String?) throws -> Void = { _, _, _, _ in throw MeetingManagementError.retryRejected("Retry unavailable: processing is not configured.") }, onReprocessQueued: @escaping () -> Void = {}, onMeetingChanged: @escaping ([String]) -> Void = { _ in }, enforceWorkspaceOwner: Bool = false) { self.vault=vault; self.jobs=jobStore; self.inbox=inbox; self.index=searchIndex; self.recordingMediaURL=recordingMediaURL; self.captureSnapshot=captureSnapshot; self.retryUnavailableReason=retryUnavailableReason; self.retryDispatcher=retryDispatcher; self.onReprocessQueued=onReprocessQueued; self.onMeetingChanged=onMeetingChanged; self.enforceWorkspaceOwner=enforceWorkspaceOwner }
     public func actionDraft(id: String) throws -> (title: String, comment: String)? { try inbox?.proposalDraft(id: id) }
 
     public func saveActionDraft(id: String, title: String, comment: String) throws {
         guard let inbox else { throw MeetingManagementError.unavailable }
+        let meetingPath = proposalMeetingPath(id: id)
         try inbox.saveProposalDraft(id: id, title: title, comment: comment)
+        if let meetingPath { onMeetingChanged([meetingPath]) }
     }
 
     public func reviewAction(id: String, accept: Bool) throws {
         guard let inbox else { throw MeetingManagementError.unavailable }
-        let reviewer = ActionItemProposalReviewer(inbox: inbox, todoMutator: TodoItemMutator(vault: vault))
+        let meetingPath = proposalMeetingPath(id: id)
+        let reviewer = ActionItemProposalReviewer(inbox: inbox, todoMutator: TodoItemMutator(vault: vault), workspaceRootURL: enforceWorkspaceOwner ? vault.rootURL : nil)
         if accept {
             guard let version = try vault.versionOfMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath) else {
                 throw MeetingManagementError.unavailable
@@ -91,6 +127,7 @@ public final class MeetingManagementService {
         } else {
             try reviewer.dismiss(proposalID: id)
         }
+        if let meetingPath { onMeetingChanged([meetingPath]) }
     }
 
     public func list() throws -> [MeetingBrowserRow] { try list(filters: MeetingBrowserFilters()) }
@@ -99,9 +136,17 @@ public final class MeetingManagementService {
     }
 
     /// Supplies project choices and filtered rows from the same workspace scan.
+    /// Captures the workspace-derived browser projection once. Callers may reuse it for
+    /// multiple filter selections until a workspace or Job invalidation arrives.
+    public func browserProjection() throws -> [MeetingBrowserRow] { try allRows() }
+
     public func browserRows(filters: MeetingBrowserFilters) throws -> (visible: [MeetingBrowserRow], available: [MeetingBrowserRow]) {
-        let rows = try allRows()
-        let available = rows.filter { $0.isArchived == filters.archived }
+        try browserRows(filters: filters, from: browserProjection())
+    }
+
+    public func browserRows(filters: MeetingBrowserFilters,
+                            from projection: [MeetingBrowserRow]) throws -> (visible: [MeetingBrowserRow], available: [MeetingBrowserRow]) {
+        let available = projection.filter { $0.isArchived == filters.archived }
         return (try filter(available, using: filters), available)
     }
 
@@ -159,9 +204,9 @@ public final class MeetingManagementService {
     public func detail(for row: MeetingBrowserRow) throws -> MeetingBrowserDetail {
         do { let source=try vault.readMarkdown(relativePath: row.meetingRelativePath); return makeDetail(row: row, source: source) } catch let e as MeetingManagementError { throw e } catch { throw MeetingManagementError.unavailable }
     }
-    public func saveHumanNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { let d=try detail(for:id); let text=Self.replaceNotes(in:d.doorwayText, notes:notes); _=try vault.writeMarkdown(Data(text.utf8), relativePath:d.row.meetingRelativePath, expectedVersion:expectedVersion); try? index?.update(relativePath:d.row.meetingRelativePath); return try detail(for:id) }
+    public func saveHumanNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { let d=try detail(for:id); let text=Self.replaceNotes(in:d.doorwayText, notes:notes); _=try vault.writeMarkdown(Data(text.utf8), relativePath:d.row.meetingRelativePath, expectedVersion:expectedVersion); try? index?.update(relativePath:d.row.meetingRelativePath); onMeetingChanged([d.row.meetingRelativePath]); return try detail(for:id) }
     public func saveNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { try saveHumanNotes(notes, for:id, expectedVersion:expectedVersion) }
-    public func saveSummary(_ sections: MeetingSummarySections, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { let d=try detail(for:id); let path=Self.sibling(d.row.meetingRelativePath, "summary.md"); let old=try vault.readMarkdown(relativePath:path); guard old.version == expectedVersion else { throw WorkspaceVaultError.conflict(relativePath:path, expected:expectedVersion, actual:old.version) }; let front=Self.frontmatter(String(data:old.data,encoding:.utf8) ?? ""); let body=Self.renderSummary(sections); _=try vault.writeMarkdown(Data((front+body).utf8), relativePath:path, expectedVersion:expectedVersion); try? index?.update(relativePath:path); return try detail(for:id) }
+    public func saveSummary(_ sections: MeetingSummarySections, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { let d=try detail(for:id); let path=Self.sibling(d.row.meetingRelativePath, "summary.md"); let old=try vault.readMarkdown(relativePath:path); guard old.version == expectedVersion else { throw WorkspaceVaultError.conflict(relativePath:path, expected:expectedVersion, actual:old.version) }; let front=Self.frontmatter(String(data:old.data,encoding:.utf8) ?? ""); let body=Self.renderSummary(sections); _=try vault.writeMarkdown(Data((front+body).utf8), relativePath:path, expectedVersion:expectedVersion); try? index?.update(relativePath:path); onMeetingChanged([path]); return try detail(for:id) }
     public func sourceArtifacts(for id: String) throws -> [MeetingArtifact] { try detail(for:id).artifacts }
 
     private struct ArchiveMarker: Codable { let archived: Bool }
@@ -186,6 +231,7 @@ public final class MeetingManagementService {
             throw MeetingManagementError.retryRejected("Stop recording and finish processing before removing this Meeting.")
         }
         try vault.trashMeeting(relativePath: selected.row.meetingRelativePath, expectedVersion: version)
+        onMeetingChanged([selected.row.meetingRelativePath])
     }
 
     public func archive(meetingID: String) throws { try setArchived(true, meetingID: meetingID) }
@@ -201,6 +247,7 @@ public final class MeetingManagementService {
         guard selected.row.isArchived != archived else { return }
         let data = try JSONEncoder().encode(ArchiveMarker(archived: archived))
         _ = try vault.writeMarkdown(data, relativePath: path, expectedVersion: existing)
+        onMeetingChanged([selected.row.meetingRelativePath])
     }
 
     /// Title and canonical folder change together. The expected doorway version protects
@@ -219,7 +266,7 @@ public final class MeetingManagementService {
         }
         guard selected.row.captureState == .stopped else { throw MeetingManagementError.retryRejected("Stop recording before renaming.") }
         let session = Self.fields(selected.doorwayText).sessionID
-        let owned = try jobs?.jobs().filter { Self.owns($0, session: session, path: old) } ?? []
+        let owned = try workspaceJobs().filter { Self.owns($0, session: session, path: old) }
         guard !owned.contains(where: { $0.status == .queued || $0.status == .running }) else {
             throw MeetingManagementError.retryRejected("This Meeting has processing work in progress.")
         }
@@ -307,9 +354,15 @@ public final class MeetingManagementService {
                 var inboxRewritten = false
                 var writtenMedia: [(url: URL, original: Data)] = []
                 do {
-                    try self.jobs?.rewriteMeetingReferences(from: directory, to: newDirectory)
-                    try self.inbox?.rewriteMeetingReferences(from: directory, to: newDirectory)
-                    inboxRewritten = self.inbox != nil
+                    try self.jobs?.rewriteMeetingReferences(from: directory, to: newDirectory,
+                                                             workspaceRootURL: self.enforceWorkspaceOwner ? self.vault.rootURL : nil)
+                    if let jobs = self.jobs, let inbox = self.inbox, jobs.sharesDatabase(with: inbox) {
+                        try jobs.rewriteInboxReferencesInRename(from: directory, to: newDirectory, inbox: inbox)
+                        // The Job transaction rolls these references back on failure.
+                    } else {
+                        try self.inbox?.rewriteMeetingReferences(from: directory, to: newDirectory)
+                        inboxRewritten = self.inbox != nil
+                    }
                     for document in mediaDocuments {
                         // Include a failing write in rollback: an I/O error can occur after
                         // the destination was replaced.
@@ -345,13 +398,14 @@ public final class MeetingManagementService {
         } else {
             try applyRename()
         }
+        onMeetingChanged([old, target])
         return try detail(for: session ?? target)
     }
     public func retryFailedJob(meetingID: String, jobID: String) throws {
-        guard let store = jobs else { throw MeetingManagementError.retryRejected("Job store is unavailable.") }
+        guard jobs != nil else { throw MeetingManagementError.retryRejected("Job store is unavailable.") }
         let detail = try detail(for: meetingID)
         let session = Self.fields(detail.doorwayText).sessionID
-        let records = try store.jobs().filter { Self.owns($0, session: session, path: detail.row.meetingRelativePath) }
+        let records = try workspaceJobs().filter { Self.owns($0, session: session, path: detail.row.meetingRelativePath) }
         guard records.contains(where: { $0.id == jobID }) else { throw MeetingManagementError.retryRejected("This Job does not belong to the selected Meeting.") }
         guard Self.currentJobs(records).contains(where: { $0.id == jobID }) else { throw MeetingManagementError.retryRejected("This Job was superseded by a newer run.") }
         guard let job = records.first(where: { $0.id == jobID }), job.status == .failed else { throw MeetingManagementError.retryRejected("Only a failed Job can be retried.") }
@@ -383,20 +437,31 @@ public final class MeetingManagementService {
             throw MeetingManagementError.retryRejected("Recording Bundle does not match this Meeting.")
         }
         try RecordingBundleFinalizer().validate(bundle)
-        let job = try store.enqueueUnlessActive(manifest: TranscriptionJob.manifest(title: selected.row.title, bundle: bundle, selection: nil, language: language)) {
+        let job = try store.enqueueUnlessActive(manifest: TranscriptionJob.manifest(title: selected.row.title, bundle: bundle, selection: nil, language: language).owned(by: vault.rootURL)) {
             Self.owns($0, session: session, path: path)
         }
         onReprocessQueued()
         return job
     }
 
+    private func proposalMeetingPath(id: String) -> String? {
+        guard let inbox else { return nil }
+        let proposal: ActionItemProposal?
+        do { proposal = try inbox.pendingProposal(id: id) } catch { return nil }
+        guard let sourceRef = proposal?.sourceRef, sourceRef.hasPrefix("[[") else { return nil }
+        let path = String(sourceRef.dropFirst(2)).components(separatedBy: "#").first ?? ""
+        guard path.hasPrefix("Meetings/"), !path.isEmpty else { return nil }
+        return (path as NSString).deletingLastPathComponent + "/meeting.md"
+    }
+
     private func allRows() throws -> [MeetingBrowserRow] {
         let paths=try vault.markdownPaths(relativeTo:"Meetings").filter { ($0 as NSString).lastPathComponent == "meeting.md" }; var rows:[MeetingBrowserRow]=[]
-        let allJobs = (try? jobs?.jobs()) ?? []
+        let allJobs = (try? workspaceJobs()) ?? []
         for path in paths { let source=try? vault.readMarkdown(relativePath:path); let text=source.flatMap { String(data:$0.data,encoding:.utf8) }; let f=Self.fields(text); let live=captureSnapshot().flatMap{$0.meetingRelativePath == path && $0.state != .idle && $0.state != .failed} == true; let session=f.sessionID; let owned=Self.currentJobs(allJobs.filter { job in Self.owns(job, session:session, path:path) }); let state=Self.processing(live:live, path:path, jobs:owned, vault:vault)
             let dir=(path as NSString).deletingLastPathComponent
             let extraction = (try? vault.readMarkdown(relativePath:dir+"/summary-extraction.json")).flatMap { try? JSONDecoder().decode(MeetingSummaryExtraction.self, from:$0.data) }.flatMap { $0.meeting == path && $0.schemaVersion == MeetingSummaryExtraction.currentSchemaVersion ? $0 : nil }
-            let bundle = f.bundlePath.flatMap { try? Data(contentsOf: URL(fileURLWithPath:$0)) }.flatMap { try? JSONDecoder().decode(RecordingBundle.self, from:$0) }.flatMap { $0.meetingRelativePath == path && $0.schemaVersion == RecordingBundle.currentSchemaVersion ? $0 : nil }
+            let bundle = f.bundlePath.flatMap { locatedBundle(path: $0, meetingPath: path, session: session)?.0 }
+                .flatMap { $0.meetingRelativePath == path && $0.schemaVersion == RecordingBundle.currentSchemaVersion ? $0 : nil }
             let duration = bundle.map { max($0.mic.durationSeconds, $0.system?.durationSeconds ?? 0) }
             let actionIDs = extraction?.myActionItems.map { "meeting-action:\(session ?? path):\($0.id)" } ?? []
             let needsReview = actionIDs.contains { (try? inbox?.proposalReviewState(id:$0)) == .pending }
@@ -409,7 +474,7 @@ public final class MeetingManagementService {
         let path = row.meetingRelativePath
         let dir = (path as NSString).deletingLastPathComponent
         let session = Self.fields(text).sessionID
-        let allOwned = (try? jobs?.jobs().filter { Self.owns($0, session: session, path: path) }) ?? []
+        let allOwned = (try? workspaceJobs().filter { Self.owns($0, session: session, path: path) }) ?? []
         let owned = Self.currentJobs(allOwned)
         let sum = try? vault.readMarkdown(relativePath: dir + "/summary.md")
         let ext = try? vault.readMarkdown(relativePath: dir + "/summary-extraction.json")
@@ -441,8 +506,18 @@ public final class MeetingManagementService {
         let stale = (validExtraction == nil ? [] : ((try? inbox?.items(category: .review)) ?? [])).filter {
             $0.kind == .proposal && $0.sourceRef == summaryRef && $0.id.hasPrefix("meeting-action:\(row.id):") && !currentIDs.contains($0.id)
         }.map { ActionItemProposal(id: $0.id, title: $0.title, sourceRef: summaryRef) }
+        var actionDrafts: [String: MeetingActionDraft] = [:]
+        if let inbox {
+            let proposalPrefix = "meeting-action:\(row.id):"
+            for proposal in (try? inbox.items(category: .review)) ?? []
+            where proposal.kind == .proposal && proposal.id.hasPrefix(proposalPrefix) {
+                if let draft = try? inbox.proposalDraft(id: proposal.id) {
+                    actionDrafts[proposal.id] = MeetingActionDraft(title: draft.title, comment: draft.comment)
+                }
+            }
+        }
         return MeetingBrowserDetail(row: row, doorwayText: text, doorwayVersion: source.version, humanNotes: Self.notes(from: text),
-            artifacts: resolvedArtifacts(for: text, path: path), job: Self.presentation(for: owned.first) ?? row.job,
+            artifacts: resolvedArtifacts(for: text, path: path, playback: playback), job: Self.presentation(for: owned.first) ?? row.job,
             jobs: (owned + allOwned.filter { job in
                 (job.status == .queued || job.status == .running) && !owned.contains(where: { $0.id == job.id })
             }).map { candidate in
@@ -454,7 +529,7 @@ public final class MeetingManagementService {
             summaryVersion: sum?.version, summary: sum.flatMap { Self.parseSummary(String(data: $0.data, encoding: .utf8) ?? "") },
             extraction: validExtraction, myActionItems: mine, otherActionItems: other, staleProposals: stale, transcript: transcript,
             decisions: (validExtraction?.decisions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) },
-            openQuestions: (validExtraction?.openQuestions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) }, playback: playback)
+            openQuestions: (validExtraction?.openQuestions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) }, playback: playback, actionDrafts: actionDrafts)
     }
     private func makeTranscriptSegments(_ document: TranscriptDocument?, playback: MeetingPlayback) -> [MeetingTranscriptSegment] {
         guard let document else { return [] }
@@ -468,15 +543,40 @@ public final class MeetingManagementService {
         return result
     }
     private func readTranscript(path: String, meetingPath: String, session: String?) -> TranscriptDocument? { guard let data = try? vault.readMarkdown(relativePath: path).data else { return nil }; let decoder=JSONDecoder(); decoder.dateDecodingStrategy = .iso8601; guard let document=try? decoder.decode(TranscriptDocument.self, from:data), document.schemaVersion == TranscriptDocument.currentSchemaVersion, document.meetingRelativePath == meetingPath, session == nil || document.captureSessionID == session else { return nil }; return document }
+    /// A moved media root may leave absolute bundle and track paths stale. Never scan for
+    /// arbitrary audio: require exactly one sidecar with the doorway's original bundle path,
+    /// meeting identity, and (when present) capture session before validating each track.
+    private func locatedBundle(path: String, meetingPath: String, session: String?) -> (RecordingBundle, URL?)? {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
+            return (try? decoder.decode(RecordingBundle.self, from: data)).map { ($0, nil) }
+        }
+        guard let media = recordingMediaURL,
+              let walker = FileManager.default.enumerator(at: media, includingPropertiesForKeys: [.isRegularFileKey],
+                                                          options: [.skipsHiddenFiles]) else { return nil }
+        let originalFolder = URL(fileURLWithPath: path).deletingLastPathComponent()
+        var match: (RecordingBundle, URL?)?
+        for case let candidate as URL in walker where candidate.lastPathComponent == "recording-bundle.json" &&
+            candidate.deletingLastPathComponent().lastPathComponent == originalFolder.lastPathComponent {
+            guard let data = try? Data(contentsOf: candidate),
+                  let bundle = try? decoder.decode(RecordingBundle.self, from: data),
+                  bundle.bundleFilePath == path, bundle.meetingRelativePath == meetingPath,
+                  session == nil || bundle.captureSessionID == session else { continue }
+            if match != nil { return nil } // Ambiguous relocation: refuse to select either copy.
+            match = (bundle, candidate.deletingLastPathComponent())
+        }
+        return match
+    }
+
     private func resolvePlayback(text: String, path: String, session: String?) -> MeetingPlayback {
         func unavailable(_ reason: String) -> MeetingPlayback { MeetingPlayback(capability: .unavailable, message: reason) }
-        guard let bundlePath = Self.fields(text).bundlePath, !bundlePath.isEmpty,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: bundlePath)) else {
+        guard let bundlePath = Self.fields(text).bundlePath, !bundlePath.isEmpty else {
             return unavailable("Recording Bundle unavailable. Check the recording media location.")
         }
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        guard let bundle = try? decoder.decode(RecordingBundle.self, from: data) else {
-            return unavailable("Recording Bundle invalid. Inspect the source file.")
+        guard let (bundle, relocated) = locatedBundle(path: bundlePath, meetingPath: path, session: session) else {
+            return unavailable(FileManager.default.fileExists(atPath: bundlePath)
+                ? "Recording Bundle invalid. Inspect the source file."
+                : "Recording Bundle unavailable. Check the recording media location.")
         }
         guard bundle.bundleFilePath == bundlePath,
               bundle.meetingRelativePath == path,
@@ -486,16 +586,27 @@ public final class MeetingManagementService {
         }
         // The optional System Audio Track must not make sound microphone evidence unusable.
         // Check the required evidence independently before attempting full bundle validation.
+        let finalizer = RecordingBundleFinalizer()
+        func verifiedAudio(_ track: RecordingBundleTrack) -> String? {
+            if let relocated {
+                return try? finalizer.validatedRelocatedAudio(track: track,
+                    originalDirectory: URL(fileURLWithPath: bundlePath).deletingLastPathComponent(),
+                    relocatedDirectory: relocated)
+            }
+            return Self.hasIntactEvidence(track) ? track.preferredAudioFilePath : nil
+        }
         let mic = bundle.mic
-        guard mic.role == "microphone", Self.hasIntactEvidence(mic),
-              let micDuration = Self.audioDuration(mic.preferredAudioFilePath) else {
+        guard mic.role == "microphone", let micPath = verifiedAudio(mic),
+              let micDuration = Self.audioDuration(micPath) else {
             return unavailable("Microphone audio missing, changed, or cannot be decoded. Inspect the Recording Bundle.")
         }
         let system = bundle.system
-        let systemDuration = system.flatMap { $0.role == "system-audio" && Self.hasIntactEvidence($0) ? Self.audioDuration($0.preferredAudioFilePath) : nil }
+        let systemPath = system.flatMap { $0.role == "system-audio" ? verifiedAudio($0) : nil }
+        let systemDuration = systemPath.flatMap(Self.audioDuration)
         let mixed = systemDuration != nil
-        // Validate the entire bundle when all tracks appear usable; a failure must not advertise mixing.
-        if mixed && (try? RecordingBundleFinalizer().validate(bundle)) == nil {
+        // Validate the entire original bundle when mixing tracks; relocated tracks were
+        // independently checked against their recorded existence and hashes above.
+        if mixed && relocated == nil && (try? finalizer.validate(bundle)) == nil {
             return unavailable("Recording Bundle validation failed. Inspect the source recordings.")
         }
         let partial = bundle.state == .partial
@@ -503,8 +614,8 @@ public final class MeetingManagementService {
         if mixed, let system { offsets = Self.playbackOffsets(mic: mic, system: system) }
         else { offsets = (0, 0) }
         return MeetingPlayback(capability: mixed ? .mixed : .microphoneOnly,
-            microphonePath: mic.preferredAudioFilePath,
-            systemPath: mixed ? system?.preferredAudioFilePath : nil,
+            microphonePath: micPath,
+            systemPath: mixed ? systemPath : nil,
             durationSeconds: max(offsets.mic + micDuration, offsets.system + (systemDuration ?? 0)),
             microphoneOffsetSeconds: offsets.mic, systemOffsetSeconds: offsets.system,
             message: mixed ? (partial ? "Microphone and system audio (partial recording)" : "Microphone and system audio")
@@ -539,26 +650,24 @@ public final class MeetingManagementService {
         return Double(audio.length) / audio.processingFormat.sampleRate
     }
 
-    private func resolvedArtifacts(for text: String, path: String) -> [MeetingArtifact] {
+    private func resolvedArtifacts(for text: String, path: String, playback: MeetingPlayback) -> [MeetingArtifact] {
         let directory = (path as NSString).deletingLastPathComponent
         let bundlePath = Self.fields(text).bundlePath
-        let bundleAvailable = bundlePath.map { FileManager.default.isReadableFile(atPath: $0) } ?? false
+        let located = bundlePath.flatMap { locatedBundle(path: $0, meetingPath: path, session: Self.fields(text).sessionID) }
+        let actualBundlePath = located.map { $0.1?.appendingPathComponent("recording-bundle.json").path ?? bundlePath! }
+        let bundleAvailable = actualBundlePath.map { FileManager.default.isReadableFile(atPath: $0) } ?? false
         var artifacts = [MeetingArtifact(role: .doorway, relativePath: path, available: true)]
-        artifacts.append(MeetingArtifact(role: .recordingBundle, relativePath: bundlePath ?? "", available: bundleAvailable, message: bundleAvailable ? nil : "Recording Bundle unavailable"))
+        artifacts.append(MeetingArtifact(role: .recordingBundle, relativePath: actualBundlePath ?? bundlePath ?? "", available: bundleAvailable, message: bundleAvailable ? nil : "Recording Bundle unavailable"))
         for (role, name, label) in [(MeetingArtifactRole.transcript, "transcript.md", "Transcript"), (.summary, "summary.md", "Summary"), (.extraction, "summary-extraction.json", "Summary extraction")] {
             let relativePath = directory + "/" + name
             let available = (try? vault.readMarkdown(relativePath: relativePath)) != nil
             artifacts.append(MeetingArtifact(role: role, relativePath: relativePath, available: available, message: available ? nil : "\(label) unavailable"))
         }
         // Recording Bundle paths are absolute media paths, not fabricated workspace-relative paths.
-        let bundle: RecordingBundle? = bundleAvailable ? bundlePath.flatMap { path in
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try? decoder.decode(RecordingBundle.self, from: data)
-        } : nil
+        let bundle = located?.0
         for track in [bundle?.mic, bundle?.system].compactMap({ $0 }) {
-            let mediaPath = track.preferredAudioFilePath
+            let mediaPath = track.role == "microphone" ? (playback.microphonePath ?? track.preferredAudioFilePath)
+                : (playback.systemPath ?? track.preferredAudioFilePath)
             let available = FileManager.default.isReadableFile(atPath: mediaPath)
             artifacts.append(MeetingArtifact(role: .source, relativePath: mediaPath, available: available,
                                              message: available ? nil : "\(track.role) audio unavailable"))
@@ -597,7 +706,7 @@ public final class MeetingManagementService {
             return left.updatedAt > right.updatedAt
         }
     }
-    private static func owns(_ job:JobRecord, session:String?, path:String)->Bool { if let s=session, job.manifest.metadata["capture_session_id"] == s { return true }; return job.manifest.sourceArtifacts.contains { $0.relativePath == path || $0.relativePath.hasPrefix((path as NSString).deletingLastPathComponent + "/") } || job.manifest.expectedOutputs.contains { $0.relativePath.hasPrefix((path as NSString).deletingLastPathComponent + "/") } }
+    static func owns(_ job:JobRecord, session:String?, path:String)->Bool { if let s=session, job.manifest.metadata["capture_session_id"] == s { return true }; return job.manifest.sourceArtifacts.contains { $0.relativePath == path || $0.relativePath.hasPrefix((path as NSString).deletingLastPathComponent + "/") } || job.manifest.expectedOutputs.contains { $0.relativePath.hasPrefix((path as NSString).deletingLastPathComponent + "/") } }
     private static func processing(live:Bool,path:String,jobs:[JobRecord],vault:WorkspaceVault)->MeetingProcessingState { if live{return .live}; if jobs.contains(where:{$0.status == .queued || $0.status == .running}) {return .processing}; if jobs.contains(where:{$0.status == .failed}) {return .needsAttention}; let dir=(path as NSString).deletingLastPathComponent; let t=Self.validTranscript(path: dir+"/transcript.json", vault: vault) && (try? vault.readMarkdown(relativePath: dir+"/transcript.md")) != nil, s=(try? vault.readMarkdown(relativePath:dir+"/summary.md")) != nil && (try? vault.readMarkdown(relativePath:dir+"/summary-extraction.json")).flatMap { try? JSONDecoder().decode(MeetingSummaryExtraction.self, from: $0.data) } != nil; return t && s ? .ready : .needsAttention }
     private struct Fields { var title:String?;var startedAt:Date?;var sessionID:String?;var project:String?;var bundlePath:String? }
     private static func validTranscript(path: String, vault: WorkspaceVault) -> Bool { guard let data = try? vault.readMarkdown(relativePath: path).data else { return false }; let decoder=JSONDecoder(); decoder.dateDecodingStrategy = .iso8601; return (try? decoder.decode(TranscriptDocument.self, from: data)) != nil }

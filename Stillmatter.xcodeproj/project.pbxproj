@@ -1,0 +1,688 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 71;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		102F68042F7F828D776C46F1 /* libStillmatterCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */; };
+		3E66B09A87675880F6BD4B47 /* libStillmatterCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */; };
+		522943574508D7922ED65B76 /* libStillmatterTranscriptionRuntime.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4F24933E0122826E42B0BB07 /* libStillmatterTranscriptionRuntime.a */; };
+		74C2431FE30C4A47C8443B80 /* Resources/AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = F8995BA5891B07E328C60D6B /* Resources/AppIcon.icns */; };
+		923F74FA2D7396C284794119 /* libStillmatterCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */; };
+		9FD57BFDA18350BD3ADDC65C /* libStillmatterPresentation.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0F9613B8243990A341953999 /* libStillmatterPresentation.a */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		46521D277FBB58EE2899D8B5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CB7EBEE2135D447804CDB62C;
+			remoteInfo = StillmatterCore;
+		};
+		6B93FA1637538FD91575452A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 278AA308C31087626BC46111;
+			remoteInfo = Stillmatter;
+		};
+		7A8F45CBECE44F83C2F11120 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 057B26404D22714CB3B0B36C;
+			remoteInfo = StillmatterTranscriptionRuntime;
+		};
+		7CD5808F9A9BF0C0F5F16AD2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CB7EBEE2135D447804CDB62C;
+			remoteInfo = StillmatterCore;
+		};
+		9B6F8F0C5CAEC97A85958D67 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 02401CEE9D45CB9DD6CD4CF8;
+			remoteInfo = StillmatterPresentation;
+		};
+		F467C2126B8933000A0F3F0B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CB7EBEE2135D447804CDB62C;
+			remoteInfo = StillmatterCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0044809AF2EBA49EAB232D48 /* Stillmatter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = Stillmatter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0F9613B8243990A341953999 /* libStillmatterPresentation.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libStillmatterPresentation.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		4F24933E0122826E42B0BB07 /* libStillmatterTranscriptionRuntime.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libStillmatterTranscriptionRuntime.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		56271DDF22B89902C89083F5 /* StillmatterUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = StillmatterUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7815B2A03095050800CA324D /* Runner.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = Runner.xcodeproj; sourceTree = "<group>"; };
+		7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libStillmatterCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		F8995BA5891B07E328C60D6B /* Resources/AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIcon.icns; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		DAD2FCC435DEF988FA1DE5B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				GraphiteFocusPresentationHarness.swift,
+			);
+			target = FC28A0F2D0F9B44F8D8B9ACD /* StillmatterUITests */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		14273D81805E19B1A23F46F7 /* Tests/StillmatterUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (DAD2FCC435DEF988FA1DE5B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Tests/StillmatterUITests; sourceTree = "<group>"; };
+		2C7582118882D9AFD30CD750 /* Sources/StillmatterTranscriptionRuntime */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/StillmatterTranscriptionRuntime; sourceTree = "<group>"; };
+		48CF6D49836945D74032E4FF /* Sources/Stillmatter */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/Stillmatter; sourceTree = "<group>"; };
+		4F8F75A51593280354C074D6 /* Sources/StillmatterCore */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/StillmatterCore; sourceTree = "<group>"; };
+		EB67CFA6FB9ECB743FBA01FB /* Sources/StillmatterPresentation */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/StillmatterPresentation; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		3F4A377C0A7A95A94A0322D9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3E66B09A87675880F6BD4B47 /* libStillmatterCore.a in Frameworks */,
+				522943574508D7922ED65B76 /* libStillmatterTranscriptionRuntime.a in Frameworks */,
+				9FD57BFDA18350BD3ADDC65C /* libStillmatterPresentation.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5B5199F8C8DF66E345CD6AB3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7848542B52ED4194C032CFE0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				102F68042F7F828D776C46F1 /* libStillmatterCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8119B35C073451E3EF548AD0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				923F74FA2D7396C284794119 /* libStillmatterCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		833B881EDB056358898B9761 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		7815B2A23095050800CA324D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B28B7AF69320201D1CF206EB = {
+			isa = PBXGroup;
+			children = (
+				F8995BA5891B07E328C60D6B /* Resources/AppIcon.icns */,
+				4F8F75A51593280354C074D6 /* Sources/StillmatterCore */,
+				2C7582118882D9AFD30CD750 /* Sources/StillmatterTranscriptionRuntime */,
+				EB67CFA6FB9ECB743FBA01FB /* Sources/StillmatterPresentation */,
+				48CF6D49836945D74032E4FF /* Sources/Stillmatter */,
+				14273D81805E19B1A23F46F7 /* Tests/StillmatterUITests */,
+				FBDC4F23F93125BBEEAE800C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FBDC4F23F93125BBEEAE800C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */,
+				4F24933E0122826E42B0BB07 /* libStillmatterTranscriptionRuntime.a */,
+				0F9613B8243990A341953999 /* libStillmatterPresentation.a */,
+				0044809AF2EBA49EAB232D48 /* Stillmatter.app */,
+				56271DDF22B89902C89083F5 /* StillmatterUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		02401CEE9D45CB9DD6CD4CF8 /* StillmatterPresentation */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 55626DECDD02CA2B7DAB5C21 /* Build configuration list for PBXNativeTarget "StillmatterPresentation" */;
+			buildPhases = (
+				E72F78DA366E49DD3677B60D /* Sources */,
+				8119B35C073451E3EF548AD0 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				79471DD810A72C9737701A0C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				EB67CFA6FB9ECB743FBA01FB /* Sources/StillmatterPresentation */,
+			);
+			name = StillmatterPresentation;
+			productName = StillmatterPresentation;
+			productReference = 0F9613B8243990A341953999 /* libStillmatterPresentation.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		057B26404D22714CB3B0B36C /* StillmatterTranscriptionRuntime */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CBA351BF3DB8514CE17BDF2D /* Build configuration list for PBXNativeTarget "StillmatterTranscriptionRuntime" */;
+			buildPhases = (
+				93BB69251D9781BC1B5E8BDB /* Sources */,
+				7848542B52ED4194C032CFE0 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				21C2F3FD894E2C66245DBE25 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				2C7582118882D9AFD30CD750 /* Sources/StillmatterTranscriptionRuntime */,
+			);
+			name = StillmatterTranscriptionRuntime;
+			productName = StillmatterTranscriptionRuntime;
+			productReference = 4F24933E0122826E42B0BB07 /* libStillmatterTranscriptionRuntime.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		278AA308C31087626BC46111 /* Stillmatter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DD2D17774CEB0C904102D9D6 /* Build configuration list for PBXNativeTarget "Stillmatter" */;
+			buildPhases = (
+				6D86208A4AF6A7EB56677B7C /* Sources */,
+				3F4A377C0A7A95A94A0322D9 /* Frameworks */,
+				0189424A5A60FED329FA868E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8FF23222871D5DDBD1A8FF63 /* PBXTargetDependency */,
+				E9C23FDEE41B29AE718E934D /* PBXTargetDependency */,
+				EC9969B9FE6D31E1241E6F32 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				48CF6D49836945D74032E4FF /* Sources/Stillmatter */,
+			);
+			name = Stillmatter;
+			productName = Stillmatter;
+			productReference = 0044809AF2EBA49EAB232D48 /* Stillmatter.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CB7EBEE2135D447804CDB62C /* StillmatterCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 75CCEA6DBC694A849669AA72 /* Build configuration list for PBXNativeTarget "StillmatterCore" */;
+			buildPhases = (
+				7636DD832B8B8220A23DD525 /* Sources */,
+				5B5199F8C8DF66E345CD6AB3 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				4F8F75A51593280354C074D6 /* Sources/StillmatterCore */,
+			);
+			name = StillmatterCore;
+			productName = StillmatterCore;
+			productReference = 7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		FC28A0F2D0F9B44F8D8B9ACD /* StillmatterUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5CAA14163EF3EA244BF7CECE /* Build configuration list for PBXNativeTarget "StillmatterUITests" */;
+			buildPhases = (
+				45B2B69F6A80C904CC86EDD9 /* Sources */,
+				833B881EDB056358898B9761 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				21E5B0FD9504FD077B965029 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				14273D81805E19B1A23F46F7 /* Tests/StillmatterUITests */,
+			);
+			name = StillmatterUITests;
+			productName = StillmatterUITests;
+			productReference = 56271DDF22B89902C89083F5 /* StillmatterUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		98F54143AB4E86B28C3AFEE0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					FC28A0F2D0F9B44F8D8B9ACD = {
+						TestTargetID = 278AA308C31087626BC46111;
+					};
+				};
+			};
+			buildConfigurationList = 862894B703A6DEDF96A9DD6C /* Build configuration list for PBXProject "Stillmatter" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B28B7AF69320201D1CF206EB;
+			minimizedProjectReferenceProxies = 1;
+			productRefGroup = FBDC4F23F93125BBEEAE800C /* Products */;
+			projectDirPath = "";
+			projectReferences = (
+				{
+					ProductGroup = 7815B2A23095050800CA324D /* Products */;
+					ProjectRef = 7815B2A03095050800CA324D /* Runner.xcodeproj */;
+				},
+			);
+			projectRoot = "";
+			targets = (
+				CB7EBEE2135D447804CDB62C /* StillmatterCore */,
+				057B26404D22714CB3B0B36C /* StillmatterTranscriptionRuntime */,
+				02401CEE9D45CB9DD6CD4CF8 /* StillmatterPresentation */,
+				278AA308C31087626BC46111 /* Stillmatter */,
+				FC28A0F2D0F9B44F8D8B9ACD /* StillmatterUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		0189424A5A60FED329FA868E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				74C2431FE30C4A47C8443B80 /* Resources/AppIcon.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		45B2B69F6A80C904CC86EDD9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D86208A4AF6A7EB56677B7C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7636DD832B8B8220A23DD525 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		93BB69251D9781BC1B5E8BDB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E72F78DA366E49DD3677B60D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		21C2F3FD894E2C66245DBE25 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CB7EBEE2135D447804CDB62C /* StillmatterCore */;
+			targetProxy = 7CD5808F9A9BF0C0F5F16AD2 /* PBXContainerItemProxy */;
+		};
+		21E5B0FD9504FD077B965029 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 278AA308C31087626BC46111 /* Stillmatter */;
+			targetProxy = 6B93FA1637538FD91575452A /* PBXContainerItemProxy */;
+		};
+		79471DD810A72C9737701A0C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CB7EBEE2135D447804CDB62C /* StillmatterCore */;
+			targetProxy = F467C2126B8933000A0F3F0B /* PBXContainerItemProxy */;
+		};
+		8FF23222871D5DDBD1A8FF63 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CB7EBEE2135D447804CDB62C /* StillmatterCore */;
+			targetProxy = 46521D277FBB58EE2899D8B5 /* PBXContainerItemProxy */;
+		};
+		E9C23FDEE41B29AE718E934D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 057B26404D22714CB3B0B36C /* StillmatterTranscriptionRuntime */;
+			targetProxy = 7A8F45CBECE44F83C2F11120 /* PBXContainerItemProxy */;
+		};
+		EC9969B9FE6D31E1241E6F32 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 02401CEE9D45CB9DD6CD4CF8 /* StillmatterPresentation */;
+			targetProxy = 9B6F8F0C5CAEC97A85958D67 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		217A879B0168F07DED121426 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Stillmatter;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Stillmatter;
+			};
+			name = Release;
+		};
+		2712A21CA10F8B7E3AA3F4FD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		6B1293DE694B616A1DFC4992 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Stillmatter;
+				INFOPLIST_KEY_CFBundleIconFile = AppIcon;
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Stillmatter reads selected calendar events.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Nazar Topolnytskyi";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Stillmatter records meetings when capture is approved.";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Stillmatter records system audio during meeting capture.";
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.Stillmatter.UITesting;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		76CF8EAC7AB4F8254FB19754 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Stillmatter;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Stillmatter;
+			};
+			name = Debug;
+		};
+		89E1FD6268CC0F221A2BE178 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		9511ABC7301922FE61F2A7E0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AB1C1EE8D9B2B1F13A910CE7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Stillmatter;
+				INFOPLIST_KEY_CFBundleIconFile = AppIcon;
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Stillmatter reads selected calendar events.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Nazar Topolnytskyi";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Stillmatter records meetings when capture is approved.";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Stillmatter records system audio during meeting capture.";
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.Stillmatter.UITesting;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C06270B8E15F1B74077EF2E2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		CB28C9F66374FBFB9B359684 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		E6DE6C99132752C914FEF632 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		F9DA4FF0505493D65CAEC3AB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		FCD623021CFCCFE5BF8FEED0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		55626DECDD02CA2B7DAB5C21 /* Build configuration list for PBXNativeTarget "StillmatterPresentation" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB28C9F66374FBFB9B359684 /* Debug */,
+				2712A21CA10F8B7E3AA3F4FD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5CAA14163EF3EA244BF7CECE /* Build configuration list for PBXNativeTarget "StillmatterUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				76CF8EAC7AB4F8254FB19754 /* Debug */,
+				217A879B0168F07DED121426 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		75CCEA6DBC694A849669AA72 /* Build configuration list for PBXNativeTarget "StillmatterCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F9DA4FF0505493D65CAEC3AB /* Debug */,
+				FCD623021CFCCFE5BF8FEED0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		862894B703A6DEDF96A9DD6C /* Build configuration list for PBXProject "Stillmatter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				89E1FD6268CC0F221A2BE178 /* Debug */,
+				E6DE6C99132752C914FEF632 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CBA351BF3DB8514CE17BDF2D /* Build configuration list for PBXNativeTarget "StillmatterTranscriptionRuntime" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9511ABC7301922FE61F2A7E0 /* Debug */,
+				C06270B8E15F1B74077EF2E2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DD2D17774CEB0C904102D9D6 /* Build configuration list for PBXNativeTarget "Stillmatter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB1C1EE8D9B2B1F13A910CE7 /* Debug */,
+				6B1293DE694B616A1DFC4992 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+}

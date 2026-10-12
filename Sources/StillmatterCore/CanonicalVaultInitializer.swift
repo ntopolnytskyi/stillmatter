@@ -22,13 +22,7 @@ public final class CanonicalVaultInitializer {
     public static let canonicalDirectories = [
         "Todos",
         "Projects",
-        "Meetings",
-        "Activities",
-        "Briefs",
-        "Briefs/Daily",
-        "Briefs/Weekly",
-        "Reports",
-        "Reports/Weekly"
+        "Meetings"
     ]
 
     private static let starterFiles: [(relativePath: String, contents: String)] = [
@@ -57,13 +51,10 @@ public final class CanonicalVaultInitializer {
 
             ## Meetings
 
-            ## Activities
-
             ## Todos
 
             ## Decisions
 
-            ## Reports
             """ + "\n"
         ),
         (
@@ -72,30 +63,6 @@ public final class CanonicalVaultInitializer {
             # Meetings
 
             Meeting folders created by Stillmatter live here.
-            """ + "\n"
-        ),
-        (
-            "Activities/README.md",
-            """
-            # Activities
-
-            Activity Item files created by Stillmatter live here.
-            """ + "\n"
-        ),
-        (
-            "Briefs/README.md",
-            """
-            # Briefs
-
-            Temporary Daily and Weekly Brief drafts created by Stillmatter live here.
-            """ + "\n"
-        ),
-        (
-            "Reports/README.md",
-            """
-            # Reports
-
-            Durable reports created by Stillmatter live here.
             """ + "\n"
         )
     ]

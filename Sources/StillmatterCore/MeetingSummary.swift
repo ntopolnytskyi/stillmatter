@@ -114,7 +114,7 @@ public enum MeetingSummaryJob {
                 JobArtifactReference(relativePath: transcriptJSONRelativePath, role: "timestamped-transcript"),
                 JobArtifactReference(relativePath: transcript.meetingRelativePath, role: "meeting-doorway")
             ],
-            relatedContext: ["Projects/**", "People/**", "Activities/**"],
+            relatedContext: ["Projects/**", "People/**"],
             expectedOutputs: [
                 PiWorkflowOutput(
                     relativePath: paths.summary,
@@ -124,7 +124,7 @@ public enum MeetingSummaryJob {
                 ),
                 PiWorkflowOutput(relativePath: paths.extraction, kind: .proposalJSON)
             ],
-            forbiddenMutations: ["Todos/**", "Activities/**", "Projects/**", "People/**", "Meetings/**"],
+            forbiddenMutations: ["Todos/**", "Projects/**", "People/**", "Meetings/**"],
             timeoutSeconds: 180
         )
         let encoded = try JSONEncoder().encode(workflow)

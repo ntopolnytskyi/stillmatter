@@ -3,6 +3,26 @@ import XCTest
 @testable import StillmatterCore
 
 final class ActionItemProposalReviewTests: XCTestCase {
+    func testAProposalCannotBePromotedIntoBCollidingTodoQueue() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let raw = try TasksInbox(databaseURL: base.appendingPathComponent("operational.sqlite"))
+        let a = base.appendingPathComponent("A")
+        let b = base.appendingPathComponent("B")
+        let vaultB = WorkspaceVault(workspaceRootURL: b, appSupportRootURL: base.appendingPathComponent("support"))
+        let todo = "# Todos\n\n## Queue\n\n- [ ] B task\n"
+        let version = try vaultB.writeMarkdown(Data(todo.utf8), relativePath: TodoItemIndex.mainTodoRelativePath, expectedVersion: nil)
+        let inboxA = try raw.scoped(to: a)
+        let inboxB = try raw.scoped(to: b)
+        XCTAssertTrue(try inboxA.queueProposal(id: "same", title: "A task", sourceRef: "Meetings/same/summary.md"))
+        let wrong = ActionItemProposalReviewer(inbox: inboxA, todoMutator: TodoItemMutator(vault: vaultB), workspaceRootURL: b)
+        XCTAssertThrowsError(try wrong.accept(proposalID: "same", expectedTodoVersion: version))
+        let bReview = ActionItemProposalReviewer(inbox: inboxB, todoMutator: TodoItemMutator(vault: vaultB), workspaceRootURL: b)
+        XCTAssertThrowsError(try bReview.accept(proposalID: "same", expectedTodoVersion: version))
+        XCTAssertEqual(String(decoding: try vaultB.readMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath).data, as: UTF8.self), todo)
+        XCTAssertEqual(try inboxA.proposalReviewState(id: "same"), .pending)
+    }
+
     func testAcceptCreatesNormalTodoAtTopOfQueueAndRemovesProposalFromReview() throws {
         let fixture = try ProposalReviewFixture()
         try fixture.queue(id: "proposal:recap", title: "Send recap #ai-proposed", sourceRef: "[[Meetings/kickoff/summary#My action items|ref]]")
@@ -19,6 +39,20 @@ final class ActionItemProposalReviewTests: XCTestCase {
         """ + "\n")
         XCTAssertEqual(try fixture.inbox.proposalReviewState(id: "proposal:recap"), .accepted)
         XCTAssertTrue(try fixture.inbox.items(category: .review).isEmpty)
+    }
+
+    func testRepeatedAcceptCannotAppendDuplicateCanonicalTodo() throws {
+        let fixture = try ProposalReviewFixture()
+        try fixture.queue(id: "proposal:once", title: "Only once", sourceRef: "[[Meetings/kickoff/summary|ref]]")
+        _ = try fixture.reviewer.accept(proposalID: "proposal:once", expectedTodoVersion: fixture.todoVersion())
+        let acceptedMarkdown = try fixture.todoMarkdown()
+
+        XCTAssertThrowsError(try fixture.reviewer.accept(
+            proposalID: "proposal:once", expectedTodoVersion: fixture.todoVersion()
+        ))
+        XCTAssertEqual(try fixture.todoMarkdown(), acceptedMarkdown)
+        XCTAssertEqual(try fixture.inbox.proposalReviewState(id: "proposal:once"), .accepted)
+        XCTAssertEqual(acceptedMarkdown.components(separatedBy: "- [ ] Only once").count - 1, 1)
     }
 
     func testEditThenAcceptChangesOnlyResultingTodoAndNotSourceArtifact() throws {

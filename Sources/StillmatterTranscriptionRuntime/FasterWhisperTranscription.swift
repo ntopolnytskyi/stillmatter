@@ -136,7 +136,7 @@ public final class FasterWhisperModelAcquirer: TranscriptionModelAcquiring {
         progress(.init(phase: "Installing faster-whisper \(Self.packageVersion)…", completedBytes: 0, totalBytes: nil))
         _ = try runner.run(
             executable: runtimePython,
-            arguments: ["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-cache-dir", "faster-whisper==\(Self.packageVersion)"],
+            arguments: ["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-cache-dir"] + Self.pythonPackageRequirements,
             cancellation: cancellation
         )
 
@@ -200,18 +200,31 @@ public final class FasterWhisperModelAcquirer: TranscriptionModelAcquiring {
         return result
     }
 
+    // faster-whisper 1.2.1 passes metadata_errors to av.open; PyAV 19 removed it.
+    public static let pythonPackageRequirements = ["faster-whisper==\(packageVersion)", "av>=11,<19"]
+
     private static let setupScript = #"""
 import sys
 from huggingface_hub import snapshot_download
 snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[3])
 """#
 
-    fileprivate static let transcriptionScript = #"""
+    public static let transcriptionScript = #"""
 import json
 import sys
 from faster_whisper import WhisperModel
 
 if sys.argv[1] == "--check":
+    import tempfile
+    import wave
+    from faster_whisper.audio import decode_audio
+    with tempfile.NamedTemporaryFile(suffix=".wav") as sample:
+        with wave.open(sample.name, "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16000)
+            audio.writeframes(b"\x00\x00" * 1600)
+        decode_audio(sample.name)
     WhisperModel(sys.argv[2], device="cpu", compute_type="int8")
     raise SystemExit(0)
 

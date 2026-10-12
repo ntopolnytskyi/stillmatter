@@ -20,9 +20,17 @@ let package = Package(
             name: "StillmatterTranscriptionRuntime",
             dependencies: ["StillmatterCore"]
         ),
+        .target(
+            name: "StillmatterPresentation",
+            dependencies: ["StillmatterCore"]
+        ),
         .executableTarget(
             name: "Stillmatter",
-            dependencies: ["StillmatterCore", "StillmatterTranscriptionRuntime"]
+            dependencies: ["StillmatterCore", "StillmatterTranscriptionRuntime", "StillmatterPresentation"]
+        ),
+        .testTarget(
+            name: "StillmatterPresentationTests",
+            dependencies: ["StillmatterPresentation", "StillmatterCore"]
         ),
         .testTarget(
             name: "StillmatterTests",

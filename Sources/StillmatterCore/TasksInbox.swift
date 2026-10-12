@@ -17,12 +17,10 @@ public enum InboxCategory: String, CaseIterable, Codable, Equatable {
     }
 }
 
-public enum InboxItemKind: String, Codable, Equatable {
-    case weeklyReport
+public enum InboxItemKind: String, Codable, Equatable, CaseIterable {
     case titleReview
     case proposal
     case failedJob
-    case overdueTodo
     case cleanupProposal
 }
 
@@ -34,6 +32,7 @@ public struct InboxItem: Equatable {
     public let sourceRef: String?
     public let details: String?
     public let createdAt: String
+    public let workspaceOwner: String?
 
     public init(
         id: String,
@@ -42,8 +41,10 @@ public struct InboxItem: Equatable {
         title: String,
         sourceRef: String?,
         details: String?,
-        createdAt: String
+        createdAt: String,
+        workspaceOwner: String? = nil
     ) {
+        self.workspaceOwner = workspaceOwner
         self.id = id
         self.category = category
         self.kind = kind
@@ -76,6 +77,10 @@ public struct ActionItemProposal: Equatable {
     }
 }
 
+public enum InboxOwnershipError: Error, Equatable {
+    case notOwned(String)
+}
+
 public enum OperationalStoreError: Error, Equatable, CustomStringConvertible {
     case sqlite(code: Int32, message: String)
     case invalidStoredValue(column: String, value: String)
@@ -91,13 +96,47 @@ public enum OperationalStoreError: Error, Equatable, CustomStringConvertible {
 /// Application service for the rebuildable SQLite-backed operational Inbox.
 /// Canonical Markdown remains outside this store.
 public final class TasksInbox {
+    let databaseURL: URL
     private let database: SQLiteDatabase
     private let now: () -> String
+    // Nil denotes the legacy, unowned namespace; it must never be rebound to
+    // the currently selected workspace.
+    private let ownerPrefix: String?
+    public let workspaceRootPath: String?
     private let lock = NSRecursiveLock()
 
-    public init(databaseURL: URL, now: @escaping () -> String = TasksInbox.systemTimestamp) throws {
+    public func requireOwner(_ root: URL) throws {
+        let expected = try scoped(to: root)
+        guard let ownerPrefix, ownerPrefix == expected.ownerPrefix else {
+            throw InboxOwnershipError.notOwned(root.path)
+        }
+    }
+
+    public func scoped(to root: URL) throws -> TasksInbox {
+        let canonical = root.standardizedFileURL.resolvingSymlinksInPath().path
+        let prefix = "owner:\(canonical.utf8.map { String(format: "%02x", $0) }.joined()):"
+        return try TasksInbox(databaseURL: databaseURL, now: now, ownerPrefix: prefix, workspaceRootPath: canonical)
+    }
+
+    private func key(_ id: String) -> String { (ownerPrefix ?? "") + id }
+    private func local(_ id: String) -> String { String(id.dropFirst(ownerPrefix?.count ?? 0)) }
+    func ownsStoredID(_ id: String) -> Bool { owns(id) }
+
+    private func owns(_ id: String) -> Bool {
+        guard let ownerPrefix else { return !id.hasPrefix("owner:") }
+        return id.hasPrefix(ownerPrefix)
+    }
+
+    public convenience init(databaseURL: URL, now: @escaping () -> String = TasksInbox.systemTimestamp) throws {
+        try self.init(databaseURL: databaseURL, now: now, ownerPrefix: nil, workspaceRootPath: nil)
+    }
+
+    private init(databaseURL: URL, now: @escaping () -> String, ownerPrefix: String?, workspaceRootPath: String?) throws {
+        self.ownerPrefix = ownerPrefix
+        self.workspaceRootPath = workspaceRootPath
         let parentURL = databaseURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        self.databaseURL = databaseURL.standardizedFileURL.resolvingSymlinksInPath()
         database = try SQLiteDatabase(url: databaseURL)
         self.now = now
         try migrate()
@@ -119,7 +158,7 @@ public final class TasksInbox {
                 let entries: [(String, String)] = try database.query(
                     "SELECT \(table == "inbox_items" ? "id" : "proposal_id"), \(column) FROM \(table) WHERE \(column) IS NOT NULL"
                 ) { (SQLiteDatabase.text($0, column: 0), SQLiteDatabase.text($0, column: 1)) }
-                for (id, source) in entries {
+                for (id, source) in entries where owns(id) {
                     let updated = source.replacingOccurrences(of: oldDirectory + "/", with: newDirectory + "/")
                     guard updated != source else { continue }
                     try database.run("UPDATE \(table) SET source_ref = ? WHERE \(table == "inbox_items" ? "id" : "proposal_id") = ?",
@@ -132,20 +171,24 @@ public final class TasksInbox {
     public func removeItem(id: String) throws {
         lock.lock()
         defer { lock.unlock() }
-        try database.run("DELETE FROM inbox_items WHERE id = ?", bindings: [.text(id)])
+        try database.run("DELETE FROM inbox_items WHERE id = ?", bindings: [.text(key(id))])
     }
 
     public func items(category: InboxCategory? = nil) throws -> [InboxItem] {
         lock.lock()
         defer { lock.unlock() }
+        let ownerClause = ownerPrefix == nil ? "id NOT LIKE 'owner:%'" : "substr(id, 1, ?) = ?"
+        let ownerBindings: [SQLiteValue] = ownerPrefix.map { [.text(String($0.count)), .text($0)] } ?? []
+        let supportedKinds = InboxItemKind.allCases.map { "'" + $0.rawValue + "'" }.joined(separator: ",")
+        let kindClause = "kind IN (\(supportedKinds))"
         let sql: String
         let bindings: [SQLiteValue]
         if let category = category {
-            sql = "SELECT id, category, kind, title, source_ref, details, created_at FROM inbox_items WHERE category = ? ORDER BY created_at, rowid"
-            bindings = [.text(category.rawValue)]
+            sql = "SELECT id, category, kind, title, source_ref, details, created_at FROM inbox_items WHERE category = ? AND \(ownerClause) AND \(kindClause) ORDER BY created_at, rowid"
+            bindings = [.text(category.rawValue)] + ownerBindings
         } else {
-            sql = "SELECT id, category, kind, title, source_ref, details, created_at FROM inbox_items ORDER BY CASE category WHEN 'required' THEN 0 WHEN 'review' THEN 1 ELSE 2 END, created_at, rowid"
-            bindings = []
+            sql = "SELECT id, category, kind, title, source_ref, details, created_at FROM inbox_items WHERE \(ownerClause) AND \(kindClause) ORDER BY CASE category WHEN 'required' THEN 0 WHEN 'review' THEN 1 ELSE 2 END, created_at, rowid"
+            bindings = ownerBindings
         }
         return try database.query(sql, bindings: bindings) { statement in
             let categoryValue = SQLiteDatabase.text(statement, column: 1)
@@ -165,6 +208,10 @@ public final class TasksInbox {
                 details: SQLiteDatabase.optionalText(statement, column: 5),
                 createdAt: SQLiteDatabase.text(statement, column: 6)
             )
+        }.filter { owns($0.id) }.map { item in
+            InboxItem(id: local(item.id), category: item.category, kind: item.kind,
+                title: item.title, sourceRef: item.sourceRef, details: item.details, createdAt: item.createdAt,
+                workspaceOwner: workspaceRootPath)
         }
     }
 
@@ -202,13 +249,15 @@ public final class TasksInbox {
         let savedTitle = try proposalDraft(id: id)?.title
         lock.lock()
         defer { lock.unlock() }
-        let key = suppressionKey ?? id
-        guard try !isProposalDismissedUnlocked(suppressionKey: key) else { return false }
+        let suppression = key(suppressionKey ?? id)
+        guard try !isProposalDismissedUnlocked(suppressionKey: suppression) else { return false }
         // Regeneration may encounter the same stable outcome ID again; review decisions
         // are user decisions, not generated state to be reset by a new Summary.
         if let existing = try proposalReviewState(id: id), existing != .pending { return false }
 
         try database.transaction {
+            // A colliding legacy or other-owner ID is never adopted: the
+            // namespace is part of the durable primary key.
             try database.run("""
                 INSERT INTO proposal_reviews (proposal_id, state, suppression_key, source_ref, title, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -219,7 +268,7 @@ public final class TasksInbox {
                     title = excluded.title,
                     updated_at = excluded.updated_at
                 """, bindings: [
-                    .text(id), .text(ProposalReviewState.pending.rawValue), .text(key),
+                    .text(key(id)), .text(ProposalReviewState.pending.rawValue), .text(suppression),
                     .text(sourceRef), .text(savedTitle ?? title), .text(now())
                 ])
             try saveUnlocked(InboxItem(
@@ -247,9 +296,9 @@ public final class TasksInbox {
                 "SELECT proposal_id FROM proposal_reviews WHERE state = ? AND source_ref = ?",
                 bindings: [.text(ProposalReviewState.pending.rawValue), .text(sourceRef)]
             ) { SQLiteDatabase.text($0, column: 0) }
-            for id in pending where id.hasPrefix(prefix) {
+            for id in pending where owns(id) && local(id).hasPrefix(prefix) {
                 try database.run("UPDATE inbox_items SET details = ?, updated_at = ? WHERE id = ? AND kind = ?",
-                    bindings: [currentIDs.contains(id) ? .null : .text("Not supported by the current Summary"),
+                    bindings: [currentIDs.contains(local(id)) ? .null : .text("Not supported by the current Summary"),
                                .text(now()), .text(id), .text(InboxItemKind.proposal.rawValue)])
             }
         }
@@ -263,7 +312,9 @@ public final class TasksInbox {
         lock.lock()
         defer { lock.unlock() }
         try database.transaction {
-            for id in ids {
+            for rawID in ids {
+                let id = key(rawID)
+                guard try ownedProposalExists(id: id) else { throw InboxOwnershipError.notOwned(rawID) }
                 if state == .dismissed {
                     let suppressionKeys: [String] = try database.query(
                         "SELECT suppression_key FROM proposal_reviews WHERE proposal_id = ?",
@@ -293,7 +344,7 @@ public final class TasksInbox {
         defer { lock.unlock() }
         let values: [String] = try database.query(
             "SELECT state FROM proposal_reviews WHERE proposal_id = ?",
-            bindings: [.text(id)]
+            bindings: [.text(key(id))]
         ) { SQLiteDatabase.text($0, column: 0) }
         guard let value = values.first else { return nil }
         guard let state = ProposalReviewState(rawValue: value) else {
@@ -309,16 +360,17 @@ public final class TasksInbox {
         lock.lock()
         defer { lock.unlock() }
         try database.transaction {
+            guard try ownedProposalExists(id: key(id)) else { throw InboxOwnershipError.notOwned(id) }
             try database.run("INSERT INTO proposal_edits (proposal_id, title, comment) VALUES (?, ?, ?) ON CONFLICT(proposal_id) DO UPDATE SET title = excluded.title, comment = excluded.comment",
-                bindings: [.text(id), .text(title), .text(comment)])
-            try database.run("UPDATE inbox_items SET title = ?, updated_at = ? WHERE id = ?", bindings: [.text(title), .text(now()), .text(id)])
+                bindings: [.text(key(id)), .text(title), .text(comment)])
+            try database.run("UPDATE inbox_items SET title = ?, updated_at = ? WHERE id = ?", bindings: [.text(title), .text(now()), .text(key(id))])
         }
     }
 
     public func proposalDraft(id: String) throws -> (title: String, comment: String)? {
         lock.lock()
         defer { lock.unlock() }
-        return try database.query("SELECT title, comment FROM proposal_edits WHERE proposal_id = ?", bindings: [.text(id)]) { statement in
+        return try database.query("SELECT title, comment FROM proposal_edits WHERE proposal_id = ?", bindings: [.text(key(id))]) { statement in
             (SQLiteDatabase.text(statement, column: 0), SQLiteDatabase.text(statement, column: 1))
         }.first
     }
@@ -328,10 +380,10 @@ public final class TasksInbox {
         defer { lock.unlock() }
         return try database.query(
             "SELECT r.proposal_id, COALESCE(e.title, r.title), r.source_ref, i.details FROM proposal_reviews r LEFT JOIN inbox_items i ON i.id = r.proposal_id LEFT JOIN proposal_edits e ON e.proposal_id = r.proposal_id WHERE r.proposal_id = ? AND r.state = ?",
-            bindings: [.text(id), .text(ProposalReviewState.pending.rawValue)]
+            bindings: [.text(key(id)), .text(ProposalReviewState.pending.rawValue)]
         ) { statement in
             ActionItemProposal(
-                id: SQLiteDatabase.text(statement, column: 0),
+                id: id,
                 title: SQLiteDatabase.text(statement, column: 1),
                 sourceRef: SQLiteDatabase.text(statement, column: 2),
                 isObsolete: SQLiteDatabase.optionalText(statement, column: 3) == "Not supported by the current Summary"
@@ -339,51 +391,13 @@ public final class TasksInbox {
         }.first
     }
 
-    public func dismissProposal(id: String, suppressionKey: String) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try database.transaction {
-            try database.run("""
-                INSERT INTO dismissed_proposals (suppression_key, dismissed_at)
-                VALUES (?, ?)
-                ON CONFLICT(suppression_key) DO UPDATE SET dismissed_at = excluded.dismissed_at
-                """, bindings: [.text(suppressionKey), .text(now())])
-            try database.run(
-                "UPDATE proposal_reviews SET state = ?, suppression_key = ?, updated_at = ? WHERE proposal_id = ?",
-                bindings: [.text(ProposalReviewState.dismissed.rawValue), .text(suppressionKey), .text(now()), .text(id)]
-            )
-            try database.run("DELETE FROM inbox_items WHERE id = ? AND kind = ?", bindings: [.text(id), .text(InboxItemKind.proposal.rawValue)])
-        }
-    }
-
     public func isProposalDismissed(suppressionKey: String) throws -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return try isProposalDismissedUnlocked(suppressionKey: suppressionKey)
+        return try isProposalDismissedUnlocked(suppressionKey: key(suppressionKey))
     }
 
-    public func syncOverdueTodos(_ todos: [TodoItem], today: String) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        let overdue = todos.filter { item in
-            guard let dueDate = item.dueDate else { return false }
-            return dueDate < today && item.status != .done && item.status != .canceled
-        }
-        try database.transaction {
-            try database.run("DELETE FROM inbox_items WHERE kind = ?", bindings: [.text(InboxItemKind.overdueTodo.rawValue)])
-            for item in overdue {
-                try saveUnlocked(InboxItem(
-                    id: "overdue:\(item.id)",
-                    category: .attention,
-                    kind: .overdueTodo,
-                    title: item.title,
-                    sourceRef: item.sourceRef ?? "\(item.location.relativePath):\(item.location.lineNumber)",
-                    details: "due: \(item.dueDate ?? "")",
-                    createdAt: now()
-                ))
-            }
-        }
-    }
+
 
     public static func systemTimestamp() -> String {
         let formatter = ISO8601DateFormatter()
@@ -443,11 +457,17 @@ public final class TasksInbox {
                 details = excluded.details,
                 updated_at = excluded.updated_at
             """, bindings: [
-                .text(item.id), .text(item.category.rawValue), .text(item.kind.rawValue), .text(item.title),
+                .text(key(item.id)), .text(item.category.rawValue), .text(item.kind.rawValue), .text(item.title),
                 item.sourceRef.map(SQLiteValue.text) ?? .null,
                 item.details.map(SQLiteValue.text) ?? .null,
                 .text(item.createdAt), .text(now())
             ])
+    }
+
+    private func ownedProposalExists(id: String) throws -> Bool {
+        guard owns(id) else { return false }
+        return try !database.query("SELECT proposal_id FROM proposal_reviews WHERE proposal_id = ?",
+            bindings: [.text(id)]) { SQLiteDatabase.text($0, column: 0) }.isEmpty
     }
 
     private func isProposalDismissedUnlocked(suppressionKey: String) throws -> Bool {

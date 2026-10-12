@@ -32,9 +32,6 @@ final class CanonicalVaultInitializerTests: XCTestCase {
                 .contains("# General")
         )
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRoot.appendingPathComponent("Meetings/README.md").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRoot.appendingPathComponent("Activities/README.md").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRoot.appendingPathComponent("Briefs/README.md").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRoot.appendingPathComponent("Reports/README.md").path))
     }
 
     func testInitializeRepairsMissingStarterFilesWithoutReplacingExistingUserContent() throws {
@@ -46,8 +43,8 @@ final class CanonicalVaultInitializerTests: XCTestCase {
         _ = try vault.writeMarkdown(Data(userMeetingReadme.utf8), relativePath: "Meetings/README.md", expectedVersion: nil)
 
         try initializer.initialize()
-        try FileManager.default.removeItem(at: fixture.workspaceRoot.appendingPathComponent("Briefs/README.md"))
-        try FileManager.default.removeItem(at: fixture.workspaceRoot.appendingPathComponent("Reports/Weekly"))
+        try FileManager.default.removeItem(at: fixture.workspaceRoot.appendingPathComponent("Todos/todo.md"))
+        try FileManager.default.removeItem(at: fixture.workspaceRoot.appendingPathComponent("Projects"))
 
         try initializer.initialize()
 
@@ -55,15 +52,11 @@ final class CanonicalVaultInitializerTests: XCTestCase {
             try String(contentsOf: fixture.workspaceRoot.appendingPathComponent("Meetings/README.md")),
             userMeetingReadme
         )
-        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRoot.appendingPathComponent("Briefs/README.md").path))
-        var isWeeklyReportsDirectory: ObjCBool = false
-        XCTAssertTrue(
-            FileManager.default.fileExists(
-                atPath: fixture.workspaceRoot.appendingPathComponent("Reports/Weekly").path,
-                isDirectory: &isWeeklyReportsDirectory
-            )
-        )
-        XCTAssertTrue(isWeeklyReportsDirectory.boolValue)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRoot.appendingPathComponent("Meetings/README.md").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRoot.appendingPathComponent("Todos/todo.md").path))
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRoot.appendingPathComponent("Projects").path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
     }
 
     func testInitializePreservesExistingUserFiles() throws {

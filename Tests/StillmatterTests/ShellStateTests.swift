@@ -17,7 +17,7 @@ final class ShellStateTests: XCTestCase {
 
     func testMvpSidebarTabsArePresentInOrder() {
         XCTAssertEqual(ShellTab.allCases, [
-            .today, .recording, .meetings, .tasks, .projectsActivities, .reports, .askAI, .settings
+            .today, .recording, .meetings, .tasks, .settings
         ])
     }
 }

@@ -56,10 +56,6 @@ public struct AudioCapturePreflightReport: Codable, Equatable {
         return relevant.map { "\($0.title): \($0.detail)" }.joined(separator: " ")
     }
 
-    public var hasSettingsActions: Bool {
-        items.contains { $0.settingsAction != nil }
-    }
-
     /// Explicit all-ready report for callers whose environment has already been validated.
     public static let readyForTesting = AudioCapturePreflightReport(items: [
         .ready(id: "test-environment", title: "Test environment", detail: "Audio capture prerequisites are ready.")

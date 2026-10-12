@@ -11,10 +11,12 @@ public enum ActionItemProposalReviewError: Error, Equatable {
 public final class ActionItemProposalReviewer {
     private let inbox: TasksInbox
     private let todoMutator: TodoItemMutator
+    private let workspaceRootURL: URL?
 
-    public init(inbox: TasksInbox, todoMutator: TodoItemMutator) {
+    public init(inbox: TasksInbox, todoMutator: TodoItemMutator, workspaceRootURL: URL? = nil) {
         self.inbox = inbox
         self.todoMutator = todoMutator
+        self.workspaceRootURL = workspaceRootURL
     }
 
     @discardableResult
@@ -93,6 +95,7 @@ public final class ActionItemProposalReviewer {
     }
 
     private func pendingProposal(id: String) throws -> ActionItemProposal {
+        if let workspaceRootURL { try inbox.requireOwner(workspaceRootURL) }
         guard let proposal = try inbox.pendingProposal(id: id) else {
             throw ActionItemProposalReviewError.proposalNotPending(id)
         }

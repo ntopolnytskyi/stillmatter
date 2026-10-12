@@ -1,53 +1,32 @@
 ---
 schema: graphite-focus/v1
-contract_version: 2.0.0
+contract_version: 2.0.3
 name: Graphite Focus
 platform: macOS 13+
 appearance: dark-only
 status: canonical
-omitted_interchange_subset: Google Labs DESIGN.md tokens are web-oriented and non-authoritative for native macOS semantics.
 ---
 
-# Graphite Focus Visual Contract
+# Graphite Focus
 
 ## Identity and Scope
 
-Graphite Focus is a reusable visual language for frequently used native macOS applications. It combines restrained graphite surfaces, warm high-contrast text, and a rationed violet accent. This document is the complete normative visual contract; prototypes and research are evidence, not additional rules.
+Graphite Focus defines Stillmatter's native macOS visual language: graphite surfaces, warm text, and sparse violet accents. This file owns shared visual rules; the [Stillmatter profile](STILLMATTER_PROFILE.md) owns screen composition and product exceptions.
 
-The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are normative. Graphite Focus Schema `graphite-focus/v1` adapts the single-file, versioned, prose-plus-tokens idea of Google Labs' alpha `DESIGN.md`; it does not claim schema conformance. Values use macOS points and native semantics. Any external token export is an optional, non-authoritative Interchange Subset.
-
-The contract targets macOS 13 or newer, native AppKit or SwiftUI, resizable windows, keyboard and pointer use, VoiceOver, and long sessions. Dark-only appearance is a deliberate product exception to Apple's normal appearance guidance. It does not waive native window, control, focus, menu, keyboard, or accessibility behavior. Light appearance and cross-platform rendering are omitted deliberately.
-
-Semantic versioning applies to `contract_version`: breaking meaning changes increment major, additive roles increment minor, and clarifications increment patch. A compatible Application Profile MUST name the major version it consumes.
-
-### Contract Precedence
-
-Resolve conflicts in this order:
-
-1. macOS accessibility accommodations;
-2. native control behavior and component semantics;
-3. Graphite Focus semantic tokens;
-4. Screen Recipe examples;
-5. Application Profile Extension Points.
-
-More-specific rules win within one tier. An example never overrides a rule. When the contract is silent or contradictory, record a gap rather than inventing a convention.
+Rules are requirements unless marked optional. Resolve conflicts in this order: accessibility accommodations, native control behavior, semantic tokens, screen recipes, product specializations. Examples never override rules. The profile consumes the contract's major version; token references use `{surface.base}` syntax.
 
 ## Principles
 
-1. **Native before novel.** System windows, controls, menus, focus rings, typography, symbols, resizing, and accessibility semantics remain authoritative.
-2. **Calm density.** Favor information-rich, comfortable-compact compositions with stable opaque surfaces and progressive disclosure.
-3. **Hierarchy without decoration.** Surface value, typography, spacing, and quiet dividers carry structure; ordinary content does not float.
-4. **One principal action.** The current task or section has at most one visually dominant action.
-5. **Accent is a signal.** Violet identifies the principal action, current mode, actionable links, progress, sparse identity marks, and contextual dense-list selection only.
-6. **State axes stay independent.** Focus, selection, meaning, activity, and active-window context are not synonyms.
-7. **Meaning survives presentation loss.** Color, transparency, and motion reinforce meaning but never carry it alone.
-8. **Structure adapts, capability persists.** Width pressure changes region presentation, not available capability or in-progress state.
-9. **Semantic groups, not card grids.** A Semantic Panel exists only when content has a meaningful shared boundary.
-10. **Long-session comfort.** Avoid flashing, decorative animation, excess contrast, pervasive accent, and unstable translucent content.
+- Use native controls, menus, focus, system typography, and SF Symbols.
+- Build compact, readable layouts with opaque surfaces and quiet dividers.
+- Give each task or section at most one principal action.
+- Use panels for bounded workspaces such as editors, transport, and review. Ordinary detail stays in open sections or rows.
+- Keep focus, selection, status, and progress distinct. Meaning must survive loss of color or motion.
+- Preserve capability, selection, scroll position, and input when resizing.
 
 ## Tokens
 
-Token IDs are normative and are referenced with brace syntax (for example, `surface.base` appears as a braced reference elsewhere in this document). Feature code MUST consume semantic roles rather than introduce equivalent literals. Accessibility presentations MAY resolve a role to a different value without changing its meaning.
+Feature code consumes shared semantic roles rather than equivalent literals. Accessibility settings may change values while retaining meaning. All geometry uses macOS points.
 
 ### Color and Surface Tokens
 
@@ -75,9 +54,9 @@ Token IDs are normative and are referenced with brace syntax (for example, `surf
 | `stroke.emphasized` | white at 20% | Increased Contrast and emphasized boundaries |
 | `shadow.transient` | black 48%, y 16, blur 44 | Sole custom shadow; transient surfaces only |
 
-The ordered Surface Ladder is `{surface.base}` → `{surface.chrome}` → `{surface.panel}` → `{surface.raised}`. These are semantic depth roles, not a palette for arbitrary alternation. Ordinary content surfaces MUST be opaque and shadowless. Materials MAY appear in native title-bar/sidebar chrome and transient surfaces only, and MUST have the listed opaque fallback. State-bearing colors MUST NOT depend on translucency.
+Surfaces progress from base → chrome → panel → raised. Ordinary content is opaque and shadowless; materials belong only in native chrome or transient surfaces, with opaque fallbacks.
 
-The Accent Budget permits `{accent.base}` only for the Principal Action, current mode, actionable links, progress, sparse identity marks, and contextual selection tint in Dense Collections. Global-sidebar selection MUST use `{surface.selection-neutral}` with one accent symbol. Success, attention/live, destructive, and informational meanings MUST use their separate roles and include text plus another non-color cue.
+Violet is reserved for the principal action, current mode, links, progress, sparse identity marks, and contextual dense-list selection. Sidebar selection uses a neutral surface and one accent symbol. Status colors require text and a symbol or another non-color cue.
 
 ### Typography Tokens
 
@@ -93,7 +72,7 @@ The Accent Budget permits `{accent.base}` only for the Principal Action, current
 | `type.numeric` | System monospaced digits | 12 pt regular | Numeric and elapsed-time data |
 | `type.long-form` | System | 14 pt regular, about 1.5 line height | Prose up to 760 pt measure |
 
-SF Pro/system typography is required. macOS does not provide iOS Dynamic Type, so layouts MUST remain legible and tolerate longer localized text without claiming Dynamic Type support. SF Symbols are the default symbol vocabulary; familiar outline symbols SHOULD be used in toolbars. Ambiguous icon-only controls MUST have an accessibility label and SHOULD have a tooltip. SF Symbols MUST NOT be used as logos or app icons.
+Use system fonts and SF Symbols. Caption and disabled text cannot carry sole essential information. Icon-only controls need accessible names and useful tooltips. Symbols are not app icons.
 
 ### Geometry and Motion Tokens
 
@@ -115,16 +94,16 @@ SF Pro/system typography is required. macOS does not provide iOS Dynamic Type, s
 | `measure.form` | about 680 pt | Leading-aligned settings/form content |
 | `measure.reading` | about 760 pt | Long-form prose |
 
-Native control geometry overrides spacing and radius tokens where necessary for correct macOS behavior. Essential controls SHOULD retain native 22–24 pt minimum geometry. Capsules are reserved for Metadata Tags, Status Labels, and pill selectors; they are not a general container shape. Native motion is preferred. Under Reduce Motion, `{motion.local}` and `{motion.region}` resolve to immediate change or a restrained fade only when it preserves clarity.
+Native control geometry takes precedence; retain native hit targets and focus rings. Capsules are for metadata, status, and pill selectors. Prefer native motion; Reduce Motion uses immediate changes or a restrained fade.
 
 ## Native Mappings
 
-Each mapping is implementation-independent. **System** means native behavior owns interaction and presentation; **app** means Graphite Focus composes native primitives; **contextual** means the listed native choice depends on content. Exceptions require an Application Profile record.
+System owns native interaction; app composes native primitives; contextual selects the appropriate primitive. Styling must preserve editing, enabled state, hit targets, keyboard behavior, and accessibility.
 
 | Semantic role | Normal AppKit / SwiftUI primitive | Ownership | Allowed exception | Required behavior |
 |---|---|---|---|---|
 | Window Toolbar | `NSToolbar` / unified toolbar | system | None | Window identity, navigation, Area Search, and few frequent actions; every command also in menus |
-| Page Header | Label stack in document view | app | None | Identifies current area/context without duplicating window title; normally scrolls |
+| Page Header | Label stack in document view | app | None | Identifies current area/context without duplicating window title; normally scrolls; when paired with local actions, the title is a single tail-truncated line with full tooltip/accessibility text and yields width to a noncompressing action cluster |
 | Content Section | View group | app | None | Groups a coherent topic with semantic heading |
 | Section Header | Text/Label | app | Native table header | Names a section and optional local action |
 | Shell Region | `NSSplitView` / split-view column | system | None | Flush, independently scrolling regions; the sidebar rail is fixed-width while content/list and detail can resize where supported |
@@ -167,32 +146,24 @@ Each mapping is implementation-independent. **System** means native behavior own
 | Alert / Confirmation | `NSAlert` / alert or confirmation dialog | system | None | Native role ordering, destructive clarity, and focus restoration |
 | Lightweight HUD | Non-key transient panel | app | Inline confirmation | Brief confirmation that never steals focus; static text meaning |
 
-Native controls and focus rings MUST NOT be replaced by custom drawing merely to match tokens. App-owned styling MAY surround or tint native controls only when their semantics, hit targets, focus, enabled state, accessibility, and platform behavior remain intact.
-
 ## Adaptive Shell
 
-Graphite Focus uses one Adaptive Shell. Region order and keyboard reading order are: Window Toolbar → global sidebar → optional content/list → detail canvas → optional Contextual Inspector → transient surface. An Application Profile MAY add a structural drawer and MUST place it explicitly in the path.
+Reading order is toolbar → sidebar → optional list → detail → optional inspector → transient surface. Regions are flush, independently scrolling, and divider-separated. Toolbar stays fixed; page headers normally scroll.
 
-| Region | Useful width | Ideal | Behavior |
-|---|---:|---:|---|
-| Global sidebar | 64 pt | 64 pt | Fixed-width icon rail; user-hideable and automatically collapsible without changing the visibility preference |
-| Content/list | 260–380 pt | 300 pt | Present only for selection-heavy workflows |
-| Detail canvas | 480 pt minimum beside regions | Fluid | Reading/form measures constrain only relevant content |
-| Contextual Inspector | 280–420 pt | 320 pt | Normally closed unless central; transient when narrow |
+| Region | Width | Behavior |
+|---|---|---|
+| Sidebar | 64 pt | Fixed icon rail; hideable; native Tab and Space/Return activation |
+| List | 260–380 pt; ideal 300 pt | Only for selection-heavy work |
+| Detail | At least 480 pt beside other regions | Fluid; forms and prose use their measure tokens |
+| Inspector | 280–420 pt; ideal 320 pt | Optional, selection-following, normally closed |
 
-The **Reference Canvas** is 1200×760 pt, the spacious validation width is 1440 pt, and the **Minimum Operable Window** is 720×520 pt. They are validation anchors, not fixed breakpoints. Adaptation is content-driven when useful widths cease to fit.
+Validate at **1200×760**, **720×520** (minimum), and **1440 pt** wide. Adapt when useful widths no longer fit: hide/present the inspector transiently, collapse the sidebar, then let list replace detail. Narrow navigation provides native Back and a location label. Preserve the user's sidebar preference when space returns.
 
-The fixed icon rail MUST provide accessible names and tooltips for every destination. Its native buttons use Tab focus and Space/Return activation; it does not implement arrow-key traversal or a resizable divider. The Region Collapse Order is mandatory: (1) hide or transiently present the inspector, (2) auto-collapse the sidebar, then (3) let content/list temporarily replace detail. Narrow Navigation MUST provide a native toolbar back affordance and concise Location Label. Selection, scroll position, and in-progress input MUST survive every transition. No capability may disappear, no bottom/mobile navigation may be introduced, and user-requested sidebar visibility persists whenever space permits.
+Header titles truncate at the tail with full tooltip/accessibility text. Prose, errors, and essential status wrap. Secondary metadata may truncate with full text available. Actions retain native size and independent focus; crowded citations/filters wrap or use a named native menu. Never clip controls or essential information horizontally.
 
-Shell Regions are flush and square, separated by Structural Strokes. They scroll independently. The toolbar remains fixed; Page Headers ordinarily scroll with detail. Pin only task-essential controls or headings, and avoid nested scrolling inside Semantic Panels. Operational canvases, tables, evidence streams, and timelines use available width. Forms align leading at `{measure.form}`; long-form prose aligns leading at `{measure.reading}`.
-
-The Window Toolbar owns window identity, navigation, Area Search, and a small set of frequent actions. The Page Header owns the selected area or item's local title. Every toolbar action MUST have a menu command because the toolbar can be hidden or customized. Multiple windows maintain independent shell state; full-screen and window management remain system-owned.
-
-Area Search belongs in native toolbar/sidebar placement, defaults to current-area scope, and keeps query, scope, and filters visible. Results use the content/list region when present and otherwise the detail canvas. It MUST NOT be a decorative floating search card.
+Toolbar commands also have menu routes. Area Search defaults to the current area and exposes scope, query, and filters. Tables and operational content use available width; forms and prose align leading within their measure tokens.
 
 ## Components and State Axes
-
-Components belong to exactly one semantic family. Native controls remain native; names describe jobs, not shapes.
 
 | Family | Components |
 |---|---|
@@ -202,17 +173,18 @@ Components belong to exactly one semantic family. Native controls remain native;
 | Feedback and Status | Status Label; Metadata Tag; Count Badge; Progress Indicator; Inline Notice; Content State |
 | Transient Surfaces | Menu / Context Menu; Popover; Sheet; Alert / Confirmation; Lightweight HUD |
 
-The independent State Axes are:
+The five independent axes are Interaction (hover, pressed, focus, disabled), Choice (selected/current/mixed), Meaning (information, success, attention/live, destructive), Activity (loading/progress/complete/unavailable), and Window Context (active/inactive).
 
-- **Interaction:** normal, hover, pressed, keyboard-focused, disabled.
-- **Choice:** selected, current mode, mixed.
-- **Meaning:** informational, success, attention/live, destructive.
-- **Activity:** loading, progress, complete, unavailable.
-- **Window Context:** active, inactive.
-
-### State Applicability Matrix
-
-`—` means the axis does not apply. A listed axis MUST implement all relevant states above while preserving native semantics.
+| State | Treatment |
+|---|---|
+| Selected | Native selection; sidebar uses neutral surface plus accent symbol. Selection does not imply keyboard focus. |
+| Ready/complete | Success role, explicit text, checkmark; product exceptions must be recorded. |
+| Live/degraded/blocked/queued | Attention role, explicit text and distinct symbol; include stage when relevant. |
+| Failed | Destructive meaning, explanation, next action; persist until resolved/dismissed. Do not steal focus. |
+| Processing | Native progress, stage text, numeric value when determinate; motion is optional. |
+| Unavailable/empty | Explain the condition and useful next action; distinguish from loading or failure. |
+| Disabled | Native disabled control; explain why when unclear. |
+| Destructive action | Clear verb and native role; confirm irreversible work. Live recording itself is attention. |
 
 | Component group | Interaction | Choice | Meaning | Activity | Window Context |
 |---|---|---|---|---|---|
@@ -233,111 +205,55 @@ The independent State Axes are:
 | Menu / Context Menu; Popover; Sheet; Alert / Confirmation | native | native | informational; destructive where declared | loading; unavailable | active/inactive |
 | Lightweight HUD | — | — | informational; success | complete | active/inactive |
 
-Interaction rules are stable. Hover is a subtle surface step. Pressed actions use the pressed native or accent role. Native focus rings remain visible and are never replaced with a glow. Sidebar selection is neutral with one accent symbol. Dense Collection selection MAY use contextual accent tint plus a restrained boundary cue. Inactive windows reduce chrome and hover emphasis while preserving readable text, selection, status, control labels, and focus meaning.
-
-Clicking a Collection Row selects it and updates detail. A dedicated disclosure changes hierarchy without accidental selection side effects. A trailing action remains independently targetable. Arrow keys move selection and Return opens or activates where appropriate. A full-row hit target MUST remain distinguishable from its trailing controls.
-
-A Status Label communicates meaning, a Metadata Tag describes content, and a Count Badge communicates quantity. None becomes an action unless rendered as a native control. Content State covers loading, empty, no-results, offline, error, and unavailable, with a recognizable cue, concise explanation, and useful next action where one exists. Errors requiring action persist until resolved or dismissed; brief success MAY use a Lightweight HUD.
+Rows support native selection, arrow navigation, and Return activation. Disclosure and trailing actions remain independently targetable. Status labels describe meaning, metadata tags describe content, and badges count; actions use native controls. Inactive windows retain readable content, selection, status, and focus meaning.
 
 ## Screen Recipes
 
-Recipes arrange shared components; they never redefine component identity, state meaning, or Adaptive Shell behavior.
-
 ### Structured Workbench
 
-The default composition uses a fixed-width icon rail with accessible destination names, Page Header, broad detail canvas, one Principal Action where applicable, restrained Semantic Panels for genuine groups, and Collection Rows for interactive summaries. Ordinary structure stays open and divider-led rather than becoming a card grid.
+Page header, broad canvas, coherent sections, and interactive summary rows. Panels only for bounded workspaces.
 
 ### Precision Ledger
 
-Selection-heavy work adds a resizable content/list region containing Dense Collection rows or a native table beside a detail Page Header and Content Sections. An inspector is optional only when information independently follows selection. At narrow widths, list temporarily replaces detail and native back navigation restores detail without losing selection.
+Native list/table beside detail; optional selection-following inspector. Narrow layouts switch between list and detail without losing state.
 
 ### Settings
 
-Use Section Headers and native Form Rows in a leading-aligned column near `{measure.form}`. Help and validation remain near their controls. Destructive actions are isolated. A settings screen does not maintain an empty content/list column.
+Leading native form near `{measure.form}`; help and validation beside controls; destructive actions isolated.
 
 ### Search
 
-Use Area Search with visible scope, query, and filters; Collection Rows or a Table show kind, title, source, excerpt, and location metadata. Selection previews context or opens the owning area. No-results and unavailable-index Content States provide a useful next action.
+Visible scope, query, and filters; result rows show kind, title, source, excerpt, and location. Selection previews or opens the owning area.
 
 ### Empty State
 
-Place one Content State in its owning canvas. State what is absent or unavailable, why when known, and the single next useful action. Do not disguise loading, error, or unavailable content as an empty collection.
+One explanation and useful next action in the owning canvas. Distinguish empty, loading, error, and unavailable states.
 
 ### Modal and Transient
 
-Use a popover for brief anchored choices, sheet for focused blocking edits, alert/confirmation for system-style decisions, inspector for selection-following context, and a separate window for independent or long-running work. Titles, explanation, action hierarchy, destructive meaning, keyboard dismissal, and focus return remain explicit.
+Popover for brief anchored choices, sheet for focused edits, alert for confirmation, separate window for independent work. Restore focus on dismissal.
 
 ## Accessibility and Motion
 
-Accessibility is a required presentation of the same semantics, not a separate theme.
-
-- **Contrast:** Default presentation MUST meet at least 4.5:1 for ordinary text and 3:1 for large/bold text and non-text controls/indicators; target 7:1 for small custom text where practical. Increased Contrast retains roles and hue while resolving structural boundaries to `{stroke.emphasized}`, strengthening text separation, control boundaries, and redundant cues. It is not a repair mode for an inaccessible default.
-- **Reduce Transparency:** Native neutral materials resolve to `{surface.chrome}` and transient materials resolve to opaque `{surface.transient}`. State-bearing colors remain stable.
-- **Reduce Motion:** Remove large region transitions, simulated depth, parallax, spring behavior, looping/decorative animation, and animated status indicators. Use immediate changes or a restrained fade only when useful. Static text, symbols, and values preserve all meaning.
-- **Keyboard Path:** Full Keyboard Access follows visible region order. Every action is reachable, system focus stays visible, and dismissing a sheet, popover, alert, confirmation, or menu returns focus to its invoker.
-- **VoiceOver:** Icon-only actions expose meaningful labels; status/activity expose textual descriptions; reading order follows visible hierarchy; dynamic state changes provide concise announcements without relying on animation.
-- **Color-independent status:** Every meaningful status combines semantic text and at least one of symbol shape, border, position, or pattern in addition to color. Progress includes text or a value.
-- **Inactive windows:** Preserve text contrast, selection meaning, status cues, labels, and focus visibility while reducing nonessential hover/chrome emphasis.
-- **Long-session comfort:** No flashing or decorative looping animation; surfaces remain stable; density is comfortable-compact; accent stays sparse; essential information never depends on a 10 pt caption.
-
-Combined validation MUST cover default and Increased Contrast × normal and Reduce Transparency × normal and Reduce Motion, plus VoiceOver and Full Keyboard Access, at the Reference Canvas and Minimum Operable Window across representative recipes. Narrow Navigation and selection changes retain location, selected treatment, scroll position, and input even when motion is immediate.
+- Default contrast: at least 4.5:1 for ordinary text and 3:1 for large text and controls; aim for 7:1 for small custom text. Increased Contrast strengthens boundaries and text separation.
+- Reduce Transparency resolves chrome and overlays to opaque surfaces.
+- Reduce Motion removes large transitions and decorative/looping animation; text and values preserve progress meaning.
+- Full Keyboard Access follows visible order; every action is reachable with native focus. Transient dismissal restores focus.
+- VoiceOver exposes names, selection, status, progress, and concise updates. Color alone never communicates state.
+- Test combinations of contrast, transparency, and motion settings, plus active/inactive windows. Dark-only appearance does not waive these requirements.
 
 ## Customization
 
-An application customizes Graphite Focus only through a versioned Application Profile. Allowed Extension Points are:
+The application profile may define navigation, compositions, product components, token specializations, and bounded exceptions. It cannot override accessibility, native focus, state meanings, or collapse order.
 
-- product information architecture and content;
-- selected or additional Screen Recipes;
-- product-specific semantic components with complete Native Mapping and State Applicability entries;
-- semantic-token specialization that preserves role meaning and accessibility;
-- justified platform/product exceptions.
-
-A profile MUST NOT redefine component meanings, State Axes, Region Collapse Order, native focus behavior, accessibility accommodations, Contract Precedence, or the distinction between selection and status. It MUST NOT silently replace a shared role with a literal.
-
-Every exception record MUST include: unique ID, affected rule, reason, bounded scope, replacement behavior, accessibility evidence, and review condition. “Brand preference” alone is not sufficient. A repeated exception is a candidate for explicit contract revision, never an automatic new convention.
+Each exception records an ID, affected rule, reason, scope, replacement behavior, accessibility evidence, and review condition. Repeated exceptions require reviewing the shared rule.
 
 ## Acceptance
 
-Conformance requires both layers:
+Run the contract and presentation validators listed in the [README](../../README.md). They check document structure, token references, mappings, state coverage, profile compatibility, and undeclared visual literals. Necessary native geometry literals require an inline `// graphite-focus-native-exception: <reason>`.
 
-### Structural Checks
-
-Automated checks MUST reject:
-
-- absent or invalid front matter, required sections, schema, or semantic version;
-- duplicate or undeclared token IDs and broken braced token references;
-- incomplete Native Mapping rows or missing mappings for declared components;
-- missing State Applicability coverage or unknown components;
-- Application Profiles with incompatible versions, forbidden override claims, unknown token references, or incomplete exceptions;
-- newly introduced literal visual values outside this contract or a profile's documented native-control exception.
-
-`scripts/validate-graphite-focus-presentation.py` scans every active `Sources/Stillmatter/*.swift` file except the two shared presentation providers; its line-level checks reject direct NSColor/SwiftUI RGB and native font literals, SwiftUI fixed font sizes/spacing/radii, and numeric AppKit spacing/radii. A necessary native-control geometry or fixture literal requires an inline `// graphite-focus-native-exception: <specific reason>` on that line. Semantic status colors and provider values are defined only in the shared layer. This is a structural guard, not a Swift parser or exhaustive visual audit. Structural Checks prove document integrity, not visual quality.
-
-### Experience Review
-
-A human MUST evaluate Structured Workbench, Precision Ledger, Settings, Search, Empty State, and Modal/Transient recipes at 1200×760, 720×520, and 1440 pt width where relevant. Review hierarchy, scanability, native macOS character, action clarity, density, resizing, keyboard use, VoiceOver meaning, accessibility combinations, inactive-window state, and Long-Session Comfort. Confirm panels and accent are restrained, prose has comfortable measure, structured data uses available width, and technical diagnostics do not dominate primary work.
-
-Only a passing Structural Check and Experience Review permit a conformance claim.
+Structural checks do not establish usability. Review representative screens at all three validation sizes with long content, keyboard, VoiceOver, accessibility settings, and inactive windows. Check hierarchy, action clarity, resizing, retained state, and panel/accent restraint before claiming conformance.
 
 ## Do and Don't Constraints
 
-**Do**
-
-- Use native controls, system focus, menus, keyboard conventions, SF Pro, and SF Symbols.
-- Use Surface Ladder roles and Structural Strokes to establish hierarchy.
-- Keep one Principal Action and distinguish secondary, quiet, and destructive actions.
-- Pair status color with text and another cue.
-- Preserve capability and in-progress state across resize and collapse.
-- Constrain prose and forms while allowing structured data to use width.
-- Record genuine contract gaps and profile exceptions explicitly.
-
-**Don't**
-
-- Don't create decorative gradients, pervasive glass, ordinary-content shadows, floating shell cards, or excessive rounding.
-- Don't replace native focus with custom glow or use accent for focus, every selection, success, warning, and brand decoration.
-- Don't create generic Card, Tile, Hero, or Pill abstractions.
-- Don't use color, transparency, or motion as the sole carrier of state.
-- Don't crowd the toolbar or make it the only route to a command.
-- Don't hide capabilities, lose state, or introduce mobile/bottom navigation at narrow widths.
-- Don't copy another product's brand, exact palette identity, taxonomy, copy, icon assignments, or screen composition.
-- Don't treat Structural Checks, screenshots, or pixel matching as substitutes for Experience Review.
+Use semantic tokens and native behavior. Avoid decorative gradients, pervasive glass, ordinary-content shadows, floating shell cards, generic Card/Tile wrappers, custom focus glows, and mobile-style bottom navigation. Screenshots and automated checks do not replace experience review.
