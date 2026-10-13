@@ -75,6 +75,26 @@ struct GraphiteFocusPresentationHarness {
         require(Set(labels.map { rgba($0.textColor) }).count == 4, "Status semantic colors must remain distinct")
         require(labels.allSatisfy { !$0.statusText.isEmpty && $0.stringValue.contains($0.statusText) }, "Status meaning cannot rely on color")
 
+        let semanticLabels = GraphiteFocusSemanticState.allCases.map { state -> GraphiteFocusStatusLabel in
+            let label = GraphiteFocusStatusLabel()
+            label.setState(state, colors: colors)
+            proofSurface.addArrangedSubview(label)
+            return label
+        }
+        require(semanticLabels.allSatisfy { !$0.statusText.isEmpty && !$0.stringValue.isEmpty }, "Every representative state must expose text and a non-color cue")
+        require(rgba(GraphiteFocusSemanticState.readyCompleted.color(in: colors)) != rgba(colors.accent), "Ready/completed must not use accent outside bounded Meetings exception")
+        require(rgba(GraphiteFocusSemanticState.selectedCurrent.color(in: colors)) != rgba(GraphiteFocusSemanticState.readyCompleted.color(in: colors)), "Selection must remain visually separate from status")
+
+        let notice = GraphiteFocusInlineNoticeView()
+        notice.configure(title: "Failed", detail: "Retry processing from the Jobs Inbox.", state: .failed, colors: colors)
+        proofSurface.addArrangedSubview(notice)
+        require(notice.accessibilityLabel()?.contains("Retry processing") == true, "Inline notices must expose actionable failure text")
+
+        let progress = GraphiteFocusProgressStatusView()
+        progress.configure(title: "Transcribing", value: 0.5, valueDescription: "50 percent complete", colors: colors)
+        proofSurface.addArrangedSubview(progress)
+        require(progress.accessibilityValue() == "50 percent complete", "Progress must expose a textual or numeric value")
+
         let button = NSButton(title: "Continue", target: nil, action: nil)
         button.bezelColor = colors.accent
         proofSurface.addArrangedSubview(button)

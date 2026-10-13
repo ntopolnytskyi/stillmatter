@@ -405,13 +405,13 @@ private final class TodoLedgerCellView: NSTableCellView {
         ])
     }
 
-    private static func presentation(for status: TodoStatus) -> (symbol: String, name: String, color: NSColor) {
+    private static func presentation(for status: TodoStatus) -> (symbol: String, color: NSColor, name: String) {
         let colors = GraphiteFocusPresentation.Colors(environment: .system(window: nil))
         switch status {
-        case .open: return ("☐", "Open", colors.textSecondary)
-        case .done: return ("☑", "Done", colors.success)
-        case .blocked: return ("⊘", "Blocked", colors.attention)
-        case .canceled: return ("⊗", "Canceled", colors.textMetadata)
+        case .open: return ("☐", colors.textSecondary, "Open")
+        case .done: return ("☑", GraphiteFocusSemanticState.readyCompleted.color(in: colors), "Done")
+        case .blocked: return ("⊘", GraphiteFocusSemanticState.needsAttentionLive.color(in: colors), "Blocked")
+        case .canceled: return ("⊗", GraphiteFocusSemanticState.disabled.color(in: colors), "Canceled")
         }
     }
 }

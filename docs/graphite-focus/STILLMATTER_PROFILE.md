@@ -118,7 +118,14 @@ At narrow width, the toolbar Back button and Location Label preserve list/detail
 - Action Item selection exposes count and batch-action availability in stable text.
 - Contextual Ask exposes current scope, broader-vault selection, remote-processing disclosure, citations, visible sources, and static loading/no-source/invalid-citation/failure text.
 - Settings permission/component states combine status text, symbol, explanation, and relevant action.
+- AppKit and SwiftUI status, inline notice, and progress presentations use the shared Graphite Focus semantic-state helpers. Callers choose the domain state (for example Meeting artifact readiness, Job processing, Todo status, or Settings diagnostic) and the shared presentation supplies color, text/symbol pairing, progress accessibility, and inactive/Increased Contrast behavior.
 - Icon-only toolbar and row actions have accessibility labels and useful tooltips. Focus returns after every transient surface.
+
+### Cross-Workflow State Audit Notes
+
+- **Meetings:** Meeting detail Ready badge and Meeting browser Ready symbol may use violet only under `SM-EX-004`; Meeting processing Jobs still use processing/failed/success roles and do not inherit the Ready exception. Recording/live remains attention while Stop remains a destructive action.
+- **Tasks:** Todo Items preserve checkbox-marker semantics: open, done, blocked, canceled, and overdue are textual/marker states, not row selection. Accepting an Action Item creates or updates a Todo Item; a selected proposal or Todo row is still only selection.
+- **Settings and Jobs:** Diagnostics use Granted/Missing/Unavailable/Not set/Unknown text plus symbols and explanation. Model installation, index rebuild, transcription, summary, and other Jobs use progress/stage text; a Job state never becomes the state of its Meeting, Todo Item, or artifact except through that domain's own readiness/failure wording.
 
 ## Token Specializations
 

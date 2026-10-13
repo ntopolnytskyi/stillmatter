@@ -178,9 +178,70 @@ enum GraphiteFocusStatusMeaning: CaseIterable {
     }
 }
 
+enum GraphiteFocusSemanticState: CaseIterable {
+    case selectedCurrent
+    case readyCompleted
+    case needsAttentionLive
+    case failed
+    case loadingProcessing
+    case unavailable
+    case disabled
+    case destructiveAction
+    case primaryAction
+
+    var defaultText: String {
+        switch self {
+        case .selectedCurrent: return "Selected"
+        case .readyCompleted: return "Ready"
+        case .needsAttentionLive: return "Needs attention"
+        case .failed: return "Failed"
+        case .loadingProcessing: return "Processing"
+        case .unavailable: return "Unavailable"
+        case .disabled: return "Disabled"
+        case .destructiveAction: return "Destructive action"
+        case .primaryAction: return "Primary action"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .selectedCurrent: return "◆"
+        case .readyCompleted: return GraphiteFocusStatusMeaning.success.symbol
+        case .needsAttentionLive: return GraphiteFocusStatusMeaning.attention.symbol
+        case .failed: return GraphiteFocusStatusMeaning.destructive.symbol
+        case .loadingProcessing: return "…"
+        case .unavailable: return "○"
+        case .disabled: return "–"
+        case .destructiveAction: return GraphiteFocusStatusMeaning.destructive.symbol
+        case .primaryAction: return "↵"
+        }
+    }
+
+    var statusMeaning: GraphiteFocusStatusMeaning? {
+        switch self {
+        case .readyCompleted: return .success
+        case .needsAttentionLive, .loadingProcessing: return .attention
+        case .failed, .destructiveAction: return .destructive
+        case .unavailable: return .informational
+        case .selectedCurrent, .disabled, .primaryAction: return nil
+        }
+    }
+
+    func color(in colors: GraphiteFocusPresentation.Colors) -> NSColor {
+        switch self {
+        case .selectedCurrent: return colors.textPrimary
+        case .primaryAction: return colors.accent
+        case .disabled: return colors.textDisabled
+        case .readyCompleted, .needsAttentionLive, .failed, .loadingProcessing, .unavailable, .destructiveAction:
+            return statusMeaning?.color(in: colors) ?? colors.textSecondary
+        }
+    }
+}
+
 /// A status always includes a textual state and a non-color symbol cue.
 final class GraphiteFocusStatusLabel: NSTextField {
     private(set) var meaning: GraphiteFocusStatusMeaning = .informational
+    private(set) var semanticState: GraphiteFocusSemanticState?
     private(set) var statusText = ""
 
     init() {
@@ -197,16 +258,107 @@ final class GraphiteFocusStatusLabel: NSTextField {
         super.init(coder: coder)
     }
 
+    func setState(
+        _ state: GraphiteFocusSemanticState,
+        text: String? = nil,
+        colors: GraphiteFocusPresentation.Colors
+    ) {
+        semanticState = state
+        if let meaning = state.statusMeaning { self.meaning = meaning }
+        let resolvedText = text ?? state.defaultText
+        statusText = resolvedText
+        stringValue = "\(state.symbol) \(resolvedText)"
+        textColor = state.color(in: colors)
+        setAccessibilityLabel(resolvedText)
+        setAccessibilityValue(resolvedText)
+    }
+
     func setStatus(
         _ text: String,
         meaning: GraphiteFocusStatusMeaning,
         colors: GraphiteFocusPresentation.Colors
     ) {
+        semanticState = nil
         self.meaning = meaning
         statusText = text
         stringValue = "\(meaning.symbol) \(text)"
         textColor = meaning.color(in: colors)
         setAccessibilityLabel(text)
         setAccessibilityValue(text)
+    }
+}
+
+final class GraphiteFocusInlineNoticeView: NSStackView {
+    let statusLabel = GraphiteFocusStatusLabel()
+    let detailLabel = NSTextField(wrappingLabelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = GraphiteFocusPresentation.Space.primitive
+        detailLabel.font = GraphiteFocusPresentation.Typography.body
+        detailLabel.maximumNumberOfLines = 0
+        addArrangedSubview(statusLabel)
+        addArrangedSubview(detailLabel)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    func configure(
+        title: String,
+        detail: String,
+        state: GraphiteFocusSemanticState,
+        colors: GraphiteFocusPresentation.Colors
+    ) {
+        statusLabel.setState(state, text: title, colors: colors)
+        detailLabel.stringValue = detail
+        detailLabel.textColor = colors.textSecondary
+        setAccessibilityLabel("\(title). \(detail)")
+    }
+}
+
+final class GraphiteFocusProgressStatusView: NSStackView {
+    let statusLabel = GraphiteFocusStatusLabel()
+    let progressIndicator = NSProgressIndicator()
+    let valueLabel = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = GraphiteFocusPresentation.Space.primitive
+        progressIndicator.isIndeterminate = true
+        progressIndicator.style = .bar
+        progressIndicator.controlSize = .small
+        valueLabel.font = GraphiteFocusPresentation.Typography.metadata
+        addArrangedSubview(statusLabel)
+        addArrangedSubview(progressIndicator)
+        addArrangedSubview(valueLabel)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    func configure(
+        title: String,
+        value: Double?,
+        valueDescription: String,
+        colors: GraphiteFocusPresentation.Colors
+    ) {
+        statusLabel.setState(.loadingProcessing, text: title, colors: colors)
+        progressIndicator.isIndeterminate = value == nil
+        if let value {
+            progressIndicator.minValue = 0
+            progressIndicator.maxValue = 1
+            progressIndicator.doubleValue = max(0, min(1, value))
+        }
+        valueLabel.stringValue = valueDescription
+        valueLabel.textColor = colors.textSecondary
+        setAccessibilityLabel(title)
+        setAccessibilityValue(valueDescription)
     }
 }
