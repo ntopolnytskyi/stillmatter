@@ -43,8 +43,8 @@ final class MeetingManagementView: NSView {
     private let summaryPlaceholder = NSTextField(wrappingLabelWithString: "Summary unavailable or still being generated.")
     private weak var summaryEditorScroll: NSScrollView?
     private weak var notesEditorScroll: NSScrollView?
-    private var summaryCard: NSHostingView<MeetingOverviewCard>?
-    private var notesCard: NSHostingView<MeetingOverviewCard>?
+    private var summaryOverviewSection: NSHostingView<MeetingOverviewSection>?
+    private var notesOverviewSection: NSHostingView<MeetingOverviewSection>?
     private weak var summaryEditorRow: NSStackView?
     private weak var notesEditorRow: NSStackView?
     private let notes = NSTextView()
@@ -521,11 +521,11 @@ final class MeetingManagementView: NSView {
         scroll.heightAnchor.constraint(equalToConstant: height).isActive = true
         scroll.setAccessibilityIdentifier(title.hasPrefix("AI summary") ? "meeting-summary-editor" : "meeting-notes-editor")
         let isSummary = title.hasPrefix("AI summary")
-        let card = NSHostingView(rootView: MeetingOverviewCard(title: title, content: "", unavailable: "Content unavailable.",
+        let card = NSHostingView(rootView: MeetingOverviewSection(title: title, content: "", unavailable: "Content unavailable.",
             canEdit: false, expand: {}, edit: {}, copy: {}))
         card.translatesAutoresizingMaskIntoConstraints = false
-        if isSummary { summaryCard = card; summaryEditorScroll = scroll }
-        else { notesCard = card; notesEditorScroll = scroll }
+        if isSummary { summaryOverviewSection = card; summaryEditorScroll = scroll }
+        else { notesOverviewSection = card; notesEditorScroll = scroll }
         let editorRow = NSStackView(views: [scroll, button])
         editorRow.orientation = .vertical
         editorRow.alignment = .leading
@@ -623,7 +623,7 @@ final class MeetingManagementView: NSView {
             overview.stringValue = "Choose a workspace in Settings to see your Meetings."
             status.stringValue = "Meetings unavailable. Choose a workspace in Settings."
             clearEvidence()
-            showUnavailableCards()
+            showUnavailableOverviewSections()
             reprocessButton.isEnabled = false
             renameButton.isEnabled = false
             archiveButton.isEnabled = false
@@ -655,7 +655,7 @@ final class MeetingManagementView: NSView {
                 actionItems.stringValue = ""
                 displayedDetail = nil
                 clearEvidence()
-                showUnavailableCards()
+                showUnavailableOverviewSections()
                 files.arrangedSubviews.forEach { files.removeArrangedSubview($0); $0.removeFromSuperview() }
                 saveNotesButton.isEnabled = false
                 saveSummaryButton.isEnabled = false
@@ -770,7 +770,7 @@ final class MeetingManagementView: NSView {
                 summary.string = renderedSummary
                 loadedSummary = renderedSummary
             }
-            updateOverviewCards(selected)
+            updateOverviewSections(selected)
             actionItems.stringValue = actionItemText(selected)
             let evidenceChanged = displayedDetail != selected || changedMeeting
             displayedDetail = selected
@@ -1370,20 +1370,20 @@ final class MeetingManagementView: NSView {
         window?.makeFirstResponder(transcriptionButton)
     }
 
-    private func showUnavailableCards() {
-        summaryCard?.rootView = MeetingOverviewCard(title: "AI summary", content: "", unavailable: "No meeting selected.",
+    private func showUnavailableOverviewSections() {
+        summaryOverviewSection?.rootView = MeetingOverviewSection(title: "AI summary", content: "", unavailable: "No meeting selected.",
             canEdit: false, expand: {}, edit: {}, copy: {})
-        notesCard?.rootView = MeetingOverviewCard(title: "My notes", content: "", unavailable: "No meeting selected.",
+        notesOverviewSection?.rootView = MeetingOverviewSection(title: "My notes", content: "", unavailable: "No meeting selected.",
             canEdit: false, expand: {}, edit: {}, copy: {})
     }
 
-    private func updateOverviewCards(_ detail: MeetingBrowserDetail) {
-        summaryCard?.rootView = MeetingOverviewCard(title: "AI summary", content: detail.summary?.summary ?? "",
+    private func updateOverviewSections(_ detail: MeetingBrowserDetail) {
+        summaryOverviewSection?.rootView = MeetingOverviewSection(title: "AI summary", content: detail.summary?.summary ?? "",
             unavailable: "Summary unavailable or still being generated.", canEdit: detail.summaryVersion != nil,
             expand: { [weak self] in self?.expandSummary() },
             edit: { [weak self] in self?.summaryEditorRow?.isHidden = false },
             copy: { [weak self] in self?.copySummary() })
-        notesCard?.rootView = MeetingOverviewCard(title: "My notes", content: detail.humanNotes,
+        notesOverviewSection?.rootView = MeetingOverviewSection(title: "My notes", content: detail.humanNotes,
             unavailable: "No notes yet.", canEdit: detail.doorwayVersion != nil,
             expand: { [weak self] in self?.expandNotes() },
             edit: { [weak self] in self?.notesEditorRow?.isHidden = false },
@@ -1520,25 +1520,44 @@ final class MeetingManagementView: NSView {
         }
         actionRows = Dictionary(uniqueKeysWithValues: groups.filter { $0.id == "mine" }.flatMap(\.rows).map { ($0.id, $0) })
         for group in groups {
-            let card = NSStackView()
-            card.orientation = .vertical
-            card.alignment = .leading
-            card.spacing = GraphiteFocusPresentation.Space.compact
-            card.edgeInsets = NSEdgeInsets(top: GraphiteFocusPresentation.Space.panel, left: GraphiteFocusPresentation.Space.panel,
-                                          bottom: GraphiteFocusPresentation.Space.panel, right: GraphiteFocusPresentation.Space.panel)
-            card.wantsLayer = true
-            card.layer?.cornerRadius = GraphiteFocusPresentation.Radius.panel
-            let colors = GraphiteFocusPresentation.Colors(environment: .system(window: window))
-            card.layer?.backgroundColor = colors.surfacePanel.cgColor
-            card.layer?.borderWidth = GraphiteFocusPresentation.Stroke.width
-            card.layer?.borderColor = colors.structuralStroke.cgColor
-            let heading = NSTextField(wrappingLabelWithString: group.title + " · " + group.note)
+            let boundedReviewWorkspace = group.id == "mine"
+            let section = NSStackView()
+            section.orientation = .vertical
+            section.alignment = .leading
+            section.spacing = GraphiteFocusPresentation.Space.compact
+            section.edgeInsets = NSEdgeInsets(
+                top: boundedReviewWorkspace ? GraphiteFocusPresentation.Space.panel : GraphiteFocusPresentation.Space.compact,
+                left: boundedReviewWorkspace ? GraphiteFocusPresentation.Space.panel : 0,
+                bottom: boundedReviewWorkspace ? GraphiteFocusPresentation.Space.panel : GraphiteFocusPresentation.Space.compact,
+                right: boundedReviewWorkspace ? GraphiteFocusPresentation.Space.panel : 0
+            )
+            if boundedReviewWorkspace {
+                let colors = GraphiteFocusPresentation.Colors(environment: .system(window: window))
+                section.wantsLayer = true
+                section.layer?.cornerRadius = GraphiteFocusPresentation.Radius.panel
+                section.layer?.backgroundColor = colors.surfacePanel.cgColor
+                section.layer?.borderWidth = GraphiteFocusPresentation.Stroke.width
+                section.layer?.borderColor = colors.structuralStroke.cgColor
+            }
+            let headingRow = NSStackView()
+            headingRow.orientation = .horizontal
+            headingRow.alignment = .firstBaseline
+            headingRow.spacing = GraphiteFocusPresentation.Space.compact
+            let heading = NSTextField(wrappingLabelWithString: group.title)
             heading.maximumNumberOfLines = 0
             heading.font = GraphiteFocusPresentation.Typography.sectionHeading
             heading.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            card.addArrangedSubview(heading)
-            heading.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
-            for row in group.rows {
+            let note = NSTextField(wrappingLabelWithString: group.note)
+            note.maximumNumberOfLines = 0
+            note.font = GraphiteFocusPresentation.Typography.metadata
+            note.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textMetadata
+            note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            headingRow.addArrangedSubview(heading)
+            headingRow.addArrangedSubview(note)
+            section.addArrangedSubview(headingRow)
+            let horizontalInset = boundedReviewWorkspace ? 2 * GraphiteFocusPresentation.Space.panel : 0
+            headingRow.widthAnchor.constraint(equalTo: section.widthAnchor, constant: -horizontalInset).isActive = true
+            for (rowOffset, row) in group.rows.enumerated() {
                 let comment = group.id == "mine" ? (try? serviceProvider()?.actionDraft(id: row.id))?.comment ?? "" : ""
                 let detailLine = (group.id == "mine" ? "Generated from meeting · " : "") + row.detail
                 let text = NSTextField(wrappingLabelWithString: row.text + "\n" + detailLine +
@@ -1584,12 +1603,17 @@ final class MeetingManagementView: NSView {
                         line.addArrangedSubview(button)
                     }
                 }
-                card.addArrangedSubview(line)
-                line.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
+                section.addArrangedSubview(line)
+                line.widthAnchor.constraint(equalTo: section.widthAnchor, constant: -horizontalInset).isActive = true
+                if !boundedReviewWorkspace && rowOffset < group.rows.count - 1 {
+                    let separator = NSBox()
+                    separator.boxType = .separator
+                    section.addArrangedSubview(separator)
+                }
             }
             let container = group.id == "mine" ? myActionsContainer : outcomesContainer
-            container.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+            container.addArrangedSubview(section)
+            section.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         }
     }
 

@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Readable meeting content, with the existing workspace editor revealed only on demand.
-struct MeetingOverviewCard: View {
+/// Open Meeting detail section with a shared heading/action row.
+/// The existing workspace editor is revealed only on demand.
+struct MeetingOverviewSection: View {
     let title: String
     let content: String
     let unavailable: String
@@ -11,7 +12,7 @@ struct MeetingOverviewCard: View {
     let copy: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.panel) {
+        VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.compact) {
             HStack(alignment: .center, spacing: GraphiteFocusPresentation.Space.compact) {
                 Text(title).font(GraphiteFocusSwiftUI.sectionHeading)
                 Spacer()
@@ -20,6 +21,7 @@ struct MeetingOverviewCard: View {
                 Button("Copy", action: copy).disabled(content.isEmpty)
             }
             .buttonStyle(.bordered)
+            Divider()
             Text(content.isEmpty ? unavailable : content)
                 .font(GraphiteFocusSwiftUI.body)
                 .foregroundStyle(content.isEmpty ? GraphiteFocusSwiftUI.secondary : GraphiteFocusSwiftUI.primary)
@@ -27,6 +29,9 @@ struct MeetingOverviewCard: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
-        .graphitePanel()
+        .padding(.vertical, GraphiteFocusPresentation.Space.compact)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(GraphiteFocusSwiftUI.primary)
+        .environment(\.colorScheme, .dark)
     }
 }

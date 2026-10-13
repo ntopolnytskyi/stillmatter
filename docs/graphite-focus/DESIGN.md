@@ -1,6 +1,6 @@
 ---
 schema: graphite-focus/v1
-contract_version: 2.0.0
+contract_version: 2.0.1
 name: Graphite Focus
 platform: macOS 13+
 appearance: dark-only
@@ -185,6 +185,8 @@ The **Reference Canvas** is 1200×760 pt, the spacious validation width is 1440 
 The fixed icon rail MUST provide accessible names and tooltips for every destination. Its native buttons use Tab focus and Space/Return activation; it does not implement arrow-key traversal or a resizable divider. The Region Collapse Order is mandatory: (1) hide or transiently present the inspector, (2) auto-collapse the sidebar, then (3) let content/list temporarily replace detail. Narrow Navigation MUST provide a native toolbar back affordance and concise Location Label. Selection, scroll position, and in-progress input MUST survive every transition. No capability may disappear, no bottom/mobile navigation may be introduced, and user-requested sidebar visibility persists whenever space permits.
 
 Shell Regions are flush and square, separated by Structural Strokes. They scroll independently. The toolbar remains fixed; Page Headers ordinarily scroll with detail. Pin only task-essential controls or headings, and avoid nested scrolling inside Semantic Panels. Operational canvases, tables, evidence streams, and timelines use available width. Forms align leading at `{measure.form}`; long-form prose aligns leading at `{measure.reading}`.
+
+Use a Semantic Panel only when the boundary is part of the task meaning: a bounded editor, transport, review workspace, preflight/status workspace, or another group that must be perceived and operated as one unit. Routine read-only detail, metadata, source lists, dense collections, and ordinary reference outcomes SHOULD remain open Content Sections, native rows, tables, or divider-led groups. Section Headers use a leading title with optional trailing local actions or metadata; actions stay native controls and do not require a panel. A screen MUST NOT introduce an unconditional generic Card or Tile abstraction to decorate every group.
 
 The Window Toolbar owns window identity, navigation, Area Search, and a small set of frequent actions. The Page Header owns the selected area or item's local title. Every toolbar action MUST have a menu command because the toolbar can be hidden or customized. Multiple windows maintain independent shell state; full-screen and window management remain system-owned.
 
