@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MeetingOutcomeRow: Identifiable {
@@ -28,9 +29,16 @@ struct MeetingOutcomesView: View {
     @State private var title = ""
     @State private var comment = ""
     @State private var error = ""
+    @State private var inlineSuccess = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.dense) {
+            if !inlineSuccess.isEmpty {
+                Text("✓ \(inlineSuccess)")
+                    .font(GraphiteFocusSwiftUI.metadataFont)
+                    .foregroundStyle(Color(nsColor: GraphiteFocusSwiftUI.colors.success))
+                    .accessibilityLabel(inlineSuccess)
+            }
             if groups.isEmpty { Text("No structured cited outcomes available.").foregroundStyle(GraphiteFocusSwiftUI.secondary) }
             ForEach(groups) { group in
                 VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.flush) {
@@ -80,7 +88,11 @@ struct MeetingOutcomesView: View {
                 TextEditor(text: $title).frame(minHeight: 76) // graphite-focus-native-exception: minimum native multiline editor height
                 Text("Comment")
                 TextEditor(text: $comment).frame(minHeight: 56) // graphite-focus-native-exception: minimum native multiline editor height
-                if !error.isEmpty { Text("Error: \(error)").foregroundStyle(Color(nsColor: GraphiteFocusSwiftUI.colors.destructive)) }
+                if !error.isEmpty {
+                    Text("! Review failed. The proposal was not changed; try again. \(error)")
+                        .foregroundStyle(Color(nsColor: GraphiteFocusSwiftUI.colors.destructive))
+                        .accessibilityLabel("Review failed. The proposal was not changed; try again. \(error)")
+                }
                 HStack {
                     Spacer()
                     Button("Cancel") { active = nil }
@@ -107,7 +119,20 @@ struct MeetingOutcomesView: View {
         do {
             if accept == nil || accept == true { try save(row.id, title, comment) }
             if let accept { try review(row.id, accept) }
+            let message: String
+            if accept == nil { message = "Changes saved." }
+            else if accept == true { message = "Added ‘\(title)’ to Todos." }
+            else { message = "Proposal dismissed." }
             active = nil
+            showSuccess(message)
         } catch { self.error = error.localizedDescription }
+    }
+
+    private func showSuccess(_ message: String) {
+        inlineSuccess = message
+        NSAccessibility.post(element: NSApplication.shared, notification: .announcementRequested, userInfo: [.announcement: message])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            if inlineSuccess == message { inlineSuccess = "" }
+        }
     }
 }

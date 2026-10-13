@@ -37,7 +37,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
     private let contextLabel = NSTextField(labelWithString: "")
     private let tableView = TodoLedgerTableView()
     private let scrollView = NSScrollView()
-    private let stateContainer = NSView()
+    private let stateContainer = TodoLedgerStateView()
     private var loadedViews: TodoTaskViews?
     private var visibleItems: [TodoItem] = []
     private var parentTitles: [String: String] = [:]
@@ -321,6 +321,10 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
     private func fixtureItem(id: String, title: String, status: TodoStatus, dueDate: String?, sourceRef: String?, line: Int, parentID: String? = nil, indentation: Int = 0, section: String = "Queue") -> TodoItem {
         TodoItem(id: id, title: title, rawText: title, status: status, dueDate: dueDate, sourceRef: sourceRef, location: TodoSourceLocation(relativePath: "Todos/todo.md", lineNumber: line), section: section, indentation: indentation, parentID: parentID)
     }
+}
+
+private final class TodoLedgerStateView: NSView {
+    override var acceptsFirstResponder: Bool { true }
 }
 
 private final class TodoLedgerTableView: NSTableView {
