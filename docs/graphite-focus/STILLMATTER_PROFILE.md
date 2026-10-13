@@ -56,6 +56,8 @@ No product mapping replaces native AppKit interaction or focus behavior with cus
 
 Long-form Summary, Transcript, report, and Contextual Ask prose is constrained near `{measure.reading}`. Operational tables, timelines, evidence collections, and diagnostics use available width.
 
+**Page Header title and actions:** Stillmatter detail headers use the shared Graphite Focus title-and-actions composition. The visible title is one line, truncates at the tail with an ellipsis when needed, exposes the complete title through tooltip and accessibility label, and has lower horizontal compression resistance than the local action cluster. Header actions such as Meeting timeline, edit, archive, More, and Activity status controls remain visible at the supported main-window minimum; access through menus or the adaptive shell remains available only when a display is too constrained to fit the supported minimum.
+
 **Default content alignment:** Stillmatter's browser rows, detail headings, metadata, status, controls, editors, and section content must read from the left edge in the current left-to-right UI. `NSStackView` fill alignment and intrinsic label widths placed this content on the right in practice, so Meeting detail and browser labels/editors explicitly use `.left` while full-width sections expand independently. Trailing placement is reserved for a deliberate secondary action or value within an otherwise left-aligned row. This is a deliberate LTR layout fix, not an RTL solution: forced `.left` does not mirror in right-to-left locales. RTL support requires a separate, locale-aware layout fix and validation before claiming RTL conformance.
 
 ## Stillmatter Components

@@ -124,7 +124,7 @@ Each mapping is implementation-independent. **System** means native behavior own
 | Semantic role | Normal AppKit / SwiftUI primitive | Ownership | Allowed exception | Required behavior |
 |---|---|---|---|---|
 | Window Toolbar | `NSToolbar` / unified toolbar | system | None | Window identity, navigation, Area Search, and few frequent actions; every command also in menus |
-| Page Header | Label stack in document view | app | None | Identifies current area/context without duplicating window title; normally scrolls |
+| Page Header | Label stack in document view | app | None | Identifies current area/context without duplicating window title; normally scrolls; when paired with local actions, the title is a single tail-truncated line with full tooltip/accessibility text and yields width to a noncompressing action cluster |
 | Content Section | View group | app | None | Groups a coherent topic with semantic heading |
 | Section Header | Text/Label | app | Native table header | Names a section and optional local action |
 | Shell Region | `NSSplitView` / split-view column | system | None | Flush, independently scrolling regions; the sidebar rail is fixed-width while content/list and detail can resize where supported |

@@ -100,10 +100,11 @@ final class ActivityManagementView: NSView {
     }
 
     private func buildLayout() {
-        headerLabel.font = GraphiteFocusPresentation.Typography.sectionHeading
+        GraphiteFocusPageHeader.configureTitleLabel(headerLabel, font: GraphiteFocusPresentation.Typography.sectionHeading)
         let header = NSStackView(views: [headerLabel])
         header.orientation = .horizontal
         header.alignment = .centerY
+        header.distribution = .fill
 
         ActivityStatus.allCases.forEach { status in
             statusPopup.addItem(withTitle: status.rawValue.capitalized)
@@ -134,8 +135,10 @@ final class ActivityManagementView: NSView {
         logButton.target = self
         logButton.action = #selector(addLog(_:))
 
+        GraphiteFocusPageHeader.protectActionCluster(statusPopup)
         let statusSpacer = NSView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        statusSpacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         let statusRow = NSStackView(views: [statusLabel, statusSpacer, statusPopup])
         statusRow.orientation = .horizontal
         statusRow.alignment = .centerY
@@ -203,6 +206,7 @@ final class ActivityManagementView: NSView {
 
     private func actionRow(field: NSTextField, button: NSButton) -> NSView {
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        GraphiteFocusPageHeader.protectActionCluster(button)
         let row = NSStackView(views: [field, button])
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -263,7 +267,7 @@ final class ActivityManagementView: NSView {
         }
         detailStack.isHidden = false
         contentStateStack.isHidden = true
-        headerLabel.stringValue = activity.title
+        GraphiteFocusPageHeader.setTitle(activity.title, on: headerLabel)
         let presentation = ActivityStatusPresentation.forStatus(activity.status)
         statusLabel.setStatus(presentation.name, meaning: presentation.meaning, colors: colors)
         statusPopup.selectItem(withTitle: activity.status.rawValue.capitalized)
@@ -305,7 +309,7 @@ final class ActivityManagementView: NSView {
         }
         contentStateStack.isHidden = false
         contentStateStack.setAccessibilityLabel("\(title). \(message)")
-        headerLabel.stringValue = "Activity Item"
+        GraphiteFocusPageHeader.setTitle("Activity Item", on: headerLabel)
         setEditingEnabled(false)
     }
 
@@ -469,7 +473,7 @@ final class ActivityManagementView: NSView {
             )
         }
         activities = [
-            fixture("Active launch planning", "Project Aurora", .active, "Activities/2026/09/active-launch-planning.md", ["[[Reports/launch-plan.md|Launch plan]]"], ["2026-09-20T12:00:00Z — Established the rollout sequence"]),
+            fixture("Active launch planning with an intentionally long localized-looking title that must truncate at the tail before it can crowd Activity Item header controls", "Project Aurora", .active, "Activities/2026/09/active-launch-planning.md", ["[[Reports/launch-plan.md|Launch plan]]"], ["2026-09-20T12:00:00Z — Established the rollout sequence"]),
             fixture("Blocked vendor review", "General", .blocked, "Activities/2026/09/blocked-vendor-review.md", [], []),
             fixture("Completed accessibility review", "Accessibility", .completed, "Activities/2026/09/completed-accessibility-review.md", Array(repeating: "A deliberately long output reference that must wrap without covering adjacent controls", count: 8), Array(repeating: "2026-09-24T10:00:00Z — A long activity log entry used to validate readable detail flow", count: 12)),
             fixture("Canceled obsolete migration", "General", .canceled, "Activities/2026/09/canceled-obsolete-migration.md", [], [])
@@ -491,6 +495,10 @@ final class ActivityManagementView: NSView {
         browserView.onActivate = originalActivation
         precondition(activationCount == 1, "Return activation must open the selected Activity Item without changing selection")
         precondition(statusLabel.statusText == "Active" && statusLabel.stringValue.contains("ⓘ"), "Active status must include text and a non-color in-progress cue")
+        precondition(headerLabel.maximumNumberOfLines == 1 && headerLabel.lineBreakMode == .byTruncatingTail,
+                     "Activity Page Header title must be a single tail-truncated line")
+        precondition(headerLabel.toolTip == activities[0].title && headerLabel.accessibilityLabel() == activities[0].title,
+                     "Activity Page Header title must expose the complete Activity Item title")
         precondition(projectLabel.stringValue.contains("Project Aurora") && locationLabel.stringValue.contains("Activities/"), "Detail must expose Project ownership and canonical location")
 
         outputField.stringValue = "Preserved output draft"

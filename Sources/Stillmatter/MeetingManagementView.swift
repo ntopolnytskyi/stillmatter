@@ -36,7 +36,7 @@ final class MeetingManagementView: NSView {
     private let caption = NSStackView()
     private let metadataBar = NSStackView()
     private let eyebrow = NSTextField(labelWithString: "MEETING DETAIL")
-    private let meetingTitle = NSTextField(wrappingLabelWithString: "")
+    private let meetingTitle = NSTextField(labelWithString: "")
     private let overview = NSTextField(wrappingLabelWithString: "")
     private let processingStatus = GraphiteFocusStatusLabel()
     private let statusBadge = NSView()
@@ -260,8 +260,7 @@ final class MeetingManagementView: NSView {
         eyebrow.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).accent
         eyebrow.setAccessibilityLabel("Meeting detail")
         meetingTitle.setAccessibilityIdentifier("meeting-detail")
-        meetingTitle.font = GraphiteFocusPresentation.Typography.pageTitle
-        meetingTitle.maximumNumberOfLines = 0
+        GraphiteFocusPageHeader.configureTitleLabel(meetingTitle)
         meetingTitle.alignment = .left
         overview.alignment = .left
         overview.font = GraphiteFocusPresentation.Typography.metadata
@@ -419,23 +418,19 @@ final class MeetingManagementView: NSView {
             bottom: GraphiteFocusPresentation.Space.panel,
             right: GraphiteFocusPresentation.Space.panel
         )
-        let titleSpacer = NSView()
-        titleSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        titleSpacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         let titleGroup = NSStackView(views: [eyebrow, meetingTitle])
         titleGroup.orientation = .vertical
         titleGroup.alignment = .leading
         titleGroup.spacing = GraphiteFocusPresentation.Space.primitive
+        titleGroup.setContentHuggingPriority(.defaultLow, for: .horizontal)
         titleGroup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         meetingTitle.widthAnchor.constraint(lessThanOrEqualTo: titleGroup.widthAnchor).isActive = true
-        titleBar.addArrangedSubview(titleGroup)
-        titleBar.addArrangedSubview(titleSpacer)
-        titleBar.addArrangedSubview(toolbar)
-        titleBar.orientation = .horizontal
-        titleBar.alignment = .top
-        titleBar.spacing = GraphiteFocusPresentation.Space.compact
-        meetingTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        toolbar.trailingAnchor.constraint(equalTo: titleBar.trailingAnchor).isActive = true
+        let headerRow = GraphiteFocusPageHeader.makeTitleAndActionsRow(title: titleGroup, actions: toolbar)
+        titleBar.addArrangedSubview(headerRow)
+        titleBar.orientation = .vertical
+        titleBar.alignment = .width
+        titleBar.spacing = 0
+        headerRow.widthAnchor.constraint(equalTo: titleBar.widthAnchor).isActive = true
         let notesSection = section("My notes", editor: notes, height: 90, button: saveNotesButton)
         self.notesSection = notesSection
         [section("AI summary", editor: summary, height: 150, button: saveSummaryButton),
@@ -623,7 +618,7 @@ final class MeetingManagementView: NSView {
             selectedID = nil
             rows = []
             table.reloadData()
-            meetingTitle.stringValue = "Meetings unavailable"
+            GraphiteFocusPageHeader.setTitle("Meetings unavailable", on: meetingTitle)
             statusBadge.isHidden = true
             overview.stringValue = "Choose a workspace in Settings to see your Meetings."
             status.stringValue = "Meetings unavailable. Choose a workspace in Settings."
@@ -649,7 +644,7 @@ final class MeetingManagementView: NSView {
                 selectedID = nil
                 selectedDoorwayVersion = nil
                 selectedSummaryVersion = nil
-                meetingTitle.stringValue = "No matching Meetings"
+                GraphiteFocusPageHeader.setTitle("No matching Meetings", on: meetingTitle)
                 statusBadge.isHidden = true
                 summaryPlaceholder.isHidden = true
                 summaryEditorRow?.isHidden = true
@@ -753,8 +748,7 @@ final class MeetingManagementView: NSView {
             playButton.updateAppearance()
             selectedDoorwayVersion = selected.doorwayVersion
             selectedSummaryVersion = selected.summaryVersion
-            meetingTitle.stringValue = selected.row.title
-            meetingTitle.toolTip = selected.row.title
+            GraphiteFocusPageHeader.setTitle(selected.row.title, on: meetingTitle)
             statusBadge.isHidden = false
             processingStatus.setStatus(statusTitle(for: selected.row),
                 meaning: statusMeaning(for: selected.row), colors: presentationColors)
@@ -857,11 +851,11 @@ final class MeetingManagementView: NSView {
         let savedOverview = overview.stringValue
         let savedHidden = statusBadge.isHidden
         defer {
-            meetingTitle.stringValue = savedTitle
+            GraphiteFocusPageHeader.setTitle(savedTitle, on: meetingTitle)
             overview.stringValue = savedOverview
             statusBadge.isHidden = savedHidden
         }
-        meetingTitle.stringValue = "Untitled Meeting at 2026-10-07 17:35"
+        GraphiteFocusPageHeader.setTitle("Untitled Meeting at 2026-10-07 17:35 — This deliberately localized-looking title continues far beyond the available header width so the Page Header title must truncate at the tail while all local actions remain visible", on: meetingTitle)
         overview.stringValue = "7 Oct 2026 at 17:35  ·  Project: Orchid"
         statusBadge.isHidden = false
         processingStatus.setStatus("Ready", meaning: .success, colors: presentationColors)
@@ -872,6 +866,12 @@ final class MeetingManagementView: NSView {
         let state = statusBadge.convert(statusBadge.bounds, to: self)
         precondition(bounds.height - title.maxY < 85, "Meeting caption must occupy the compact top region")
         let toolbarFrame = toolbar.convert(toolbar.bounds, to: self)
+        precondition(meetingTitle.maximumNumberOfLines == 1 && meetingTitle.lineBreakMode == .byTruncatingTail,
+                     "Meeting Page Header title must be a single tail-truncated line")
+        precondition(meetingTitle.toolTip == meetingTitle.stringValue && meetingTitle.accessibilityLabel() == meetingTitle.stringValue,
+                     "Meeting Page Header title must expose the complete title outside the truncated visual line")
+        precondition(title.maxX <= toolbarFrame.minX - GraphiteFocusPresentation.Space.compact + 1,
+                     "Meeting title must yield width before overlapping local header actions")
         precondition(state.minY >= metadata.maxY - 1, "Meeting state must occupy the third caption line")
         precondition(abs(state.minX - metadata.minX) < 2, "Meeting state must align with the date")
         precondition(abs(toolbarFrame.maxX - caption.convert(caption.bounds, to: self).maxX) < 2,
