@@ -153,8 +153,10 @@ final class MeetingManagementView: NSView {
         table.intercellSpacing = NSSize(width: 0, height: 1)
         table.setAccessibilityLabel("Meetings")
 
-        queryField.placeholderString = "Search Meetings"
-        queryField.setAccessibilityLabel("Search Meetings")
+        queryField.placeholderString = "Filter meetings"
+        queryField.setAccessibilityLabel("Filter meetings")
+        queryField.setAccessibilityHelp("Filters the visible Meeting browser rows; it does not run indexed toolbar Search.")
+        queryField.sendsSearchStringImmediately = true
         queryField.target = self
         queryField.action = #selector(filtersChanged(_:))
 
@@ -640,7 +642,7 @@ final class MeetingManagementView: NSView {
             rows = browserRows.visible.filter(matchesQueue)
             configureProjectFilter(rows: browserRows.available)
             table.reloadData()
-            filterStatus.stringValue = rows.isEmpty ? "No matching Meetings" : "\(rows.count) Meetings"
+            updateFilterStatus(visibleCount: rows.count)
             guard !rows.isEmpty else {
                 clearAudio()
                 closeTimeline()
@@ -692,6 +694,38 @@ final class MeetingManagementView: NSView {
         }
         if let selected, let index = projectFilter.itemArray.firstIndex(where: { ($0.representedObject as? String) == selected }) {
             projectFilter.selectItem(at: index)
+        }
+    }
+
+    private func updateFilterStatus(visibleCount: Int) {
+        let filters = activeFilterDescriptions()
+        let countText = visibleCount == 1 ? "1 Meeting" : "\(visibleCount) Meetings"
+        let detail = filters.isEmpty ? "No list filters" : filters.joined(separator: " · ")
+        filterStatus.stringValue = "\(visibleCount == 0 ? "No matching Meetings" : countText) • \(detail)"
+        filterStatus.setAccessibilityValue(filterStatus.stringValue)
+    }
+
+    private func activeFilterDescriptions() -> [String] {
+        var filters: [String] = ["Queue: \(queueTitle(selectedQueue))"]
+        let query = queryField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty { filters.append("Text: “\(query)”") }
+        if let project = projectFilter.selectedItem?.representedObject as? String { filters.append("Project: \(project)") }
+        if let processing = processingFilter.selectedItem?.representedObject as? MeetingProcessingFilter,
+           processing != .all,
+           let title = processingFilter.titleOfSelectedItem {
+            filters.append("State: \(title)")
+        }
+        if archiveFilter.indexOfSelectedItem == 1 { filters.append("Archived") }
+        if startDateEnabled.state == .on { filters.append("From: \(Self.filterDateFormatter.string(from: startDatePicker.dateValue))") }
+        if endDateEnabled.state == .on { filters.append("To: \(Self.filterDateFormatter.string(from: endDatePicker.dateValue))") }
+        return filters
+    }
+
+    private func queueTitle(_ queue: MeetingQueue) -> String {
+        switch queue {
+        case .recorded: return "Recorded"
+        case .attention: return "Needs attention"
+        case .ready: return "Ready"
         }
     }
 
@@ -774,6 +808,25 @@ final class MeetingManagementView: NSView {
             clearAudio()
             status.stringValue = "Meeting unavailable: \(error.localizedDescription)"
         }
+    }
+
+    func validateBrowserFilterPresentationFixture() {
+        let savedQuery = queryField.stringValue
+        let savedQueue = selectedQueue
+        defer {
+            queryField.stringValue = savedQuery
+            selectedQueue = savedQueue
+            updateQueueButtons()
+            updateFilterStatus(visibleCount: rows.count)
+        }
+        precondition(queryField.placeholderString == "Filter meetings", "Meeting browser field must be labeled as a row filter")
+        precondition(queryField.accessibilityLabel() as? String == "Filter meetings", "Meeting browser filter must have a distinct VoiceOver name")
+        queryField.stringValue = "roadmap"
+        selectedQueue = .ready
+        updateQueueButtons()
+        updateFilterStatus(visibleCount: 2)
+        precondition(filterStatus.stringValue.contains("Queue: Ready") && filterStatus.stringValue.contains("Text: “roadmap”"),
+                     "Meeting browser must show active list filter context")
     }
 
     func validateTimelineSelectionFixture() {
@@ -1927,6 +1980,15 @@ final class MeetingManagementView: NSView {
     }
 
     @objc private func openRecordingAction() { openRecording() }
+
+    private static let filterDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
 }
 
 /// Image-only AppKit buttons have inconsistent bezel heights across SF Symbols.

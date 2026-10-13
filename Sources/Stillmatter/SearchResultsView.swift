@@ -73,13 +73,13 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
             showState(
                 symbol: "⌕",
                 title: "Search this area",
-                message: "Enter a query in Area Search to find indexed workspace content.",
+                message: "Enter a query in toolbar Search to find indexed workspace content in the shown scope and result type.",
                 actionTitle: "Close Search",
                 action: #selector(dismiss(_:))
             )
         case .loading:
             renderedState = "loading"
-            showState(symbol: "…", title: "Searching", message: "Searching the current area…")
+            showState(symbol: "…", title: "Searching", message: "Searching the shown scope and result type…")
         case .unavailable:
             renderedState = "unavailable"
             showState(

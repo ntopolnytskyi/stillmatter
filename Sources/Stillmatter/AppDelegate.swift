@@ -1190,7 +1190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             navigateMenu.addItem(item)
         }
         navigateMenu.addItem(NSMenuItem.separator())
-        navigateMenu.addItem(makeMenuItem(title: "Focus Area Search", action: #selector(focusAreaSearch(_:)), keyEquivalent: "f"))
+        navigateMenu.addItem(makeMenuItem(title: "Focus Search", action: #selector(focusAreaSearch(_:)), keyEquivalent: "f"))
         navigateMenuItem.submenu = navigateMenu
         mainMenu.addItem(navigateMenuItem)
 
