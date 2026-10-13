@@ -1056,6 +1056,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         stateStore.state.select(.meetings)
         view.layoutSubtreeIfNeeded()
         meetingManagementView.validateBrowserFilterPresentationFixture()
+        meetingManagementView.validateLongContentOverflowFixture()
         meetingManagementView.validateCaptionLayoutFixture()
         meetingManagementView.validateTimelineSelectionFixture()
         meetingManagementView.validateAudioTransportFixture()

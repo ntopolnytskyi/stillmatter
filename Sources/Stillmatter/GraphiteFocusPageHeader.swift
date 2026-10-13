@@ -8,18 +8,12 @@ import AppKit
 enum GraphiteFocusPageHeader {
     static func configureTitleLabel(_ label: NSTextField, font: NSFont = GraphiteFocusPresentation.Typography.pageTitle) {
         label.font = font
-        label.maximumNumberOfLines = 1
-        label.lineBreakMode = .byTruncatingTail
-        label.usesSingleLineMode = true
-        label.cell?.truncatesLastVisibleLine = true
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        GraphiteFocusOverflow.configurePrimaryTitle(label, fullText: label.stringValue)
     }
 
     static func setTitle(_ title: String, on label: NSTextField) {
         label.stringValue = title
-        label.toolTip = title
-        label.setAccessibilityLabel(title)
+        GraphiteFocusOverflow.configurePrimaryTitle(label, fullText: title)
     }
 
     static func protectActionCluster(_ actions: NSView) {

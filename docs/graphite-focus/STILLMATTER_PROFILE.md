@@ -58,6 +58,8 @@ Long-form Summary, Transcript, report, and Contextual Ask prose is constrained n
 
 **Page Header title and actions:** Stillmatter detail headers use the shared Graphite Focus title-and-actions composition. The visible title is one line, truncates at the tail with an ellipsis when needed, exposes the complete title through tooltip and accessibility label, and has lower horizontal compression resistance than the local action cluster. Header actions such as Meeting timeline, edit, archive, More, and Activity status controls remain visible at the supported main-window minimum; access through menus or the adaptive shell remains available only when a display is too constrained to fit the supported minimum.
 
+**Long content and crowded controls:** Stillmatter applies the shared overflow rule across Meetings, Tasks and Activity Items. User-authored or generated prose, status explanations, empty states, Action Item text, Activity output/log entries, and failure messages wrap. Secondary metadata such as source paths, canonical locations, parent Todo titles, Project/date metadata, filter summaries, and source references may truncate only with tooltip/accessibility full text. Meeting cited-source controls remain native buttons when few; crowded citation lists move to an accessible native sources menu rather than compressing row actions or pretending to be row selection. Row actions such as Review/Edit, source navigation, New Activity, and Todo activation remain separately targetable at the supported minimum.
+
 ### Meeting Semantic Groups
 
 Meetings use Semantic Panels only where the boundary carries task meaning:

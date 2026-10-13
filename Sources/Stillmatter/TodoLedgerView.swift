@@ -196,6 +196,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         let filterNote = query.isEmpty ? "" : "  •  Source filter: “\(query)”"
         let orderNote = mode == .queue ? "  •  Canonical Queue order" : ""
         contextLabel.stringValue = "\(mode.title)\(filterNote)  •  \(visibleItems.count) Todo Item\(visibleItems.count == 1 ? "" : "s")\(orderNote)"
+        GraphiteFocusOverflow.configureSecondaryMetadata(contextLabel, fullText: contextLabel.stringValue)
         contextLabel.setAccessibilityValue(contextLabel.stringValue)
         renderedState = visibleItems.isEmpty ? (query.isEmpty ? "empty" : "no-matches") : "items"
         stateContainer.subviews.forEach { $0.removeFromSuperview() }
@@ -273,7 +274,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
 
     /// Covers status anatomy, canonical order, nesting, filtering, empty/error states, and keyboard activation.
     func validateFixtures() {
-        let parent = fixtureItem(id: "parent", title: "A very long parent Todo Item title that must truncate cleanly at minimum window width", status: .open, dueDate: "2026-09-30", sourceRef: "[[Meetings/planning/summary#My action items|ref]]", line: 4)
+        let parent = fixtureItem(id: "parent", title: "A very long parent Todo Item title that must truncate cleanly at minimum window width and still be available through tooltip and VoiceOver", status: .open, dueDate: "2026-09-30", sourceRef: "[[Meetings/2026/09/20/дуже-довга-назва-наради-з-перекладеним-шляхом/summary#My action items|ref]]", line: 4)
         let child = fixtureItem(id: "child", title: "Waiting on legal", status: .blocked, dueDate: "2026-09-20", sourceRef: nil, line: 5, parentID: parent.id, indentation: 2)
         let canceled = fixtureItem(id: "canceled", title: "Obsolete follow-up", status: .canceled, dueDate: nil, sourceRef: nil, line: 6)
         let done = fixtureItem(id: "done", title: "Filed notes", status: .done, dueDate: "2026-09-19", sourceRef: nil, line: 12, section: "Done")
@@ -283,6 +284,9 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         render(.loaded(views))
         precondition(renderedState == "items" && visibleItems.map(\.id) == ["parent", "child", "canceled"], "Queue order must remain physical canonical order")
         precondition(tableView.selectedRow == 0, "Todo ledger must expose a keyboard selection")
+        let overflowCell = TodoLedgerCellView(identifier: NSUserInterfaceItemIdentifier("TodoOverflowFixture"))
+        overflowCell.configure(parent, parentTitle: nil)
+        precondition(overflowCell.hasFullOverflowTextForValidation(parent.title), "Todo rows must expose full long titles outside the truncated visual line")
         modeControl.selectedSegment = Mode.done.rawValue
         applyFilter()
         precondition(visibleItems.map(\.id) == ["done"])
@@ -298,6 +302,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         sourceFilterField.stringValue = "no-such-source"
         applyFilter()
         precondition(renderedState == "no-matches" && !stateContainer.isHidden)
+        precondition(contextLabel.toolTip?.contains("no-such-source") == true, "Filtered empty state must expose the full active filter")
         sourceFilterField.stringValue = ""
         render(.loaded(TodoTaskViews(queue: [], done: [], blocked: [], overdue: [], allIndexed: [])))
         precondition(renderedState == "empty")
@@ -362,6 +367,7 @@ private final class TodoLedgerCellView: NSTableCellView {
         meaningLabel.stringValue = presentation.name.uppercased()
         meaningLabel.textColor = presentation.color
         titleLabel.stringValue = item.title
+        GraphiteFocusOverflow.configurePrimaryTitle(titleLabel, fullText: item.title)
 
         var metadata: [String] = []
         if let dueDate = item.dueDate { metadata.append("Due \(dueDate)") }
@@ -369,6 +375,7 @@ private final class TodoLedgerCellView: NSTableCellView {
         if let parentTitle = parentTitle { metadata.append("Child of \(parentTitle)") }
         metadata.append("\(item.location.relativePath):\(item.location.lineNumber)")
         metadataLabel.stringValue = metadata.joined(separator: "  •  ")
+        GraphiteFocusOverflow.configureSecondaryMetadata(metadataLabel, fullText: metadataLabel.stringValue)
         setAccessibilityLabel("\(presentation.name) Todo Item: \(item.title). \(metadataLabel.stringValue)")
     }
 
@@ -378,12 +385,12 @@ private final class TodoLedgerCellView: NSTableCellView {
         statusLabel.setContentHuggingPriority(.required, for: .horizontal)
         statusLabel.widthAnchor.constraint(equalToConstant: 24).isActive = true
         titleLabel.font = GraphiteFocusPresentation.Typography.body
-        titleLabel.lineBreakMode = .byTruncatingTail
+        GraphiteFocusOverflow.configurePrimaryTitle(titleLabel, fullText: "")
         meaningLabel.font = GraphiteFocusPresentation.Typography.caption
         meaningLabel.setContentHuggingPriority(.required, for: .horizontal)
         metadataLabel.font = GraphiteFocusPresentation.Typography.metadata
         metadataLabel.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textMetadata
-        metadataLabel.lineBreakMode = .byTruncatingMiddle
+        GraphiteFocusOverflow.configureSecondaryMetadata(metadataLabel, fullText: "")
 
         let heading = NSStackView(views: [meaningLabel, titleLabel])
         heading.orientation = .horizontal
@@ -407,6 +414,11 @@ private final class TodoLedgerCellView: NSTableCellView {
             heading.widthAnchor.constraint(equalTo: detail.widthAnchor),
             metadataLabel.widthAnchor.constraint(equalTo: detail.widthAnchor)
         ])
+    }
+
+    func hasFullOverflowTextForValidation(_ title: String) -> Bool {
+        titleLabel.toolTip == title && titleLabel.accessibilityLabel() == title
+            && metadataLabel.toolTip?.isEmpty == false
     }
 
     private static func presentation(for status: TodoStatus) -> (symbol: String, color: NSColor, name: String) {

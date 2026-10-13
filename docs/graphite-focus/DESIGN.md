@@ -1,6 +1,6 @@
 ---
 schema: graphite-focus/v1
-contract_version: 2.0.1
+contract_version: 2.0.2
 name: Graphite Focus
 platform: macOS 13+
 appearance: dark-only
@@ -185,6 +185,8 @@ The **Reference Canvas** is 1200×760 pt, the spacious validation width is 1440 
 The fixed icon rail MUST provide accessible names and tooltips for every destination. Its native buttons use Tab focus and Space/Return activation; it does not implement arrow-key traversal or a resizable divider. The Region Collapse Order is mandatory: (1) hide or transiently present the inspector, (2) auto-collapse the sidebar, then (3) let content/list temporarily replace detail. Narrow Navigation MUST provide a native toolbar back affordance and concise Location Label. Selection, scroll position, and in-progress input MUST survive every transition. No capability may disappear, no bottom/mobile navigation may be introduced, and user-requested sidebar visibility persists whenever space permits.
 
 Shell Regions are flush and square, separated by Structural Strokes. They scroll independently. The toolbar remains fixed; Page Headers ordinarily scroll with detail. Pin only task-essential controls or headings, and avoid nested scrolling inside Semantic Panels. Operational canvases, tables, evidence streams, and timelines use available width. Forms align leading at `{measure.form}`; long-form prose aligns leading at `{measure.reading}`.
+
+Long content uses the role-specific overflow rule before callers create new layout conventions. Page Header titles are a single tail-truncated line with full text available through tooltip and accessibility text. Prose, status explanations, validation messages, empty states, and failure notices wrap; a sole essential state text MUST NOT be hidden behind an ellipsis. Secondary metadata such as dates, paths, parent references, source references, counts, and filter summaries MAY truncate, preferably in the middle for paths and references, only when tooltip/accessibility text exposes the complete value. Local action clusters and trailing row controls keep their native size and independent focus target; primary text yields or wraps before controls overlap. Multiple filters, citations, tags, or references either wrap in visible rows or move behind a native, accessible disclosure/menu that names the hidden values. Horizontal clipping is not an acceptable overflow strategy, and no capability may disappear solely because text is long.
 
 Use a Semantic Panel only when the boundary is part of the task meaning: a bounded editor, transport, review workspace, preflight/status workspace, or another group that must be perceived and operated as one unit. Routine read-only detail, metadata, source lists, dense collections, and ordinary reference outcomes SHOULD remain open Content Sections, native rows, tables, or divider-led groups. Section Headers use a leading title with optional trailing local actions or metadata; actions stay native controls and do not require a panel. A screen MUST NOT introduce an unconditional generic Card or Tile abstraction to decorate every group.
 
