@@ -287,6 +287,10 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         let overflowCell = TodoLedgerCellView(identifier: NSUserInterfaceItemIdentifier("TodoOverflowFixture"))
         overflowCell.configure(parent, parentTitle: nil)
         precondition(overflowCell.hasFullOverflowTextForValidation(parent.title), "Todo rows must expose full long titles outside the truncated visual line")
+        let canceledCell = TodoLedgerCellView(identifier: NSUserInterfaceItemIdentifier("TodoCanceledFixture"))
+        canceledCell.configure(canceled, parentTitle: nil)
+        precondition(canceledCell.hasCanceledDomainPresentationForValidation(),
+                     "Canceled Todo Items must use domain status presentation rather than disabled-control styling")
         modeControl.selectedSegment = Mode.done.rawValue
         applyFilter()
         precondition(visibleItems.map(\.id) == ["done"])
@@ -421,13 +425,23 @@ private final class TodoLedgerCellView: NSTableCellView {
             && metadataLabel.toolTip?.isEmpty == false
     }
 
+    func hasCanceledDomainPresentationForValidation() -> Bool {
+        let colors = GraphiteFocusPresentation.Colors(environment: .system(window: window))
+        return meaningLabel.stringValue == "CANCELED"
+            && statusLabel.stringValue == "⊗"
+            && statusLabel.textColor == GraphiteFocusStatusMeaning.destructive.color(in: colors)
+            && statusLabel.textColor != colors.textDisabled
+    }
+
     private static func presentation(for status: TodoStatus) -> (symbol: String, color: NSColor, name: String) {
         let colors = GraphiteFocusPresentation.Colors(environment: .system(window: nil))
         switch status {
         case .open: return ("☐", colors.textSecondary, "Open")
-        case .done: return ("☑", GraphiteFocusSemanticState.readyCompleted.color(in: colors), "Done")
-        case .blocked: return ("⊘", GraphiteFocusSemanticState.needsAttentionLive.color(in: colors), "Blocked")
-        case .canceled: return ("⊗", GraphiteFocusSemanticState.disabled.color(in: colors), "Canceled")
+        case .done: return ("☑", GraphiteFocusStatusMeaning.success.color(in: colors), "Done")
+        case .blocked: return ("⊘", GraphiteFocusStatusMeaning.attention.color(in: colors), "Blocked")
+        // Canceled is a domain status, not a disabled control. Keep its essential
+        // label legible and use destructive meaning with a non-color marker.
+        case .canceled: return ("⊗", GraphiteFocusStatusMeaning.destructive.color(in: colors), "Canceled")
         }
     }
 }

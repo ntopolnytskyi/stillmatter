@@ -3,6 +3,7 @@ import SwiftUI
 /// Open Meeting detail section with a shared heading/action row.
 /// The existing workspace editor is revealed only on demand.
 struct MeetingOverviewSection: View {
+    @Environment(\.graphiteFocusColors) private var colors
     let title: String
     let content: String
     let unavailable: String
@@ -24,14 +25,15 @@ struct MeetingOverviewSection: View {
             Divider()
             Text(content.isEmpty ? unavailable : content)
                 .font(GraphiteFocusSwiftUI.body)
-                .foregroundStyle(content.isEmpty ? GraphiteFocusSwiftUI.secondary : GraphiteFocusSwiftUI.primary)
+                .foregroundStyle(Color(nsColor: content.isEmpty ? colors.textSecondary : colors.textPrimary))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
         .padding(.vertical, GraphiteFocusPresentation.Space.compact)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(GraphiteFocusSwiftUI.primary)
+        .foregroundStyle(Color(nsColor: colors.textPrimary))
         .environment(\.colorScheme, .dark)
+        .graphiteSemanticContext()
     }
 }

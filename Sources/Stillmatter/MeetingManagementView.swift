@@ -71,6 +71,8 @@ final class MeetingManagementView: NSView {
     private let outcomesContainer = NSStackView()
     private weak var notesSection: NSView?
     private var actionRows: [String: MeetingOutcomeRow] = [:]
+    private var actionReviewFeedback: (meetingID: String, message: String)?
+    private var actionReviewFeedbackDismissal: DispatchWorkItem?
     private var segmentLabels: [(MeetingTranscriptSegment, NSTextField)] = []
     private var displayedDetail: MeetingBrowserDetail?
     private var evidenceTargets: [String: EvidenceTarget] = [:]
@@ -1546,7 +1548,7 @@ final class MeetingManagementView: NSView {
         }
         var groups: [MeetingOutcomeGroup] = []
         if !detail.myActionItems.isEmpty {
-            groups.append(MeetingOutcomeGroup(id: "mine", title: "My actions", note: "Generated · review before adding to Todos",
+            groups.append(MeetingOutcomeGroup(kind: .mine, title: "My actions", note: "Generated · review before adding to Todos",
                 rows: detail.myActionItems.map { item in
                     let proposalID = "meeting-action:\(detail.row.id):\(item.id)"
                     let saved = try? serviceProvider()?.actionDraft(id: proposalID)
@@ -1555,20 +1557,26 @@ final class MeetingManagementView: NSView {
                 }))
         }
         if !detail.otherActionItems.isEmpty {
-            groups.append(MeetingOutcomeGroup(id: "others", title: "Others’ actions", note: "Reference only",
+            groups.append(MeetingOutcomeGroup(kind: .others, title: "Others’ actions", note: "Reference only",
                 rows: detail.otherActionItems.map { makeRow($0.id, $0.text, "Reference only", $0.citations) }))
         }
         if !detail.decisions.isEmpty {
-            groups.append(MeetingOutcomeGroup(id: "decisions", title: "Decisions", note: "\(detail.decisions.count) captured",
+            groups.append(MeetingOutcomeGroup(kind: .decisions, title: "Decisions", note: "\(detail.decisions.count) captured",
                 rows: detail.decisions.enumerated().map { makeRow("decision-\($0.offset)", $0.element.text, "", $0.element.citations) }))
         }
         if !detail.openQuestions.isEmpty {
-            groups.append(MeetingOutcomeGroup(id: "questions", title: "Open questions", note: "\(detail.openQuestions.count) captured",
+            groups.append(MeetingOutcomeGroup(kind: .questions, title: "Open questions", note: "\(detail.openQuestions.count) captured",
                 rows: detail.openQuestions.enumerated().map { makeRow("question-\($0.offset)", $0.element.text, "", $0.element.citations) }))
         }
-        actionRows = Dictionary(uniqueKeysWithValues: groups.filter { $0.id == "mine" }.flatMap(\.rows).map { ($0.id, $0) })
+        actionRows = Dictionary(uniqueKeysWithValues: groups.filter { $0.kind.isReviewWorkspace }.flatMap(\.rows).map { ($0.id, $0) })
+        if let feedback = actionReviewFeedback, feedback.meetingID == detail.row.id {
+            let label = GraphiteFocusStatusLabel()
+            label.setStatus(feedback.message, meaning: .success,
+                            colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+            myActionsContainer.addArrangedSubview(label)
+        }
         for group in groups {
-            let boundedReviewWorkspace = group.id == "mine"
+            let boundedReviewWorkspace = group.kind.isReviewWorkspace
             let section = NSStackView()
             section.orientation = .vertical
             section.alignment = .leading
@@ -1606,8 +1614,8 @@ final class MeetingManagementView: NSView {
             let horizontalInset = boundedReviewWorkspace ? 2 * GraphiteFocusPresentation.Space.panel : 0
             headingRow.widthAnchor.constraint(equalTo: section.widthAnchor, constant: -horizontalInset).isActive = true
             for (rowOffset, row) in group.rows.enumerated() {
-                let comment = group.id == "mine" ? (try? serviceProvider()?.actionDraft(id: row.id))?.comment ?? "" : ""
-                let detailLine = (group.id == "mine" ? "Generated from meeting · " : "") + row.detail
+                let comment = group.kind.isReviewWorkspace ? (try? serviceProvider()?.actionDraft(id: row.id))?.comment ?? "" : ""
+                let detailLine = (group.kind.isReviewWorkspace ? "Generated from meeting · " : "") + row.detail
                 let text = NSTextField(wrappingLabelWithString: row.text + "\n" + detailLine +
                     (comment.isEmpty ? "" : "\nComment: " + comment))
                 text.maximumNumberOfLines = 0
@@ -1617,8 +1625,8 @@ final class MeetingManagementView: NSView {
                 controls.orientation = .horizontal
                 controls.alignment = .centerY
                 controls.spacing = GraphiteFocusPresentation.Space.compact
-                appendSourceControls(for: row, groupID: group.id, detail: detail, to: controls)
-                if group.id == "mine" {
+                appendSourceControls(for: row, groupKind: group.kind, detail: detail, to: controls)
+                if group.kind.isReviewWorkspace {
                     for (name, selector) in [("Edit", #selector(editAction(_:))), ("Review", #selector(reviewAction(_:)))] {
                         let button = NSButton(title: name, target: self, action: selector)
                         button.identifier = NSUserInterfaceItemIdentifier(row.id)
@@ -1643,13 +1651,13 @@ final class MeetingManagementView: NSView {
                     section.addArrangedSubview(separator)
                 }
             }
-            let container = group.id == "mine" ? myActionsContainer : outcomesContainer
+            let container = group.kind.isReviewWorkspace ? myActionsContainer : outcomesContainer
             container.addArrangedSubview(section)
             section.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         }
     }
 
-    private func appendSourceControls(for row: MeetingOutcomeRow, groupID: String, detail: MeetingBrowserDetail, to controls: NSStackView) {
+    private func appendSourceControls(for row: MeetingOutcomeRow, groupKind: MeetingOutcomeGroup.Kind, detail: MeetingBrowserDetail, to controls: NSStackView) {
         guard !row.citations.isEmpty else { return }
         let sourceButtons: [(key: String, button: NSButton)] = row.citations.enumerated().map { index, citation in
             let valid = detail.transcript.contains { segment in
@@ -1661,8 +1669,7 @@ final class MeetingManagementView: NSView {
                 outcomeSourceTargets[key] = OutcomeSourceTarget(meetingID: detail.row.id,
                     segmentID: citation.segmentID, startSeconds: citation.startSeconds,
                     endSeconds: citation.endSeconds, seekSeconds: citation.seconds,
-                    kind: groupID == "mine" || groupID == "others" ? .action :
-                          groupID == "decisions" ? .decision : .transcript)
+                    kind: groupKind.timelineKind)
             }
             let source = NSButton(title: valid ? "↗ source \(citation.label)" : "Source unavailable",
                                   target: self, action: #selector(seekOutcomeSource(_:)))
@@ -1748,14 +1755,17 @@ final class MeetingManagementView: NSView {
         commentScroll.heightAnchor.constraint(equalToConstant: 56).isActive = true
         let sources = row.citations.map(\.label).joined(separator: ", ")
         let context = NSTextField(wrappingLabelWithString: "Provenance: Generated from meeting · \(row.detail)\nSource: \(sources.isEmpty ? "No transcript citation available" : sources)")
+        let failure = GraphiteFocusStatusLabel()
+        failure.isHidden = true
         let fields = NSStackView(views: [context, NSTextField(labelWithString: "Action item text"), titleScroll,
-                                         NSTextField(labelWithString: "Comment"), commentScroll])
+                                         NSTextField(labelWithString: "Comment"), commentScroll, failure])
         fields.orientation = .vertical
         fields.alignment = .leading
         fields.spacing = GraphiteFocusPresentation.Space.compact
-        fields.frame = NSRect(x: 0, y: 0, width: 480, height: 235)
+        fields.frame = NSRect(x: 0, y: 0, width: 480, height: 270)
         titleScroll.widthAnchor.constraint(equalTo: fields.widthAnchor).isActive = true
         commentScroll.widthAnchor.constraint(equalTo: fields.widthAnchor).isActive = true
+        failure.widthAnchor.constraint(equalTo: fields.widthAnchor).isActive = true
         let alert = NSAlert()
         alert.icon = NSImage(systemSymbolName: reviewing ? "checklist" : "square.and.pencil",
                              accessibilityDescription: reviewing ? "Review action" : "Edit action")
@@ -1765,20 +1775,61 @@ final class MeetingManagementView: NSView {
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: reviewing ? "Accept" : "Save")
         if reviewing { alert.addButton(withTitle: "Decline") }
-        let choice = presentConfirmationAlert(alert)
-        guard choice != .alertFirstButtonReturn, selectedID == meetingID else { return }
-        do {
-            if choice == .alertSecondButtonReturn {
-                let newTitle = title.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !newTitle.isEmpty else { throw MeetingManagementError.retryRejected("Action text cannot be empty.") }
-                try service.saveActionDraft(id: id, title: newTitle, comment: comment.string)
-                if reviewing { try service.reviewAction(id: id, accept: true) }
-            } else if reviewing && choice == .alertThirdButtonReturn {
-                try service.reviewAction(id: id, accept: false)
+
+        // Re-present the same native editor after a failure. The fields and
+        // edits remain intact, the failure stays inline, and the principal
+        // action explicitly offers Retry instead of dropping users back into
+        // the detail view with generic status text.
+        while selectedID == meetingID {
+            let choice = presentConfirmationAlert(alert)
+            guard choice != .alertFirstButtonReturn, selectedID == meetingID else { return }
+            do {
+                var success: String
+                if choice == .alertSecondButtonReturn {
+                    let newTitle = title.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !newTitle.isEmpty else { throw MeetingManagementError.retryRejected("Action text cannot be empty.") }
+                    try service.saveActionDraft(id: id, title: newTitle, comment: comment.string)
+                    if reviewing {
+                        try service.reviewAction(id: id, accept: true)
+                        success = "Added ‘\(newTitle)’ to Todos."
+                    } else {
+                        success = "Changes saved."
+                    }
+                } else if reviewing && choice == .alertThirdButtonReturn {
+                    try service.reviewAction(id: id, accept: false)
+                    success = "Proposal dismissed."
+                } else {
+                    return
+                }
+                showActionReviewSuccess(success, meetingID: meetingID)
+                displayedDetail = nil
+                reload()
+                return
+            } catch {
+                let message = "Review failed. The proposal was not changed; your edits remain here. Retry when ready. \(error.localizedDescription)"
+                failure.setStatus(message, meaning: .destructive,
+                                  colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+                failure.isHidden = false
+                alert.buttons[1].title = reviewing ? "Retry Accept" : "Retry Save"
+                NSAccessibility.post(element: failure, notification: .announcementRequested,
+                                     userInfo: [.announcement: message])
             }
-            displayedDetail = nil
-            reload()
-        } catch { status.stringValue = "Could not update action: \(error.localizedDescription)" }
+        }
+    }
+
+    private func showActionReviewSuccess(_ message: String, meetingID: String) {
+        actionReviewFeedbackDismissal?.cancel()
+        actionReviewFeedback = (meetingID, message)
+        NSAccessibility.post(element: self, notification: .announcementRequested,
+                             userInfo: [.announcement: message])
+        let dismissal = DispatchWorkItem { [weak self] in
+            guard self?.actionReviewFeedback?.meetingID == meetingID,
+                  self?.actionReviewFeedback?.message == message else { return }
+            self?.actionReviewFeedback = nil
+            if self?.selectedID == meetingID { self?.displayedDetail = nil; self?.reload() }
+        }
+        actionReviewFeedbackDismissal = dismissal
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: dismissal)
     }
 
     private func renderTimeline(_ detail: MeetingBrowserDetail) {

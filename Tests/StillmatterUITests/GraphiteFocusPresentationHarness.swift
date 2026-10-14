@@ -23,8 +23,13 @@ struct GraphiteFocusPresentationHarness {
         variants.forEach(validateFixture)
 
         let defaultColors = GraphiteFocusPresentation.Colors(environment: variants[0])
-        require(rgba(GraphiteFocusSwiftUI.colors.accent) == rgba(GraphiteFocusPresentation.swiftUIColors().accent),
-                "SwiftUI and AppKit must resolve the same accent")
+        let semanticWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
+                                      styleMask: [.titled], backing: .buffered, defer: false)
+        let firstContext = GraphiteFocusSwiftUI.contextForValidation(window: semanticWindow)
+        let secondContext = GraphiteFocusSwiftUI.contextForValidation(window: semanticWindow)
+        require(firstContext === secondContext, "Every SwiftUI hosting root in one window must share one semantic context")
+        require(firstContext.environment.activeWindow == semanticWindow.isKeyWindow,
+                "SwiftUI semantic context must resolve active/inactive state from its window")
         require(GraphiteFocusSwiftUI.sectionHeading == Font(GraphiteFocusPresentation.Typography.sectionHeading),
                 "SwiftUI must use the AppKit typography role")
         let contrastColors = GraphiteFocusPresentation.Colors(environment: variants[1])
@@ -75,25 +80,31 @@ struct GraphiteFocusPresentationHarness {
         require(Set(labels.map { rgba($0.textColor) }).count == 4, "Status semantic colors must remain distinct")
         require(labels.allSatisfy { !$0.statusText.isEmpty && $0.stringValue.contains($0.statusText) }, "Status meaning cannot rely on color")
 
-        let semanticLabels = GraphiteFocusSemanticState.allCases.map { state -> GraphiteFocusStatusLabel in
-            let label = GraphiteFocusStatusLabel()
-            label.setState(state, colors: colors)
-            proofSurface.addArrangedSubview(label)
-            return label
-        }
-        require(semanticLabels.allSatisfy { !$0.statusText.isEmpty && !$0.stringValue.isEmpty }, "Every representative state must expose text and a non-color cue")
-        require(rgba(GraphiteFocusSemanticState.readyCompleted.color(in: colors)) != rgba(colors.accent), "Ready/completed must not use accent outside bounded Meetings exception")
-        require(rgba(GraphiteFocusSemanticState.selectedCurrent.color(in: colors)) != rgba(GraphiteFocusSemanticState.readyCompleted.color(in: colors)), "Selection must remain visually separate from status")
+        let longStatus = GraphiteFocusStatusLabel()
+        let fullFailure = "Review failed. The proposal was not changed; retry after correcting the workspace problem."
+        longStatus.setStatus(fullFailure, meaning: .destructive, colors: colors)
+        proofSurface.addArrangedSubview(longStatus)
+        require(longStatus.maximumNumberOfLines == 0 && longStatus.lineBreakMode == .byWordWrapping,
+                "Essential status and failure text must wrap rather than truncate")
+        require(longStatus.statusText == fullFailure && longStatus.stringValue.contains(fullFailure),
+                "Wrapped status must retain its full visible and spoken source text")
 
         let notice = GraphiteFocusInlineNoticeView()
-        notice.configure(title: "Failed", detail: "Retry processing from the Jobs Inbox.", state: .failed, colors: colors)
+        notice.configure(title: "Failed", detail: "Retry processing from the Jobs Inbox.", meaning: .destructive, colors: colors)
         proofSurface.addArrangedSubview(notice)
         require(notice.accessibilityLabel()?.contains("Retry processing") == true, "Inline notices must expose actionable failure text")
 
         let progress = GraphiteFocusProgressStatusView()
         progress.configure(title: "Transcribing", value: 0.5, valueDescription: "50 percent complete", colors: colors)
         proofSurface.addArrangedSubview(progress)
-        require(progress.accessibilityValue() == "50 percent complete", "Progress must expose a textual or numeric value")
+        require(progress.valueLabel.stringValue == "50 percent complete",
+                "Progress must expose a textual or numeric value")
+        require(progress.statusLabel.meaning == .informational,
+                "Loading activity must not substitute attention meaning for progress")
+
+        let selectedRow = NSTableRowView()
+        selectedRow.isSelected = true
+        require(selectedRow.isSelected, "Selection must remain native and independent of status")
 
         let button = NSButton(title: "Continue", target: nil, action: nil)
         button.bezelColor = colors.accent

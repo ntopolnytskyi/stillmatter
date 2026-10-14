@@ -50,14 +50,17 @@ struct MeetingTimelineView: View {
     let hasAudio: Bool
     let seek: (MeetingTimelineMoment) -> Void
     @ObservedObject var navigation: MeetingTimelineNavigation
+    @Environment(\.graphiteFocusColors) private var colors
     @State private var included = Set(MeetingTimelineMoment.Kind.allCases)
     @State private var position = 0.0
     @State private var query = ""
     @State private var resultPage = 0
 
-    private var ink: Color { GraphiteFocusSwiftUI.primary }
-    private var muted: Color { GraphiteFocusSwiftUI.metadata }
-    private var accent: Color { GraphiteFocusSwiftUI.accent }
+    private var ink: Color { Color(nsColor: colors.textPrimary) }
+    private var muted: Color { Color(nsColor: colors.textMetadata) }
+    private var accent: Color { Color(nsColor: colors.accent) }
+    private var secondary: Color { Color(nsColor: colors.textSecondary) }
+    private var stroke: Color { Color(nsColor: colors.structuralStroke) }
     private var lastWindow: Double { max(0, floor(max(0, duration - 0.001) / MeetingTimelineSelection.window) * MeetingTimelineSelection.window) }
     private var start: Double { floor(position / MeetingTimelineSelection.window) * MeetingTimelineSelection.window }
     private var hourCount: Int { max(1, Int(ceil(max(duration, 1) / 3600))) }
@@ -105,10 +108,10 @@ struct MeetingTimelineView: View {
                     .foregroundStyle(included.contains(kind) ? accent : muted)
                     .padding(.horizontal, GraphiteFocusPresentation.Space.compact)
                     .padding(.vertical, GraphiteFocusPresentation.Space.primitive)
-                    .background(included.contains(kind) ? accent.opacity(0.15) : GraphiteFocusSwiftUI.secondary.opacity(0.08))
+                    .background(included.contains(kind) ? accent.opacity(0.15) : secondary.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: GraphiteFocusPresentation.Radius.compact))
                     .overlay(RoundedRectangle(cornerRadius: GraphiteFocusPresentation.Radius.compact)
-                        .strokeBorder(included.contains(kind) ? accent : GraphiteFocusSwiftUI.stroke))
+                        .strokeBorder(included.contains(kind) ? accent : stroke))
                     .accessibilityAddTraits(included.contains(kind) ? .isSelected : [])
                 }
         }
@@ -190,10 +193,10 @@ struct MeetingTimelineView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(GraphiteFocusPresentation.Space.dense)
-                .background(Color(nsColor: GraphiteFocusSwiftUI.colors.surfaceRaised).opacity(0.35))
+                .background(Color(nsColor: colors.surfaceRaised).opacity(0.35))
                 .clipShape(RoundedRectangle(cornerRadius: GraphiteFocusPresentation.Radius.compact))
                 .overlay(RoundedRectangle(cornerRadius: GraphiteFocusPresentation.Radius.compact)
-                    .strokeBorder(moment.id == "transcript-\(navigation.jump?.segmentID ?? "")" ? accent : GraphiteFocusSwiftUI.stroke))
+                    .strokeBorder(moment.id == "transcript-\(navigation.jump?.segmentID ?? "")" ? accent : stroke))
             }
             if visible.count > 100 {
                 Text("Results \(resultPage * 100 + 1)–\(min((resultPage + 1) * 100, visible.count)) of \(visible.count)")

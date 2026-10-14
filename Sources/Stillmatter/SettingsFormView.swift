@@ -247,7 +247,7 @@ final class SettingsFormView: NSView, NSTextFieldDelegate {
         titleLabel.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
         let statusLabel = GraphiteFocusStatusLabel()
-        statusLabel.setState(.loadingProcessing, text: "Checking", colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+        statusLabel.setStatus("Checking", meaning: .informational, colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
         statusLabel.widthAnchor.constraint(equalToConstant: 130).isActive = true
 
         let detailLabel = NSTextField(wrappingLabelWithString: "")
@@ -419,7 +419,7 @@ final class SettingsFormView: NSView, NSTextFieldDelegate {
 
     private func renderDiagnosticItem(_ item: DiagnosticItem) {
         guard let row = diagnosticRows[item.id] else { return }
-        row.statusLabel.setState(statusState(item.status), text: statusText(item.status), colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+        row.statusLabel.setStatus(statusText(item.status), meaning: statusMeaning(item.status), colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
         let affected = item.affectedFeatures.isEmpty
             ? ""
             : " Affects: \(item.affectedFeatures.joined(separator: ", "))."
@@ -438,12 +438,11 @@ final class SettingsFormView: NSView, NSTextFieldDelegate {
         }
     }
 
-    private func statusState(_ status: DiagnosticStatus) -> GraphiteFocusSemanticState {
+    private func statusMeaning(_ status: DiagnosticStatus) -> GraphiteFocusStatusMeaning {
         switch status {
-        case .granted: return .readyCompleted
-        case .missing: return .failed
-        case .unavailable: return .unavailable
-        case .notConfigured, .unknown: return .unavailable
+        case .granted: return .success
+        case .missing: return .destructive
+        case .unavailable, .notConfigured, .unknown: return .informational
         }
     }
 
@@ -692,7 +691,7 @@ final class SettingsFormView: NSView, NSTextFieldDelegate {
         endOfWeekTimeField.stringValue = originalEndOfWeek
 
         let statuses: [DiagnosticStatus] = [.granted, .missing, .unavailable, .notConfigured, .unknown]
-        precondition(statuses.allSatisfy { !statusText($0).isEmpty && !statusState($0).symbol.isEmpty }, "Every diagnostic status must include a non-color symbol")
+        precondition(statuses.allSatisfy { !statusText($0).isEmpty && !statusMeaning($0).symbol.isEmpty }, "Every diagnostic status must include a non-color symbol")
         renderDiagnosticItem(DiagnosticItem(
             id: "pi",
             title: "Pi CLI detection",

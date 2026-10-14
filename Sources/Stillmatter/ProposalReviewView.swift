@@ -66,9 +66,10 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
             let proposals = try inbox.items(category: .review)
                 .filter { $0.kind == .proposal }
                 .compactMap { try inbox.pendingProposal(id: $0.id) }
-            isHidden = proposals.isEmpty
+            // Keep the section present after the last review so its focusable
+            // empty state can receive keyboard and VoiceOver focus.
+            isHidden = false
             rebuildRows(proposals)
-            clearFailure()
         } catch {
             isHidden = false
             rebuildRows([])
@@ -628,6 +629,8 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
             precondition(window.firstResponder === rows[0].selection, "After review removes a proposal, focus must move to the next proposal")
             rebuildRows([])
             focusAfterRemoval(of: many[1].id, removedIndex: 0)
+            precondition(!isHidden && !emptyStateLabel.isHidden,
+                         "The review section and empty-state focus target must remain visible after the last removal")
             precondition(window.firstResponder === emptyStateLabel, "After the last reviewed proposal disappears, focus must stay on the review empty state")
             rebuildRows(many)
         }
@@ -661,6 +664,8 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
             !failureLabel.isHidden && failureLabel.meaning == .destructive && failureLabel.statusText.contains("not changed"),
             "Failed-review fixture must retain static error meaning and say the proposal was not changed"
         )
+        precondition(failureLabel.maximumNumberOfLines == 0 && failureLabel.lineBreakMode == .byWordWrapping,
+                     "Failed-review details must wrap without hiding retry guidance")
 
         rebuildRows(originalProposals)
         for row in rows {
