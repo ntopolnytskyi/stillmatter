@@ -1,6 +1,6 @@
 ---
 schema: graphite-focus/v1
-contract_version: 2.0.0
+contract_version: 2.0.2
 name: Graphite Focus
 platform: macOS 13+
 appearance: dark-only
@@ -124,7 +124,7 @@ Each mapping is implementation-independent. **System** means native behavior own
 | Semantic role | Normal AppKit / SwiftUI primitive | Ownership | Allowed exception | Required behavior |
 |---|---|---|---|---|
 | Window Toolbar | `NSToolbar` / unified toolbar | system | None | Window identity, navigation, Area Search, and few frequent actions; every command also in menus |
-| Page Header | Label stack in document view | app | None | Identifies current area/context without duplicating window title; normally scrolls |
+| Page Header | Label stack in document view | app | None | Identifies current area/context without duplicating window title; normally scrolls; when paired with local actions, the title is a single tail-truncated line with full tooltip/accessibility text and yields width to a noncompressing action cluster |
 | Content Section | View group | app | None | Groups a coherent topic with semantic heading |
 | Section Header | Text/Label | app | Native table header | Names a section and optional local action |
 | Shell Region | `NSSplitView` / split-view column | system | None | Flush, independently scrolling regions; the sidebar rail is fixed-width while content/list and detail can resize where supported |
@@ -186,6 +186,10 @@ The fixed icon rail MUST provide accessible names and tooltips for every destina
 
 Shell Regions are flush and square, separated by Structural Strokes. They scroll independently. The toolbar remains fixed; Page Headers ordinarily scroll with detail. Pin only task-essential controls or headings, and avoid nested scrolling inside Semantic Panels. Operational canvases, tables, evidence streams, and timelines use available width. Forms align leading at `{measure.form}`; long-form prose aligns leading at `{measure.reading}`.
 
+Long content uses the role-specific overflow rule before callers create new layout conventions. Page Header titles are a single tail-truncated line with full text available through tooltip and accessibility text. Prose, status explanations, validation messages, empty states, and failure notices wrap; a sole essential state text MUST NOT be hidden behind an ellipsis. Secondary metadata such as dates, paths, parent references, source references, counts, and filter summaries MAY truncate, preferably in the middle for paths and references, only when tooltip/accessibility text exposes the complete value. Local action clusters and trailing row controls keep their native size and independent focus target; primary text yields or wraps before controls overlap. Multiple filters, citations, tags, or references either wrap in visible rows or move behind a native, accessible disclosure/menu that names the hidden values. Horizontal clipping is not an acceptable overflow strategy, and no capability may disappear solely because text is long.
+
+Use a Semantic Panel only when the boundary is part of the task meaning: a bounded editor, transport, review workspace, preflight/status workspace, or another group that must be perceived and operated as one unit. Routine read-only detail, metadata, source lists, dense collections, and ordinary reference outcomes SHOULD remain open Content Sections, native rows, tables, or divider-led groups. Section Headers use a leading title with optional trailing local actions or metadata; actions stay native controls and do not require a panel. A screen MUST NOT introduce an unconditional generic Card or Tile abstraction to decorate every group.
+
 The Window Toolbar owns window identity, navigation, Area Search, and a small set of frequent actions. The Page Header owns the selected area or item's local title. Every toolbar action MUST have a menu command because the toolbar can be hidden or customized. Multiple windows maintain independent shell state; full-screen and window management remain system-owned.
 
 Area Search belongs in native toolbar/sidebar placement, defaults to current-area scope, and keeps query, scope, and filters visible. Results use the content/list region when present and otherwise the detail canvas. It MUST NOT be a decorative floating search card.
@@ -209,6 +213,22 @@ The independent State Axes are:
 - **Meaning:** informational, success, attention/live, destructive.
 - **Activity:** loading, progress, complete, unavailable.
 - **Window Context:** active, inactive.
+
+### Plain-Language State Decision Table
+
+This table is normative for representative cross-tab states. A presentation MUST NOT substitute one row for another: selection is not status, progress is not readiness, and action emphasis is not focus. “Text” means visible state wording or an equivalent control label; “symbol” means an SF Symbol, native marker, or text glyph with the same non-color function.
+
+| State | What it means | Visual treatment | Text and symbol | Progress value | Focus ring |
+|---|---|---|---|---|---|
+| Selected/current item | This row, destination, or mode is the user's current choice or navigation context. | Use native selection where available; global sidebar uses `{surface.selection-neutral}` with one accent symbol; Dense Collections MAY use contextual accent tint. Do not use success/attention/error colors. | The selected item's name remains visible; VoiceOver exposes selected/current state through native selection semantics. | None. | Native focus ring only when keyboard-focused; selection is not focus. |
+| Ready/completed | Work or an artifact is complete, ready, or accepted. | Use `{status.success}`. The only approved accent-colored ready exception is Stillmatter `SM-EX-004`. | Include explicit Ready/Complete/Done/Granted text plus a checkmark or equivalent. | None unless a completed progress control is still present, in which case expose 100% or completed text. | Native focus only for any adjacent action. |
+| Needs attention/live | Something is recording, live, degraded, blocked, overdue, queued, or otherwise needs awareness without being an error. | Use `{status.attention}`. Recording/live is attention, not destructive. | Include explicit Recording/Live/Needs attention/Blocked/Overdue/Queued text plus a distinct dot, warning, blocked marker, or recording shape. | Include stage/value when the state is queued or in progress. | Native focus only for any action. |
+| Failed | A job, validation, load, permission, or generated artifact failed. | Use `{status.destructive}` for the failure meaning; keep retry/dismiss actions as native controls. | Include Failed/Missing/Error text, a destructive symbol, explanation, and the next available action. Persistent until resolved or dismissed. | If failure interrupted progress, expose the failed stage or last known value as text. | Native focus only for controls; focus should not jump merely because failure appeared. |
+| Loading/processing | Work is currently being fetched, generated, installed, rebuilt, transcribed, summarized, or otherwise processed. | Use native `NSProgressIndicator` / `ProgressView`; progress tint MAY use `{accent.base}` because progress is in the Accent Budget. | Include Processing/Loading/Rebuilding/etc. text plus a stable symbol or native activity indicator. Motion is not required to understand the state. | Determinate work exposes a numeric value; indeterminate work exposes a stage description. | Native focus remains wherever the user placed it. |
+| Unavailable | Content, feature, model, source, or permission-dependent capability is not usable now. | Use neutral/informational treatment, not disabled styling unless the control itself is disabled. | Include Unavailable/Not configured/No results text, explanation, and useful next action when one exists. | None. | If there is a next action, it is a native focusable control. |
+| Disabled | A control or option cannot be activated in the current context. | Use native disabled control behavior and `{text.disabled}` only for nonessential labels. | The disabled control label remains explicit; help text explains why when not obvious. | None. | Disabled controls follow native focus behavior and are not custom-focusable. |
+| Destructive action | An action can delete, stop, discard, cancel, or irreversibly harm work. | Use native destructive role/placement and `{status.destructive}` only for destructive meaning. Do not color live state as destructive merely because Stop is destructive. | Use a clear destructive verb and confirmation where irreversible. | If destructive work is in progress, use a separate progress row. | Native focus ring and native alert/sheet focus restoration. |
+| Primary action | The one principal action for the current task or section. | Use native button with app accent styling where appropriate; only one principal action per task/section. | Verb label states the action. Icon-only primary actions require accessibility label and tooltip. | If pressed action starts long work, progress appears separately. | Native focus ring, never custom accent glow. |
 
 ### State Applicability Matrix
 

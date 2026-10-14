@@ -466,7 +466,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 searchWidth,
                 kindWidth
             ])
-            item.label = "Area Search"
+            item.label = "Search"
             item.paletteLabel = item.label
             item.view = stack
         default:
@@ -487,11 +487,12 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
 
     private func configureAreaSearchIfNeeded() {
         guard searchField.target == nil else { return }
-        searchField.placeholderString = "Search in Today…"
+        searchField.placeholderString = "Search"
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
         searchField.delegate = self
-        searchField.setAccessibilityLabel("Area Search")
+        searchField.setAccessibilityLabel("Search")
+        searchField.setAccessibilityHelp("Search indexed results in the current area. Use the result type menu to narrow by type.")
         searchKindPopup.addItem(withTitle: "All types")
         SearchChunkKind.allCases.forEach { kind in
             searchKindPopup.addItem(withTitle: kind.displayName)
@@ -500,6 +501,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         searchKindPopup.target = self
         searchKindPopup.action = #selector(searchKindChanged(_:))
         searchKindPopup.setAccessibilityLabel("Search result type")
+        searchKindPopup.setAccessibilityHelp("Narrows indexed Search results by result type; it does not change the searched area.")
     }
 
     private func makeMainContent() -> NSView {
@@ -541,7 +543,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             (searchResultsView, searchResultsView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large))
         ]
         contentBottomConstraints = bottomConstraints
-        meetingViewportHeight = meetingManagementView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor, constant: -GraphiteFocusPresentation.Space.panel * 2)
+        meetingViewportHeight = meetingManagementView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor)
 
         NSLayoutConstraint.activate([
             contentTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GraphiteFocusPresentation.Space.large),
@@ -552,9 +554,9 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             captureRecordingView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
             captureRecordingView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
             captureRecordingView.topAnchor.constraint(equalTo: contentTitle.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
-            meetingManagementView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
-            meetingManagementView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
-            meetingManagementView.topAnchor.constraint(equalTo: container.topAnchor, constant: GraphiteFocusPresentation.Space.panel),
+            meetingManagementView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            meetingManagementView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            meetingManagementView.topAnchor.constraint(equalTo: container.topAnchor),
             proposalReviewView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
             proposalReviewView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
             proposalReviewView.topAnchor.constraint(equalTo: todayWorkbenchView.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
@@ -695,7 +697,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         )
         updateJobBadge(colors: colors)
         searchField.stringValue = state.searchText
-        searchField.placeholderString = "Search in \(state.selectedTab.rawValue)…"
+        searchField.placeholderString = "Search"
+        updateSearchAccessibilityContext(area: state.selectedTab)
         compactSearchField.stringValue = state.searchText
         compactSearchField.placeholderString = searchField.placeholderString
         toolbarAreaLabel.stringValue = state.selectedTab.rawValue
@@ -720,8 +723,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
 
     private func renderSearch(query rawQuery: String, area: ShellTab) {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let selectedKind = (searchKindPopup.selectedItem?.representedObject as? String)
-            .flatMap(SearchChunkKind.init(rawValue:))
+        let selectedKind = currentSearchKind()
         let typeName = selectedKind?.displayName ?? "All types"
         let index = searchIndexProvider()
         let request = "\(area.rawValue)|\(typeName)|\(query)|\(index.map { ObjectIdentifier($0).hashValue } ?? 0)"
@@ -760,6 +762,19 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 }
             }
         }
+    }
+
+    private func currentSearchKind() -> SearchChunkKind? {
+        (searchKindPopup.selectedItem?.representedObject as? String)
+            .flatMap(SearchChunkKind.init(rawValue:))
+    }
+
+    private func updateSearchAccessibilityContext(area: ShellTab) {
+        let typeName = currentSearchKind()?.displayName ?? "All types"
+        let value = "Scope: \(area.rawValue). Type: \(typeName)."
+        searchField.setAccessibilityValue(value)
+        compactSearchField.setAccessibilityValue(value)
+        searchKindPopup.setAccessibilityValue(typeName)
     }
 
     private func searchKinds(for area: ShellTab) -> Set<SearchChunkKind>? {
@@ -983,6 +998,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         precondition(navigationButtons[stateStore.state.selectedTab]?.accessibilityValue() as? String == "Selected", "Navigation selection must follow shell state")
         precondition(contentTitle.stringValue == stateStore.state.selectedTab.rawValue, "Page Header must follow shell state")
         precondition(toolbarAreaLabel.stringValue == stateStore.state.selectedTab.rawValue, "Toolbar location must follow shell state")
+        precondition(searchField.placeholderString == "Search", "Toolbar Search placeholder must remain area-neutral")
+        precondition(searchField.accessibilityLabel() as? String == "Search", "Toolbar Search must have a distinct VoiceOver name")
+        precondition((searchField.accessibilityValue() as? String)?.contains("Scope: Today") == true, "Toolbar Search must expose current area scope")
+        precondition((searchKindPopup.accessibilityValue() as? String) == "All types", "Search type picker must default to All types")
 
         let identifiers = Set(toolbar.items.map(\.itemIdentifier.rawValue))
         [
@@ -1036,7 +1055,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         precondition(!todayWorkbenchView.isHidden, "Today must use the Structured Workbench")
         stateStore.state.select(.meetings)
         view.layoutSubtreeIfNeeded()
+        meetingManagementView.validateBrowserFilterPresentationFixture()
+        meetingManagementView.validateLongContentOverflowFixture()
         meetingManagementView.validateCaptionLayoutFixture()
+        meetingManagementView.validateTimelineSelectionFixture()
         meetingManagementView.validateAudioTransportFixture()
         let meetingTop = meetingManagementView.convert(NSPoint(x: 0, y: meetingManagementView.bounds.height), to: view).y
         let detailTop = detailContainer.convert(.zero, to: view).y
@@ -1263,7 +1285,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             compactSearchField.target = self
             compactSearchField.action = #selector(compactSearchChanged(_:))
             compactSearchField.delegate = self
-            compactSearchField.setAccessibilityLabel("Area Search")
+            compactSearchField.placeholderString = "Search"
+            compactSearchField.setAccessibilityLabel("Search")
+            compactSearchField.setAccessibilityHelp("Search indexed results in the current area. Use the toolbar result type menu to narrow by type when visible.")
+            updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
             let controller = NSViewController()
             controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
             compactSearchField.frame = NSRect(x: 12, y: 12, width: 296, height: 28)
@@ -1334,6 +1359,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     }
 
     @objc private func searchKindChanged(_ sender: NSPopUpButton) {
+        updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
         stateStore.refresh()
     }
 

@@ -6,11 +6,11 @@ import StillmatterTranscriptionRuntime
 #endif
 
 private final class DiagnosticRowViews {
-    let statusLabel: NSTextField
+    let statusLabel: GraphiteFocusStatusLabel
     let detailLabel: NSTextField
     let actionButton: NSButton?
 
-    init(statusLabel: NSTextField, detailLabel: NSTextField, actionButton: NSButton?) {
+    init(statusLabel: GraphiteFocusStatusLabel, detailLabel: NSTextField, actionButton: NSButton?) {
         self.statusLabel = statusLabel
         self.detailLabel = detailLabel
         self.actionButton = actionButton
@@ -246,8 +246,9 @@ final class SettingsFormView: NSView, NSTextFieldDelegate {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
-        let statusLabel = NSTextField(labelWithString: "Checking…")
-        statusLabel.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        let statusLabel = GraphiteFocusStatusLabel()
+        statusLabel.setStatus("Checking", meaning: .informational, colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+        statusLabel.widthAnchor.constraint(equalToConstant: 130).isActive = true
 
         let detailLabel = NSTextField(wrappingLabelWithString: "")
         detailLabel.textColor = .secondaryLabelColor
@@ -418,8 +419,7 @@ final class SettingsFormView: NSView, NSTextFieldDelegate {
 
     private func renderDiagnosticItem(_ item: DiagnosticItem) {
         guard let row = diagnosticRows[item.id] else { return }
-        row.statusLabel.stringValue = statusText(item.status)
-        row.statusLabel.textColor = statusColor(item.status)
+        row.statusLabel.setStatus(statusText(item.status), meaning: statusMeaning(item.status), colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
         let affected = item.affectedFeatures.isEmpty
             ? ""
             : " Affects: \(item.affectedFeatures.joined(separator: ", "))."
@@ -430,20 +430,19 @@ final class SettingsFormView: NSView, NSTextFieldDelegate {
 
     private func statusText(_ status: DiagnosticStatus) -> String {
         switch status {
-        case .granted: return "✓ Granted"
-        case .missing: return "! Missing"
-        case .unavailable: return "× Unavailable"
-        case .notConfigured: return "○ Not set"
-        case .unknown: return "? Unknown"
+        case .granted: return "Granted"
+        case .missing: return "Missing"
+        case .unavailable: return "Unavailable"
+        case .notConfigured: return "Not set"
+        case .unknown: return "Unknown"
         }
     }
 
-    private func statusColor(_ status: DiagnosticStatus) -> NSColor {
-        let colors = GraphiteFocusPresentation.Colors(environment: .system(window: window))
+    private func statusMeaning(_ status: DiagnosticStatus) -> GraphiteFocusStatusMeaning {
         switch status {
-        case .granted: return colors.success
-        case .missing, .unavailable: return colors.destructive
-        case .notConfigured, .unknown: return colors.textSecondary
+        case .granted: return .success
+        case .missing: return .destructive
+        case .unavailable, .notConfigured, .unknown: return .informational
         }
     }
 
@@ -692,7 +691,7 @@ final class SettingsFormView: NSView, NSTextFieldDelegate {
         endOfWeekTimeField.stringValue = originalEndOfWeek
 
         let statuses: [DiagnosticStatus] = [.granted, .missing, .unavailable, .notConfigured, .unknown]
-        precondition(statuses.allSatisfy { statusText($0).contains(where: { "✓!×○?".contains($0) }) }, "Every diagnostic status must include a non-color symbol")
+        precondition(statuses.allSatisfy { !statusText($0).isEmpty && !statusMeaning($0).symbol.isEmpty }, "Every diagnostic status must include a non-color symbol")
         renderDiagnosticItem(DiagnosticItem(
             id: "pi",
             title: "Pi CLI detection",
