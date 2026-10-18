@@ -18,8 +18,31 @@ public struct MeetingJobPresentation: Equatable, Identifiable { public let jobID
     public var id: String { jobID }
     public init(jobID: String, title: String, status: JobStatus, stage: String?, error: String?, attemptCount: Int = 0, retryReason: String? = nil) { self.jobID=jobID; self.title=title; self.status=status; self.stage=stage; self.error=error; self.attemptCount=attemptCount; self.retryReason=retryReason }
 }
-public struct MeetingCitation: Equatable { public let segmentID: String; public let startSeconds: Double; public let endSeconds: Double; public let seekSeconds: Double?
-    public init(segmentID: String, startSeconds: Double, endSeconds: Double, seekSeconds: Double? = nil) { self.segmentID=segmentID; self.startSeconds=startSeconds; self.endSeconds=endSeconds; self.seekSeconds=seekSeconds }
+public struct MeetingCitation: Equatable {
+    public let segmentID: String
+    public let startSeconds: Double
+    public let endSeconds: Double
+    public let seekSeconds: Double?
+
+    public init(segmentID: String, startSeconds: Double, endSeconds: Double, seekSeconds: Double? = nil) {
+        self.segmentID = segmentID
+        self.startSeconds = startSeconds
+        self.endSeconds = endSeconds
+        self.seekSeconds = seekSeconds
+    }
+
+    public func matches(_ segment: MeetingTranscriptSegment) -> Bool {
+        segment.id == segmentID && startSeconds.isFinite && endSeconds.isFinite &&
+            abs(segment.startSeconds - startSeconds) < 0.001 &&
+            abs(segment.endSeconds - endSeconds) < 0.001
+    }
+
+    public func validatedSeekSeconds(playbackDuration: Double?) -> Double? {
+        guard let seekSeconds, seekSeconds.isFinite, seekSeconds >= 0,
+              let playbackDuration, playbackDuration.isFinite,
+              seekSeconds <= playbackDuration else { return nil }
+        return seekSeconds
+    }
 }
 public struct MeetingCitedOutcome: Equatable { public let text: String; public let citations: [MeetingCitation]
     public init(text: String, citations: [MeetingCitation]) { self.text = text; self.citations = citations }

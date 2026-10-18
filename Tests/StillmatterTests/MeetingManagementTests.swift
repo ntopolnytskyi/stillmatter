@@ -4,6 +4,19 @@ import AVFoundation
 @testable import StillmatterCore
 
 final class MeetingManagementTests: XCTestCase {
+    func testMeetingCitationOwnsTranscriptMatchingAndBoundedSeekValidation() {
+        let segment = MeetingTranscriptSegment(id: "segment-1", startSeconds: 12, endSeconds: 15,
+            track: "microphone", speaker: "Me", text: "Send the draft", seekSeconds: 12)
+        let citation = MeetingCitation(segmentID: "segment-1", startSeconds: 12,
+                                      endSeconds: 15, seekSeconds: 12)
+
+        XCTAssertTrue(citation.matches(segment))
+        XCTAssertEqual(citation.validatedSeekSeconds(playbackDuration: 20), 12)
+        XCTAssertNil(citation.validatedSeekSeconds(playbackDuration: 10))
+        XCTAssertFalse(MeetingCitation(segmentID: "other", startSeconds: 12, endSeconds: 15).matches(segment))
+        XCTAssertFalse(MeetingCitation(segmentID: "segment-1", startSeconds: .nan, endSeconds: 15).matches(segment))
+    }
+
     func testActionDraftSaveDoesNotAcceptOrCreateTodoAndSurvivesRequeue() throws {
         let fixture = try Fixture()
         let path = "Meetings/draft/meeting.md"
