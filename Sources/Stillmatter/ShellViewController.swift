@@ -999,11 +999,12 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         requestedWindowWidth = width
         installToolbarIfNeeded()
         let toolbarSearchHadFocus = searchControlHasFocus(searchField)
-        let compactSearchHadFocus = searchControlHasFocus(compactSearchField)
-            || view.window?.firstResponder === compactSearchKindPopup
+        let toolbarTypeHadFocus = view.window?.firstResponder === searchKindPopup
+        let compactFieldHadFocus = searchControlHasFocus(compactSearchField)
+        let compactTypeHadFocus = view.window?.firstResponder === compactSearchKindPopup
         if toolbarSearchHadFocus && stateStore.state.searchText != searchField.stringValue {
             stateStore.state.searchText = searchField.stringValue
-        } else if compactSearchHadFocus && stateStore.state.searchText != compactSearchField.stringValue {
+        } else if compactFieldHadFocus && stateStore.state.searchText != compactSearchField.stringValue {
             stateStore.state.searchText = compactSearchField.stringValue
         }
         let compactedIdentifiers: Set<NSToolbarItem.Identifier> = [
@@ -1018,7 +1019,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 toolbar.removeItem(at: entry.index)
             }
             toolbar.autosavesConfiguration = true
-            if toolbarSearchHadFocus { focusAreaSearch(nil) }
+            if toolbarSearchHadFocus || toolbarTypeHadFocus {
+                focusAreaSearch(nil)
+                if toolbarTypeHadFocus { compactSearchField.window?.makeFirstResponder(compactSearchKindPopup) }
+            }
         } else if width >= 900 && !toolbarItemsCompactedForWidth.isEmpty {
             toolbar.autosavesConfiguration = false
             for entry in toolbarItemsCompactedForWidth.sorted(by: { $0.index < $1.index }) {
@@ -1026,12 +1030,17 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             }
             toolbar.autosavesConfiguration = true
             toolbarItemsCompactedForWidth = []
-            if compactSearchHadFocus {
+            if (compactFieldHadFocus || compactTypeHadFocus),
+               toolbar.items.contains(where: { $0.itemIdentifier == .areaSearch }) {
                 compactSearchPopover.close()
                 view.window?.toolbar?.validateVisibleItems()
                 view.window?.layoutIfNeeded()
-                view.window?.makeFirstResponder(searchField)
-                DispatchQueue.main.async { [weak self] in self?.view.window?.makeFirstResponder(self?.searchField) }
+                let target = compactTypeHadFocus ? searchKindPopup : searchField
+                view.window?.makeFirstResponder(target)
+                DispatchQueue.main.async { [weak self, weak target] in
+                    guard let self, let target else { return }
+                    self.view.window?.makeFirstResponder(target)
+                }
             }
         }
         // Collapse target regions before AppKit evaluates their fitting widths.
@@ -1207,6 +1216,15 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         prepareForWindowResize(to: 720)
         precondition(compactSearchPopover.isShown && searchControlHasFocus(compactSearchField),
                      "Recompacting must preserve Search focus")
+        prepareForWindowResize(to: 1200)
+        precondition(window.makeFirstResponder(searchKindPopup), "Toolbar Search type must accept keyboard focus")
+        prepareForWindowResize(to: 720)
+        precondition(compactSearchPopover.isShown && window.firstResponder === compactSearchKindPopup,
+                     "Compacting must transfer focus from the toolbar type to the compact type picker")
+        prepareForWindowResize(to: 1200)
+        precondition(window.firstResponder === searchKindPopup,
+                     "Expanding must return focus to the toolbar type picker")
+        prepareForWindowResize(to: 720)
         compactSearchPopover.close()
         precondition(abs(view.bounds.width - 720) < 2, "Compact Area Search must not force the window wider")
         precondition(workspaceSplitView.arrangedSubviews.count == 1 && workspaceSplitView.arrangedSubviews[0] === contentListContainer, "Narrow layout must initially present the list")
