@@ -624,6 +624,8 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
                 rows[2].titleField.currentEditor() === window.firstResponder,
                 "Incoming proposals must not steal focus from an active title edit"
             )
+            precondition(rows[0].titleField.stringValue == "Edited launch follow-up" && rows[0].selection.state == .on,
+                         "Refresh must preserve edits and selection")
             rebuildRows(Array(many.dropFirst()))
             focusAfterRemoval(of: many[0].id, removedIndex: 0)
             precondition(window.firstResponder === rows[0].selection, "After review removes a proposal, focus must move to the next proposal")
@@ -633,6 +635,9 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
                          "The review section and empty-state focus target must remain visible after the last removal")
             precondition(window.firstResponder === emptyStateLabel, "After the last reviewed proposal disappears, focus must stay on the review empty state")
             rebuildRows(many)
+            rows[0].titleField.stringValue = "Edited launch follow-up"
+            rows[0].selection.state = .on
+            updateSelectionControls()
         }
         precondition(
             rows.allSatisfy { $0.container.frame.height >= 80 },
@@ -650,7 +655,6 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
                 "Every proposal editor and action must stay inside its own interactive row"
             )
         }
-        precondition(rows[0].titleField.stringValue == "Edited launch follow-up" && rows[0].selection.state == .on, "Refresh must preserve edits and selection")
         rows[1].selection.state = .on
         updateSelectionControls()
         precondition(mergeSelectedButton.isEnabled && selectionLabel.stringValue == "2 proposals selected", "Many-proposal fixture must update batch controls")
@@ -685,6 +689,16 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
 
 private final class ProposalReviewStaticText: NSTextField {
     override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        setAccessibilityFocused(true)
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        setAccessibilityFocused(false)
+        return true
+    }
 }
 
 private final class ProposalReviewButton: NSButton {
