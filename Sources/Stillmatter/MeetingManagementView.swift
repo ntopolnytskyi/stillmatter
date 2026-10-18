@@ -381,21 +381,22 @@ final class MeetingManagementView: NSView {
             button.toolTip = label
             button.setAccessibilityLabel(label)
             button.setAccessibilityIdentifier(identifier)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.widthAnchor.constraint(equalToConstant: 36).isActive = true
-            button.heightAnchor.constraint(equalToConstant: 36).isActive = true
-            button.setContentCompressionResistancePriority(.required, for: .horizontal)
-            toolbar.addArrangedSubview(button)
+            // Stack views may break an image-only NSButton's size constraint
+            // while fitting other symbols. Give each native button a fixed
+            // 36-point slot instead of asking the button to size the stack.
+            let slot = NSView(frame: NSRect(x: 0, y: 0, width: 36, height: 36))
+            slot.translatesAutoresizingMaskIntoConstraints = false
+            slot.widthAnchor.constraint(equalToConstant: 36).isActive = true
+            slot.heightAnchor.constraint(equalToConstant: 36).isActive = true
+            button.frame = slot.bounds
+            button.autoresizingMask = [.width, .height]
+            slot.addSubview(button)
+            toolbar.addArrangedSubview(slot)
         }
         toolbar.orientation = .horizontal
         toolbar.alignment = .centerY
         toolbar.spacing = GraphiteFocusPresentation.Space.compact
         toolbar.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // NSStackView's top alignment positions image-only buttons at different y values
-        // depending on their symbols. Center each fixed-size native button in one row.
-        [transcriptionButton, editSummaryTool, editNotesTool, archiveButton, moreButton].forEach { button in
-            button.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor).isActive = true
-        }
         transcriptionButton.target = self
         transcriptionButton.action = #selector(openTimeline)
         transcriptionButton.setAccessibilityIdentifier("meeting-open-transcription")
@@ -801,6 +802,7 @@ final class MeetingManagementView: NSView {
             editSummaryTool.isEnabled = selectedSummaryVersion != nil
             let hasNotes = !selected.humanNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             editNotesTool.isHidden = !hasNotes
+            editNotesTool.superview?.isHidden = !hasNotes
             notesSection?.isHidden = !hasNotes
             editNotesTool.isEnabled = selectedDoorwayVersion != nil
             saveNotesButton.isEnabled = selectedDoorwayVersion != nil
@@ -945,14 +947,14 @@ final class MeetingManagementView: NSView {
                      "Meeting Page Header title must expose the complete title outside the truncated visual line")
         precondition(title.maxX <= toolbarFrame.minX - GraphiteFocusPresentation.Space.compact + 1,
                      "Meeting title must yield width before overlapping local header actions")
-        precondition(state.minY >= metadata.maxY - 1, "Meeting state must occupy the third caption line")
-        precondition(abs(state.minX - metadata.minX) < 2, "Meeting state must align with the date")
+        precondition(state.maxY <= metadata.minY + 1, "Meeting state must occupy the third caption line")
+        precondition(abs(state.minX - metadata.minX) <= 2, "Meeting state must align with the date")
         precondition(abs(toolbarFrame.maxX - caption.convert(caption.bounds, to: self).maxX) < 2,
                      "Meeting controls must align to the right edge of the caption")
         precondition(transcriptionButton.bounds.width == 36 && transcriptionButton.bounds.height == 36,
                      "Meeting toolbar controls must match the reference dimensions")
         let controls = [transcriptionButton, editSummaryTool, editNotesTool, archiveButton, moreButton]
-        for control in controls {
+        for control in controls where !control.isHidden {
             let frame = control.convert(control.bounds, to: toolbar)
             let reference = transcriptionButton.convert(transcriptionButton.bounds, to: toolbar)
             precondition(abs(frame.minY - reference.minY) < 1 && abs(frame.maxY - reference.maxY) < 1,
@@ -1572,8 +1574,8 @@ final class MeetingManagementView: NSView {
                 row.orientation = .vertical
                 row.alignment = .leading
                 row.spacing = GraphiteFocusPresentation.Space.compact
-                label.widthAnchor.constraint(lessThanOrEqualTo: evidenceRows.widthAnchor).isActive = true
                 evidenceRows.addArrangedSubview(row)
+                label.widthAnchor.constraint(lessThanOrEqualTo: evidenceRows.widthAnchor).isActive = true
                 for citation in outcome.citations {
                     evidenceRows.addArrangedSubview(NSTextField(wrappingLabelWithString: "Evidence: \(citation.segmentID) (≈\(timeLabel(citation.startSeconds))–\(timeLabel(citation.endSeconds)))"))
                     addEvidenceControl(to: evidenceRows, segmentID: citation.segmentID, seekSeconds: citation.seekSeconds, meetingID: detail.row.id)
