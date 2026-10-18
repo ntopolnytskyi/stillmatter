@@ -4,6 +4,19 @@ import AVFoundation
 @testable import StillmatterCore
 
 final class MeetingManagementTests: XCTestCase {
+    func testMeetingCitationOwnsTranscriptMatchingAndBoundedSeekValidation() {
+        let segment = MeetingTranscriptSegment(id: "segment-1", startSeconds: 12, endSeconds: 15,
+            track: "microphone", speaker: "Me", text: "Send the draft", seekSeconds: 12)
+        let citation = MeetingCitation(segmentID: "segment-1", startSeconds: 12,
+                                      endSeconds: 15, seekSeconds: 12)
+
+        XCTAssertTrue(citation.matches(segment))
+        XCTAssertEqual(citation.validatedSeekSeconds(playbackDuration: 20), 12)
+        XCTAssertNil(citation.validatedSeekSeconds(playbackDuration: 10))
+        XCTAssertFalse(MeetingCitation(segmentID: "other", startSeconds: 12, endSeconds: 15).matches(segment))
+        XCTAssertFalse(MeetingCitation(segmentID: "segment-1", startSeconds: .nan, endSeconds: 15).matches(segment))
+    }
+
     func testActionDraftSaveDoesNotAcceptOrCreateTodoAndSurvivesRequeue() throws {
         let fixture = try Fixture()
         let path = "Meetings/draft/meeting.md"
@@ -825,13 +838,15 @@ final class MeetingManagementTests: XCTestCase {
     }
 
     func testFailedIndexRebuildRollsBackRenameAndOperationalReferences() throws {
+        for sharedDatabase in [false, true] {
         let fixture = try Fixture()
         let old = "Meetings/2026/01/01/09-10-old/meeting.md"
         try fixture.write(old, "---\ntitle: Old\ncapture_session_id: index-failure\n---\n# Old\n")
         try fixture.write("Projects/link.md", "[[Meetings/2026/01/01/09-10-old/meeting|ref]]")
         let inbox = try TasksInbox(databaseURL: fixture.root.appendingPathComponent("Support/rename-inbox.sqlite"))
         try inbox.requireTitleReview(id: "meeting-title:index-failure", title: "Old", sourceRef: old)
-        let store = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/rename-jobs.sqlite"))
+        let store = try JobStore(databaseURL: fixture.root.appendingPathComponent(
+            sharedDatabase ? "Support/rename-inbox.sqlite" : "Support/rename-jobs.sqlite"))
         let manifest = JobManifest(type: "meeting.transcription", title: "Old", executionClass: .heavy,
             stages: [JobStageDefinition(id: "run", title: "Run")],
             sourceArtifacts: [JobArtifactReference(relativePath: old, role: "meeting")])
@@ -859,6 +874,7 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try store.job(id: "old-job")?.manifest.sourceArtifacts.first?.relativePath, old)
         XCTAssertTrue(String(decoding: try fixture.vault.readMarkdown(relativePath: "Projects/link.md").data, as: UTF8.self)
             .contains("09-10-old/meeting"))
+        }
     }
 
     func testRenameRejectsCollisionAndStaleVersionWithoutChangingReferences() throws {
@@ -938,7 +954,8 @@ final class MeetingManagementTests: XCTestCase {
         }
         let vault = WorkspaceVault(workspaceRootURL: URL(fileURLWithPath: root),
             appSupportRootURL: FileManager.default.temporaryDirectory.appendingPathComponent("StillmatterReplay-\(UUID().uuidString)"))
-        let service = MeetingManagementService(vault: vault)
+        let service = MeetingManagementService(vault: vault,
+            recordingMediaURL: ProcessInfo.processInfo.environment["STILLMATTER_REPLAY_MEDIA_ROOT"].map { URL(fileURLWithPath: $0) })
         let matching = try service.list().filter { row in
             guard let text = try? String(data: vault.readMarkdown(relativePath: row.meetingRelativePath).data, encoding: .utf8) else { return false }
             return text.components(separatedBy: .newlines).contains { $0.hasPrefix("recording_bundle:") && $0.contains(recordingID) }
@@ -1132,6 +1149,50 @@ final class MeetingManagementTests: XCTestCase {
         let missing = try service.detail(for: "source").playback
         XCTAssertEqual(missing.capability, .unavailable)
         XCTAssertTrue(missing.message.contains("Recording Bundle unavailable"))
+    }
+
+    func testRelocatedConfiguredMediaRestoresVerifiedPlaybackWithoutChangingDoorway() throws {
+        let fixture = try Fixture()
+        let original = try makePlaybackBundle(in: fixture, id: "relocated")
+        let doorway = try fixture.vault.readMarkdown(relativePath: "Meetings/relocated/meeting.md").data
+        let media = fixture.root.appendingPathComponent("NewMedia/2026")
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        let moved = media.appendingPathComponent("relocated")
+        try FileManager.default.moveItem(at: original.deletingLastPathComponent(), to: moved)
+        let withoutRecovery = try MeetingManagementService(vault: fixture.vault).detail(for: "relocated").playback
+        XCTAssertEqual(withoutRecovery.capability, .unavailable)
+        let service = MeetingManagementService(vault: fixture.vault, recordingMediaURL: fixture.root.appendingPathComponent("NewMedia"))
+        let recovered = try service.detail(for: "relocated").playback
+        XCTAssertGreaterThan(try XCTUnwrap(service.list().first?.durationSeconds), 0)
+        XCTAssertEqual(recovered.capability, .microphoneOnly, recovered.message)
+        XCTAssertGreaterThan(recovered.durationSeconds, 0)
+        XCTAssertEqual(recovered.microphonePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path },
+                       moved.appendingPathComponent("mic.caf").resolvingSymlinksInPath().path)
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: "Meetings/relocated/meeting.md").data, doorway)
+        try Data("tampered".utf8).write(to: moved.appendingPathComponent("mic.caf"))
+        XCTAssertEqual(try service.detail(for: "relocated").playback.capability, .unavailable,
+                       "A relocated track with different bytes must not be played")
+    }
+
+    func testRelocationRefusesAmbiguousOrForeignSidecars() throws {
+        let fixture = try Fixture()
+        let original = try makePlaybackBundle(in: fixture, id: "ambiguous")
+        let media = fixture.root.appendingPathComponent("NewMedia")
+        for year in ["2025", "2026"] {
+            let parent = media.appendingPathComponent(year)
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: original.deletingLastPathComponent(), to: parent.appendingPathComponent("ambiguous"))
+        }
+        try FileManager.default.removeItem(at: original.deletingLastPathComponent())
+        let service = MeetingManagementService(vault: fixture.vault, recordingMediaURL: media)
+        XCTAssertEqual(try service.detail(for: "ambiguous").playback.capability, .unavailable)
+        try FileManager.default.removeItem(at: media.appendingPathComponent("2025/ambiguous"))
+        XCTAssertEqual(try service.detail(for: "ambiguous").playback.capability, .microphoneOnly)
+        let sidecar = media.appendingPathComponent("2026/ambiguous/recording-bundle.json")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: sidecar)) as? [String: Any])
+        json["meetingRelativePath"] = "Meetings/foreign/meeting.md"
+        try JSONSerialization.data(withJSONObject: json).write(to: sidecar)
+        XCTAssertEqual(try service.detail(for: "ambiguous").playback.capability, .unavailable)
     }
 
     private func makePlaybackBundle(in fixture: Fixture, id: String) throws -> URL {

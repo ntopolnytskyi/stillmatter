@@ -30,8 +30,11 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
     private let listStack = NSStackView()
     private let selectAllCheckbox = ProposalReviewButton(checkboxWithTitle: "Select All", target: nil, action: nil)
     private let selectionLabel = NSTextField(labelWithString: "No proposals selected")
+    private let successLabel = GraphiteFocusStatusLabel()
     private let failureLabel = GraphiteFocusStatusLabel()
+    private let emptyStateLabel = ProposalReviewStaticText(wrappingLabelWithString: "No pending Action Item proposals. Reviewed items leave this section; focus stays here so keyboard and VoiceOver users keep their place.")
     private let acceptSelectedButton = ProposalReviewButton(title: "Accept Selected", target: nil, action: nil)
+    private var successDismissal: DispatchWorkItem?
     private let mergeSelectedButton = ProposalReviewButton(title: "Merge Selected", target: nil, action: nil)
     private var rows: [ProposalRow] = []
 
@@ -63,9 +66,10 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
             let proposals = try inbox.items(category: .review)
                 .filter { $0.kind == .proposal }
                 .compactMap { try inbox.pendingProposal(id: $0.id) }
-            isHidden = proposals.isEmpty
+            // Keep the section present after the last review so its focusable
+            // empty state can receive keyboard and VoiceOver focus.
+            isHidden = false
             rebuildRows(proposals)
-            clearFailure()
         } catch {
             isHidden = false
             rebuildRows([])
@@ -106,7 +110,15 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
         selectionBar.alignment = .centerY
         selectionBar.spacing = GraphiteFocusPresentation.Space.dense
 
+        successLabel.isHidden = true
         failureLabel.isHidden = true
+        emptyStateLabel.isHidden = true
+        emptyStateLabel.font = GraphiteFocusPresentation.Typography.body
+        emptyStateLabel.textColor = colors.textSecondary
+        emptyStateLabel.setAccessibilityElement(true)
+        emptyStateLabel.setAccessibilityRole(.staticText)
+        emptyStateLabel.setAccessibilityLabel("No pending Action Item proposals")
+        emptyStateLabel.setAccessibilityValue(emptyStateLabel.stringValue)
 
         listStack.orientation = .vertical
         listStack.alignment = .width
@@ -131,7 +143,7 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
         actionBar.alignment = .centerY
         actionBar.spacing = GraphiteFocusPresentation.Space.compact
 
-        let layout = NSStackView(views: [headingRow, guidance, selectionBar, failureLabel, listStack, actionBar])
+        let layout = NSStackView(views: [headingRow, guidance, selectionBar, successLabel, failureLabel, emptyStateLabel, listStack, actionBar])
         layout.orientation = .vertical
         layout.alignment = .width
         layout.spacing = GraphiteFocusPresentation.Space.compact
@@ -180,6 +192,7 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
             configure(row: row, index: index)
             listStack.addArrangedSubview(row.container)
         }
+        emptyStateLabel.isHidden = !rows.isEmpty
         updateSelectionControls()
         configureKeyboardTraversal()
         if let focusedID = focusedID, let focusedControl = focusedControl,
@@ -340,7 +353,7 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
     @objc private func acceptOne(_ sender: NSButton) {
         guard rows.indices.contains(sender.tag) else { return }
         let row = rows[sender.tag]
-        performReview { reviewer, version in
+        performReview(success: "Added ‘\(row.titleField.stringValue)’ to Todos.", removingFocusedID: row.proposal.id, removedIndex: sender.tag) { reviewer, version in
             _ = try reviewer.accept(
                 proposalID: row.proposal.id,
                 editedTitle: row.titleField.stringValue,
@@ -350,13 +363,17 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func acceptSelected() {
-        performReview { reviewer, version in
-            let selected = self.selectedRows
-            guard !selected.isEmpty else { return }
-            if selected.count == 1, let row = selected.first {
+        let selected = selectedRows
+        guard !selected.isEmpty, let first = selected.first,
+              let firstIndex = rows.firstIndex(where: { $0 === first }) else { return }
+        let success = selected.count == 1
+            ? "Added ‘\(first.titleField.stringValue)’ to Todos."
+            : "Added \(selected.count) proposals to Todos."
+        performReview(success: success, removingFocusedID: first.proposal.id, removedIndex: firstIndex) { reviewer, version in
+            if selected.count == 1 {
                 _ = try reviewer.accept(
-                    proposalID: row.proposal.id,
-                    editedTitle: row.titleField.stringValue,
+                    proposalID: first.proposal.id,
+                    editedTitle: first.titleField.stringValue,
                     expectedTodoVersion: version
                 )
             } else {
@@ -369,9 +386,10 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func mergeSelected() {
-        performReview { reviewer, version in
-            let selected = self.selectedRows
-            guard selected.count >= 2, let first = selected.first else { return }
+        let selected = selectedRows
+        guard selected.count >= 2, let first = selected.first,
+              let firstIndex = rows.firstIndex(where: { $0 === first }) else { return }
+        performReview(success: "Merged \(selected.count) proposals into ‘\(first.titleField.stringValue)’ in Todos.", removingFocusedID: first.proposal.id, removedIndex: firstIndex) { reviewer, version in
             _ = try reviewer.merge(
                 proposalIDs: selected.map { $0.proposal.id },
                 title: first.titleField.stringValue,
@@ -381,13 +399,13 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func markReferenceOnly(_ sender: NSButton) {
-        performStateReview(rowIndex: sender.tag) { reviewer, id in
+        performStateReview(rowIndex: sender.tag, successPrefix: "Kept as reference only") { reviewer, id in
             try reviewer.markReferenceOnly(proposalID: id)
         }
     }
 
     @objc private func dismissOne(_ sender: NSButton) {
-        performStateReview(rowIndex: sender.tag) { reviewer, id in
+        performStateReview(rowIndex: sender.tag, successPrefix: "Dismissed proposal") { reviewer, id in
             try reviewer.dismiss(proposalID: id)
         }
     }
@@ -410,7 +428,12 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
         selectAllCheckbox.isEnabled = !rows.isEmpty
     }
 
-    private func performReview(_ action: (ActionItemProposalReviewer, WorkspaceFileVersion) throws -> Void) {
+    private func performReview(
+        success message: String,
+        removingFocusedID removedID: String,
+        removedIndex: Int,
+        action: (ActionItemProposalReviewer, WorkspaceFileVersion) throws -> Void
+    ) {
         let previousResponder = window?.firstResponder
         do {
             let (reviewer, vault) = try makeReviewer()
@@ -419,7 +442,9 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
             }
             try action(reviewer, version)
             clearFailure()
+            setSuccess(message)
             onChange()
+            focusAfterRemoval(of: removedID, removedIndex: removedIndex)
         } catch {
             showError(error, restoring: previousResponder)
         }
@@ -427,15 +452,19 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
 
     private func performStateReview(
         rowIndex: Int,
+        successPrefix: String,
         action: (ActionItemProposalReviewer, String) throws -> Void
     ) {
         guard rows.indices.contains(rowIndex) else { return }
         let previousResponder = window?.firstResponder
+        let removed = rows[rowIndex]
         do {
             let (reviewer, _) = try makeReviewer()
-            try action(reviewer, rows[rowIndex].proposal.id)
+            try action(reviewer, removed.proposal.id)
             clearFailure()
+            setSuccess("\(successPrefix): ‘\(removed.titleField.stringValue)’.")
             onChange()
+            focusAfterRemoval(of: removed.proposal.id, removedIndex: rowIndex)
         } catch {
             showError(error, restoring: previousResponder)
         }
@@ -455,25 +484,48 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
         failureLabel.stringValue = ""
     }
 
+    private func setSuccess(_ message: String) {
+        successDismissal?.cancel()
+        successLabel.setStatus(message, meaning: .success, colors: colors)
+        successLabel.isHidden = false
+        NSAccessibility.post(
+            element: successLabel,
+            notification: .announcementRequested,
+            userInfo: [.announcement: message]
+        )
+        let dismissal = DispatchWorkItem { [weak self] in self?.successLabel.isHidden = true }
+        successDismissal = dismissal
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: dismissal)
+    }
+
     private func setFailure(_ message: String) {
+        successDismissal?.cancel()
+        successLabel.isHidden = true
         failureLabel.setStatus(message, meaning: .destructive, colors: colors)
         failureLabel.isHidden = false
     }
 
     private func showError(_ error: Error, restoring responder: NSResponder?) {
-        let message = "Review failed. Your selection and edits were preserved. \(error)"
-        setFailure(message)
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Could not review Action Item"
-        alert.informativeText = "\(error)\n\nNothing was removed from this review. Correct the problem and try again."
-        alert.addButton(withTitle: "OK")
-        guard let window = window else {
-            alert.runModal()
-            return
-        }
-        alert.beginSheetModal(for: window) { [weak window] _ in
-            if let responder = responder { window?.makeFirstResponder(responder) }
+        setFailure("Review failed. The proposal was not changed; your selection and edits were preserved. Try again after correcting the problem. \(error)")
+        if let responder = responder { window?.makeFirstResponder(responder) }
+        NSAccessibility.post(
+            element: failureLabel,
+            notification: .announcementRequested,
+            userInfo: [.announcement: failureLabel.statusText]
+        )
+    }
+
+    private func focusAfterRemoval(of removedID: String, removedIndex: Int) {
+        guard rows.first(where: { $0.proposal.id == removedID }) == nil else { return }
+        if rows.indices.contains(removedIndex) {
+            window?.makeFirstResponder(rows[removedIndex].selection)
+            rows[removedIndex].selection.scrollToVisible(rows[removedIndex].selection.bounds)
+        } else if let last = rows.last {
+            window?.makeFirstResponder(last.selection)
+            last.selection.scrollToVisible(last.selection.bounds)
+        } else {
+            window?.makeFirstResponder(emptyStateLabel)
+            NSAccessibility.post(element: emptyStateLabel, notification: .focusedUIElementChanged)
         }
     }
 
@@ -572,7 +624,20 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
                 rows[2].titleField.currentEditor() === window.firstResponder,
                 "Incoming proposals must not steal focus from an active title edit"
             )
+            precondition(rows[0].titleField.stringValue == "Edited launch follow-up" && rows[0].selection.state == .on,
+                         "Refresh must preserve edits and selection")
+            rebuildRows(Array(many.dropFirst()))
+            focusAfterRemoval(of: many[0].id, removedIndex: 0)
+            precondition(window.firstResponder === rows[0].selection, "After review removes a proposal, focus must move to the next proposal")
+            rebuildRows([])
+            focusAfterRemoval(of: many[1].id, removedIndex: 0)
+            precondition(!isHidden && !emptyStateLabel.isHidden,
+                         "The review section and empty-state focus target must remain visible after the last removal")
+            precondition(window.firstResponder === emptyStateLabel, "After the last reviewed proposal disappears, focus must stay on the review empty state")
             rebuildRows(many)
+            rows[0].titleField.stringValue = "Edited launch follow-up"
+            rows[0].selection.state = .on
+            updateSelectionControls()
         }
         precondition(
             rows.allSatisfy { $0.container.frame.height >= 80 },
@@ -590,7 +655,6 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
                 "Every proposal editor and action must stay inside its own interactive row"
             )
         }
-        precondition(rows[0].titleField.stringValue == "Edited launch follow-up" && rows[0].selection.state == .on, "Refresh must preserve edits and selection")
         rows[1].selection.state = .on
         updateSelectionControls()
         precondition(mergeSelectedButton.isEnabled && selectionLabel.stringValue == "2 proposals selected", "Many-proposal fixture must update batch controls")
@@ -599,8 +663,13 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
         layoutSubtreeIfNeeded()
         precondition(rows.allSatisfy { $0.container.frame.maxX <= listStack.bounds.maxX + 1 }, "Narrow proposal rows must not overflow the collection")
 
-        setFailure("Review failed — fixture remains actionable")
-        precondition(!failureLabel.isHidden && failureLabel.meaning == .destructive, "Failed-review fixture must retain static error meaning")
+        setFailure("Review failed. The proposal was not changed; fixture remains actionable")
+        precondition(
+            !failureLabel.isHidden && failureLabel.meaning == .destructive && failureLabel.statusText.contains("not changed"),
+            "Failed-review fixture must retain static error meaning and say the proposal was not changed"
+        )
+        precondition(failureLabel.maximumNumberOfLines == 0 && failureLabel.lineBreakMode == .byWordWrapping,
+                     "Failed-review details must wrap without hiding retry guidance")
 
         rebuildRows(originalProposals)
         for row in rows {
@@ -615,6 +684,20 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
             scrollView.contentView.scroll(to: originalScrollOrigin)
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
+    }
+}
+
+private final class ProposalReviewStaticText: NSTextField {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        setAccessibilityFocused(true)
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        setAccessibilityFocused(false)
+        return true
     }
 }
 

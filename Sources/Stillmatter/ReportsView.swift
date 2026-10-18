@@ -38,9 +38,9 @@ final class ReportsView: NSView {
 
     private func buildLayout() {
         symbolLabel.font = GraphiteFocusPresentation.Typography.sectionHeading
-        titleLabel.font = GraphiteFocusPresentation.Typography.sectionHeading
+        GraphiteFocusPageHeader.configureTitleLabel(titleLabel, font: GraphiteFocusPresentation.Typography.sectionHeading)
         messageLabel.font = GraphiteFocusPresentation.Typography.body
-        messageLabel.maximumNumberOfLines = 0
+        GraphiteFocusOverflow.configureWrappingText(messageLabel, fullText: "")
         actionButton.target = self
         actionButton.action = #selector(performRecoveryAction(_:))
 
@@ -81,14 +81,16 @@ final class ReportsView: NSView {
         switch state {
         case .available:
             symbolLabel.stringValue = "ⓘ"
-            titleLabel.stringValue = "Report browsing is not available yet"
+            GraphiteFocusPageHeader.setTitle("Report browsing is not available yet", on: titleLabel)
             messageLabel.stringValue = "Daily Briefs remain available from Today. Stillmatter presents a Weekly Report in a focused editable review window when one is due. A report browser and historical report discovery are not implemented yet."
+            GraphiteFocusOverflow.configureWrappingText(messageLabel, fullText: messageLabel.stringValue)
             actionButton.title = "Open Today"
             actionButton.identifier = NSUserInterfaceItemIdentifier("Reports.OpenToday")
         case let .unavailable(reason):
             symbolLabel.stringValue = "!"
-            titleLabel.stringValue = "Reports are unavailable"
+            GraphiteFocusPageHeader.setTitle("Reports are unavailable", on: titleLabel)
             messageLabel.stringValue = "\(reason) Configure the workspace, then return to Reports. Report browsing and historical discovery are not implemented yet."
+            GraphiteFocusOverflow.configureWrappingText(messageLabel, fullText: messageLabel.stringValue)
             actionButton.title = "Open Settings"
             actionButton.identifier = NSUserInterfaceItemIdentifier("Reports.OpenSettings")
         }
@@ -103,7 +105,7 @@ final class ReportsView: NSView {
         statusLabel.font = GraphiteFocusPresentation.Typography.metadata
         let explanationLabel = NSTextField(wrappingLabelWithString: explanation)
         explanationLabel.font = GraphiteFocusPresentation.Typography.metadata
-        explanationLabel.maximumNumberOfLines = 0
+        GraphiteFocusOverflow.configureWrappingText(explanationLabel, fullText: explanation)
         metadataLabels.append(contentsOf: [statusLabel, explanationLabel])
         let row = NSStackView(views: [titleLabel, statusLabel, explanationLabel])
         row.orientation = .vertical
@@ -138,6 +140,12 @@ final class ReportsView: NSView {
         precondition(actionButton.title == "Open Today", "Available Reports state must provide a useful next action")
         render(.unavailable("Choose an Stillmatter root."))
         precondition(titleLabel.stringValue == "Reports are unavailable" && actionButton.title == "Open Settings", "Unavailable Reports state must name prerequisites and recovery")
+        let longReportTitle = "Weekly Report for a deliberately long planning period title with translated-looking quarter names Планування наступного кварталу that must truncate at the tail without losing the complete title to VoiceOver"
+        GraphiteFocusPageHeader.setTitle(longReportTitle, on: titleLabel)
+        precondition(titleLabel.maximumNumberOfLines == 1 && titleLabel.lineBreakMode == .byTruncatingTail,
+                     "Reports Page Header title must be a single tail-truncated line")
+        precondition(titleLabel.toolTip == longReportTitle && titleLabel.accessibilityLabel() == longReportTitle,
+                     "Reports Page Header title must expose the complete report title")
         precondition(stateStack.accessibilityLabel()?.contains("Reports") == true, "Reports Content State must expose static accessibility meaning")
         render(stateProvider())
     }

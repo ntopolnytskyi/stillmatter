@@ -59,6 +59,9 @@ final class AppAttentionController: NSObject, UNUserNotificationCenterDelegate {
             for item in items where item.category == .attention {
                 offer(AttentionRequest(target: .inboxItem(item.id), title: item.title, kind: .attention))
             }
+            for title in items where title.kind == .titleReview && !titleEligible(title) {
+                clear(.titleReview(title.id))
+            }
             if let title = items.first(where: titleEligible) {
                 offer(AttentionRequest(target: .titleReview(title.id), title: "Review meeting title", kind: .required))
             }

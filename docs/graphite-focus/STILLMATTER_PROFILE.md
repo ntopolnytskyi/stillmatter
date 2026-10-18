@@ -17,7 +17,7 @@ Stillmatter intentionally adopts Graphite Focus's dark-only appearance. This is 
 
 ## Information Architecture
 
-The global navigation is a fixed-width 64 pt icon rail containing eight native `NSButton`s, ordered Today (default), Recording, Meetings, Tasks, Projects / Activities, Reports, Ask AI, Settings. It is flat, not visually grouped or resizable. Each 44 pt icon button has an accessible name and tooltip, retains native Tab focus and Space/Return activation, and uses a neutral selection surface with one violet symbol. There is no arrow-key traversal. A separate app icon stays anchored at the bottom, outside the scrolling destinations: a pointer double-click opens the native About window; keyboard/VoiceOver activation opens it once. About shows the bundled current version and creator/copyright notice, and is also available from the app menu. A single pointer click does nothing and does not change the selected destination. Search is Area Search in the Window Toolbar, scoped to the current destination by default. Settings, search, and relevant frequent actions remain available through menus when toolbar or sidebar chrome is hidden.
+The global navigation is a fixed-width 64 pt icon rail containing eight native `NSButton`s, ordered Today (default), Recording, Meetings, Tasks, Projects / Activities, Reports, Ask AI, Settings. It is flat, not visually grouped or resizable. Each 44 pt icon button has an accessible name and tooltip, retains native Tab focus and Space/Return activation, and uses a neutral selection surface with one violet symbol. There is no arrow-key traversal. A separate app icon stays anchored at the bottom, outside the scrolling destinations: a pointer double-click opens the native About window; keyboard/VoiceOver activation opens it once. About shows the bundled current version and creator/copyright notice, and is also available from the app menu. A single pointer click does nothing and does not change the selected destination. Search is Area Search in the Window Toolbar, visibly named “Search” and scoped to the current destination by default. Its type picker is a result-type selector that defaults to “All types”; it narrows indexed results but does not choose where to search. Meeting-browser filtering is a separate row filter named “Filter meetings” that affects only visible Meeting rows, including the selected Meeting queue and filter controls. Clearing toolbar Search and clearing Meeting-browser filters are independent. Settings, search, and relevant frequent actions remain available through menus when toolbar or sidebar chrome is hidden.
 
 ## AppKit Native Mappings
 
@@ -29,7 +29,7 @@ These mappings specialize contract roles; all unlisted roles use the contract ma
 | Global destinations | Sidebar Item | native `NSButton` icon rail | system | Eight VoiceOver-labeled buttons, tooltips, Tab navigation and activation, preserved selection |
 | About icon | Icon Button | native `NSButton` and standard About panel | system | Bottom-anchored outside navigation scroll; pointer double-click or keyboard/VoiceOver activation; app-menu About remains available |
 | Global commands | Window Toolbar | `NSToolbar` and main-menu commands | system | Search, compact recording/Job status, navigation, and few frequent actions |
-| Area Search | Search Field; Precision Ledger | `NSSearchField` plus table/list results | contextual | Visible current scope, query, kind filter, selection/preview or owning-area navigation |
+| Area Search | Search Field; Precision Ledger | `NSSearchField` plus result-type picker and table/list results | contextual | Visible current scope, query, selected result type, selection/preview or owning-area navigation; type picker defaults to All types and never changes area scope |
 | Today summary | Structured Workbench | AppKit document view and native collections | app | Semantic sections and rows; no formatted aggregate-text fallback |
 | Selection-heavy browsers | Precision Ledger | `NSSplitViewController` plus `NSTableView`/`NSOutlineView` | contextual | Meetings, Tasks, Activities, Reports, and search when selection benefits the task |
 | Capture controls | Primary Button; Destructive Button; Status Label; Progress Indicator | native `NSButton`, labels, progress controls | system | Start principal when available; Stop destructive to session, not error-colored live state |
@@ -44,7 +44,7 @@ No product mapping replaces native AppKit interaction or focus behavior with cus
 | Area or workflow | Recipe | Required composition |
 |---|---|---|
 | Today | Structured Workbench | Page Header; recording and Job status; Required, Review, and Attention Inbox sections; Daily Brief; top Queue Todo Items; upcoming Meetings; active Activity Items |
-| Meetings | Precision Ledger when history exists; operational canvas otherwise | Meeting browser/detail when useful; Capture Session controls remain available before a broader library exists |
+| Meetings | Precision Ledger when history exists; operational canvas otherwise | Meeting browser/detail when useful; browser row filtering is labeled Filter meetings and shows active query, queue, and filters separately from toolbar Search; Capture Session controls remain available before a broader library exists |
 | Meeting capture | Structured operational canvas | Prominent Capture Session state and elapsed time; Start/Stop hierarchy; live notes; progressively disclosed preflight, Teams signal, Recording Bundle, Transcript, Summary, and Job details |
 | Tasks | Precision Ledger / Dense Collection | Queue order; Done, Blocked, Overdue, source and due filters; separate status, due, parent, and source-reference semantics |
 | Projects / Activities | Precision Ledger | Selection browser and stable detail hierarchy for Project, lifecycle, goal, outputs, and activity log; focused creation/edit sheet |
@@ -55,6 +55,26 @@ No product mapping replaces native AppKit interaction or focus behavior with cus
 | Weekly Report prompt | Modal and Transient | Native focused editable surface with Accept and Remind; no background prompt over a Meeting |
 
 Long-form Summary, Transcript, report, and Contextual Ask prose is constrained near `{measure.reading}`. Operational tables, timelines, evidence collections, and diagnostics use available width.
+
+**Page Header title and actions:** Stillmatter detail headers use the shared Graphite Focus title-and-actions composition. The visible title is one line, truncates at the tail with an ellipsis when needed, exposes the complete title through tooltip and accessibility label, and has lower horizontal compression resistance than the local action cluster. Header actions such as Meeting timeline, edit, archive, More, and Activity status controls remain visible at the supported main-window minimum; access through menus or the adaptive shell remains available only when a display is too constrained to fit the supported minimum.
+
+**Long content and crowded controls:** Stillmatter applies the shared overflow rule across Meetings, Tasks and Activity Items. User-authored or generated prose, status explanations, empty states, Action Item text, Activity output/log entries, and failure messages wrap. Secondary metadata such as source paths, canonical locations, parent Todo titles, Project/date metadata, filter summaries, and source references may truncate only with tooltip/accessibility full text. Meeting cited-source controls remain native buttons when few; crowded citation lists move to an accessible native sources menu rather than compressing row actions or pretending to be row selection. Row actions such as Review/Edit, source navigation, New Activity, and Todo activation remain separately targetable at the supported minimum.
+
+### Meeting Semantic Groups
+
+Meetings use Semantic Panels only where the boundary carries task meaning:
+
+| Meeting group | Presentation | Reason |
+|---|---|---|
+| Meeting audio | Semantic Panel | Playback controls, waveform seek surface, status, and elapsed time form one bounded transport workspace. |
+| AI summary | Open Content Section | The default view is routine generated read-only detail with native actions; editing opens the existing editor/document path rather than needing a panel wrapper. |
+| My notes | Open Content Section | User-authored Meeting notes read as ordinary detail; the bounded multiline editor appears only when editing. |
+| My actions | Semantic Panel | Pending Action Item proposals have a bounded review workspace with Edit/Review actions before any Todo Item mutation. |
+| Other actions, Decisions, Open questions | Open Content Sections with divider-led rows | These are dense reference outcomes and evidence links, not independent bounded workspaces. |
+| Source files | Open Content Section | File paths and open actions are routine source metadata. |
+| Transcript timeline | Semantic Panel | Timeline filters, paging, search, and transcript rows form a bounded navigation workspace tied to playback. |
+
+This mapping is intentionally Meeting-specific. It does not create a shared Card/Tile module; feature meaning and callbacks remain owned by Meetings.
 
 **Default content alignment:** Stillmatter's browser rows, detail headings, metadata, status, controls, editors, and section content must read from the left edge in the current left-to-right UI. `NSStackView` fill alignment and intrinsic label widths placed this content on the right in practice, so Meeting detail and browser labels/editors explicitly use `.left` while full-width sections expand independently. Trailing placement is reserved for a deliberate secondary action or value within an otherwise left-aligned row. This is a deliberate LTR layout fix, not an RTL solution: forced `.left` does not mirror in right-to-left locales. RTL support requires a separate, locale-aware layout fix and validation before claiming RTL conformance.
 
@@ -97,10 +117,19 @@ At narrow width, the toolbar Back button and Location Label preserve list/detail
 - Teams Detection always says it is observational and uses “Detected,” “Not detected,” or “Unknown”; unknown permission/process state is not “ended.”
 - Job and artifact progress exposes stage text or a numeric value. Motion is never needed to know the stage.
 - Todo open, done, blocked, canceled, and overdue states use visible text/checkbox marker/symbol in addition to color.
-- Action Item selection exposes count and batch-action availability in stable text.
+- Meeting action review keeps generated Action Items distinct from Todo Items until approval. The Review/Edit sheet uses native text editing and buttons; Save shows inline “Changes saved.”, Accept shows inline “Added ‘Send draft to Kate’ to Todos.”, and failures stay inline in the sheet as “Review failed. The proposal was not changed; try again …”. Success is announced once and does not steal focus.
+- Action Item selection exposes count and batch-action availability in stable text. Keyboard order is Select All → each proposal's checkbox, editable title, Dismiss, Reference Only, Accept → Merge Selected → Accept Selected. Space toggles checkboxes; Tab and Shift-Tab follow visible order; Return activates the focused native button. After Accept/Merge/Reference Only/Dismiss removes a proposal, focus moves to the next proposal in display order, then the previous last proposal, and finally the section's focusable empty-state text. Success appears inline near the review section and is announced once without moving focus, for example “Added ‘Send draft to Kate’ to Todos.” Failures persist inline, state that the proposal was not changed, preserve edits/selection, and invite retry.
+- Task triage uses native segmented controls, search field and table selection. Tab reaches the mode selector, source filter and table; arrow keys move Todo Item selection; Return opens the selected Todo Item. Empty, unavailable and failed task states expose focusable/static text plus an action when available, so focus remains in Tasks rather than jumping to another tab.
 - Contextual Ask exposes current scope, broader-vault selection, remote-processing disclosure, citations, visible sources, and static loading/no-source/invalid-citation/failure text.
 - Settings permission/component states combine status text, symbol, explanation, and relevant action.
+- AppKit and SwiftUI feedback uses axis-specific Graphite Focus helpers: status and inline notice accept only a Meaning role, while progress accepts an Activity value/stage and uses a native progress control. Selection stays in native collection controls, disabled stays on native controls, and primary/destructive action emphasis stays on native buttons. A shared observable semantic context is resolved once per hosting window and updates SwiftUI descendants for active/inactive window and macOS display accessibility changes.
 - Icon-only toolbar and row actions have accessibility labels and useful tooltips. Focus returns after every transient surface.
+
+### Cross-Workflow State Audit Notes
+
+- **Meetings:** Meeting detail Ready badge and Meeting browser Ready symbol may use violet only under `SM-EX-004`; Meeting processing Jobs still use processing/failed/success roles and do not inherit the Ready exception. Recording/live remains attention while Stop remains a destructive action.
+- **Tasks:** Todo Items preserve checkbox-marker semantics: open, done, blocked, canceled, and overdue are textual/marker states, not row selection. Accepting an Action Item creates or updates a Todo Item; a selected proposal or Todo row is still only selection.
+- **Settings and Jobs:** Diagnostics use Granted/Missing/Unavailable/Not set/Unknown text plus symbols and explanation. Model installation, index rebuild, transcription, summary, and other Jobs use progress/stage text; a Job state never becomes the state of its Meeting, Todo Item, or artifact except through that domain's own readiness/failure wording.
 
 ## Token Specializations
 
@@ -112,6 +141,7 @@ Stillmatter introduces one product typography specialization: the active Transcr
 |---|---|---|---|---|---|---|
 | `SM-EX-002` | Dark-only is a rare macOS appearance exception | Stillmatter adopts the contract's intentional dark-only high-frequency worktable scope | All Stillmatter windows owned by this profile | Force Graphite Focus dark semantic roles while preserving native controls and all accessibility presentations | Validate contrast, Increased Contrast, Reduce Transparency, Reduce Motion, active/inactive windows, VoiceOver, and Full Keyboard Access | Re-review if Stillmatter adds light appearance or changes minimum supported macOS |
 | `SM-EX-003` | Native controls and focus rings MUST NOT be replaced by custom drawing merely to match tokens | The selected Meeting transport uses a recognizable, large circular play/pause face beside the waveform; a standard text button did not meet this transport layout | `MeetingPlaybackButton` only; no general license to redraw buttons | Retain `NSButton` for action, enabled state, mouse, keyboard, focus ring, and accessibility; custom drawing changes only the face and SF Symbol, with semantic colors for hover, pressed, and disabled states | Explicit Play/Pause accessibility labels and tooltips; native `NSButton` focus-ring mask and action; verify Full Keyboard Access, VoiceOver, Increased Contrast, and inactive-window presentation in experience review | Re-review if a native symbol button provides the same transport layout or keyboard/focus/accessibility behavior regresses |
+| `SM-EX-004` | `{status.success}` green indicates completion | The approved Meetings view uses violet as the only chromatic ready-state accent; green controls and panels would confuse readiness with action acceptance | Meeting detail Ready badge and Meeting browser Ready symbol only, not global statuses | Keep the explicit checkmark and Ready text; tint the neutral badge outline/text and list symbol with `{accent.base}` instead of success green. Live and error retain their distinct semantic roles. | Text and symbol convey meaning without color; check Increased Contrast and inactive state | Re-review if Meetings status design changes |
 
 No exception authorizes changes to Contract Precedence, State Axes, native focus, Region Collapse Order, or accessibility accommodations.
 

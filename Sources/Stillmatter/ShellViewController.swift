@@ -38,6 +38,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     private let contentTitle = NSTextField(labelWithString: "")
     private let recordingBadge = GraphiteFocusStatusLabel()
     private let jobBadge = GraphiteFocusStatusLabel()
+    private let jobProgress = GraphiteFocusProgressStatusView()
+    private let jobPresentationContainer = NSView()
     private lazy var captureRecordingView = CaptureRecordingView(
         serviceProvider: captureServiceProvider,
         rootURLProvider: { [weak self] in self?.settingsStore.settings.stillmatterRootURL },
@@ -115,6 +117,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     )
     private let searchField = NSSearchField()
     private let compactSearchField = NSSearchField()
+    private let compactSearchKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let compactSearchScopeLabel = NSTextField(labelWithString: "")
     private let compactSearchPopover = NSPopover()
     private var transferFocusToResultsOnPopoverClose = false
     private let searchKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -446,9 +450,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             item.label = "Recording Status"
             item.view = recordingBadge
         case .jobStatus:
-            jobBadge.frame.size = NSSize(width: 80, height: 22)
+            jobPresentationContainer.frame.size = NSSize(width: 145, height: 22)
+            configureJobPresentationIfNeeded()
             item.label = "Job Status"
-            item.view = jobBadge
+            item.view = jobPresentationContainer
         case .areaSearch:
             configureAreaSearchIfNeeded()
             let stack = NSStackView(views: [searchField, searchKindPopup])
@@ -466,7 +471,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 searchWidth,
                 kindWidth
             ])
-            item.label = "Area Search"
+            item.label = "Search"
             item.paletteLabel = item.label
             item.view = stack
         default:
@@ -487,19 +492,43 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
 
     private func configureAreaSearchIfNeeded() {
         guard searchField.target == nil else { return }
-        searchField.placeholderString = "Search in Today…"
+        searchField.placeholderString = "Search"
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
         searchField.delegate = self
-        searchField.setAccessibilityLabel("Area Search")
-        searchKindPopup.addItem(withTitle: "All types")
+        searchField.setAccessibilityLabel("Search")
+        searchField.setAccessibilityHelp("Search indexed results in the current area. Use the result type menu to narrow by type.")
+        configureSearchKindPopup(searchKindPopup, action: #selector(searchKindChanged(_:)))
+        configureSearchKindPopup(compactSearchKindPopup, action: #selector(compactSearchKindChanged(_:)))
+        updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
+    }
+
+    private func configureSearchKindPopup(_ popup: NSPopUpButton, action: Selector) {
+        popup.addItem(withTitle: "All types")
         SearchChunkKind.allCases.forEach { kind in
-            searchKindPopup.addItem(withTitle: kind.displayName)
-            searchKindPopup.lastItem?.representedObject = kind.rawValue
+            popup.addItem(withTitle: kind.displayName)
+            popup.lastItem?.representedObject = kind.rawValue
         }
-        searchKindPopup.target = self
-        searchKindPopup.action = #selector(searchKindChanged(_:))
-        searchKindPopup.setAccessibilityLabel("Search result type")
+        popup.target = self
+        popup.action = action
+        popup.setAccessibilityLabel("Search result type")
+        popup.setAccessibilityHelp("Narrows indexed Search results by result type; it does not change the searched area.")
+    }
+
+    private func configureJobPresentationIfNeeded() {
+        guard jobPresentationContainer.subviews.isEmpty else { return }
+        jobBadge.frame = jobPresentationContainer.bounds
+        jobBadge.autoresizingMask = [.width, .height]
+        jobProgress.orientation = .horizontal
+        jobProgress.alignment = .centerY
+        jobProgress.statusLabel.usesSingleLineMode = true
+        jobProgress.statusLabel.lineBreakMode = .byTruncatingTail
+        jobProgress.progressIndicator.style = .spinning
+        jobProgress.valueLabel.isHidden = true
+        jobProgress.frame = jobPresentationContainer.bounds
+        jobProgress.autoresizingMask = [.width, .height]
+        jobPresentationContainer.addSubview(jobBadge)
+        jobPresentationContainer.addSubview(jobProgress)
     }
 
     private func makeMainContent() -> NSView {
@@ -541,7 +570,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             (searchResultsView, searchResultsView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large))
         ]
         contentBottomConstraints = bottomConstraints
-        meetingViewportHeight = meetingManagementView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor, constant: -GraphiteFocusPresentation.Space.panel * 2)
+        meetingViewportHeight = meetingManagementView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor)
 
         NSLayoutConstraint.activate([
             contentTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GraphiteFocusPresentation.Space.large),
@@ -552,9 +581,9 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             captureRecordingView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
             captureRecordingView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
             captureRecordingView.topAnchor.constraint(equalTo: contentTitle.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
-            meetingManagementView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
-            meetingManagementView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
-            meetingManagementView.topAnchor.constraint(equalTo: container.topAnchor, constant: GraphiteFocusPresentation.Space.panel),
+            meetingManagementView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            meetingManagementView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            meetingManagementView.topAnchor.constraint(equalTo: container.topAnchor),
             proposalReviewView.leadingAnchor.constraint(equalTo: contentTitle.leadingAnchor),
             proposalReviewView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -GraphiteFocusPresentation.Space.large),
             proposalReviewView.topAnchor.constraint(equalTo: todayWorkbenchView.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
@@ -695,7 +724,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         )
         updateJobBadge(colors: colors)
         searchField.stringValue = state.searchText
-        searchField.placeholderString = "Search in \(state.selectedTab.rawValue)…"
+        searchField.placeholderString = "Search"
+        updateSearchAccessibilityContext(area: state.selectedTab)
         compactSearchField.stringValue = state.searchText
         compactSearchField.placeholderString = searchField.placeholderString
         toolbarAreaLabel.stringValue = state.selectedTab.rawValue
@@ -720,8 +750,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
 
     private func renderSearch(query rawQuery: String, area: ShellTab) {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let selectedKind = (searchKindPopup.selectedItem?.representedObject as? String)
-            .flatMap(SearchChunkKind.init(rawValue:))
+        let selectedKind = currentSearchKind()
         let typeName = selectedKind?.displayName ?? "All types"
         let index = searchIndexProvider()
         let request = "\(area.rawValue)|\(typeName)|\(query)|\(index.map { ObjectIdentifier($0).hashValue } ?? 0)"
@@ -760,6 +789,33 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 }
             }
         }
+    }
+
+    private func currentSearchKind() -> SearchChunkKind? {
+        (searchKindPopup.selectedItem?.representedObject as? String)
+            .flatMap(SearchChunkKind.init(rawValue:))
+    }
+
+    private func updateSearchAccessibilityContext(area: ShellTab) {
+        synchronizeSearchKindPopups(from: searchKindPopup)
+        let typeName = currentSearchKind()?.displayName ?? "All types"
+        let help = "Search indexed results in \(area.rawValue). Current result type: \(typeName)."
+        searchField.setAccessibilityHelp(help)
+        compactSearchField.setAccessibilityHelp(help)
+        searchKindPopup.setAccessibilityValue(typeName)
+        compactSearchKindPopup.setAccessibilityValue(typeName)
+        compactSearchScopeLabel.stringValue = "Scope: \(area.rawValue)"
+        compactSearchScopeLabel.setAccessibilityLabel("Search scope")
+        compactSearchScopeLabel.setAccessibilityValue(area.rawValue)
+    }
+
+    private func synchronizeSearchKindPopups(from source: NSPopUpButton) {
+        let representedValue = source.selectedItem?.representedObject as? String
+        let target = source === searchKindPopup ? compactSearchKindPopup : searchKindPopup
+        let index = target.itemArray.firstIndex {
+            ($0.representedObject as? String) == representedValue
+        } ?? 0
+        target.selectItem(at: index)
     }
 
     private func searchKinds(for area: ShellTab) -> Set<SearchChunkKind>? {
@@ -811,12 +867,32 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     }
 
     private func updateJobBadge(colors: GraphiteFocusPresentation.Colors) {
-        let status = jobStatusProvider()
+        updateJobPresentation(status: jobStatusProvider(), colors: colors)
+    }
+
+    private func updateJobPresentation(status: String, colors: GraphiteFocusPresentation.Colors) {
+        configureJobPresentationIfNeeded()
         let normalized = status.lowercased()
-        let meaning: GraphiteFocusStatusMeaning = normalized.contains("fail")
-            ? .destructive
-            : (normalized.contains("running") || normalized.contains("queued") ? .attention : .informational)
-        jobBadge.setStatus(status, meaning: meaning, colors: colors)
+        let isProcessing = normalized.contains("running") || normalized.contains("queued")
+        jobProgress.isHidden = !isProcessing
+        jobBadge.isHidden = isProcessing
+        if isProcessing {
+            jobProgress.configure(
+                title: status,
+                value: nil,
+                valueDescription: normalized.contains("queued") ? "Queued" : "Running",
+                colors: colors
+            )
+            if currentPresentationEnvironment.reducedMotion {
+                jobProgress.progressIndicator.stopAnimation(nil)
+            } else {
+                jobProgress.progressIndicator.startAnimation(nil)
+            }
+        } else {
+            jobProgress.progressIndicator.stopAnimation(nil)
+            let meaning: GraphiteFocusStatusMeaning = normalized.contains("fail") ? .destructive : .informational
+            jobBadge.setStatus(status, meaning: meaning, colors: colors)
+        }
     }
 
     private func todoLedgerState() -> TodoLedgerView.State {
@@ -922,6 +998,15 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     func prepareForWindowResize(to width: CGFloat) {
         requestedWindowWidth = width
         installToolbarIfNeeded()
+        let toolbarSearchHadFocus = searchControlHasFocus(searchField)
+        let toolbarTypeHadFocus = view.window?.firstResponder === searchKindPopup
+        let compactFieldHadFocus = searchControlHasFocus(compactSearchField)
+        let compactTypeHadFocus = view.window?.firstResponder === compactSearchKindPopup
+        if toolbarSearchHadFocus && stateStore.state.searchText != searchField.stringValue {
+            stateStore.state.searchText = searchField.stringValue
+        } else if compactFieldHadFocus && stateStore.state.searchText != compactSearchField.stringValue {
+            stateStore.state.searchText = compactSearchField.stringValue
+        }
         let compactedIdentifiers: Set<NSToolbarItem.Identifier> = [
             .toggleStillmatterSidebar, .recordingStatus, .jobStatus, .areaSearch
         ]
@@ -934,6 +1019,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 toolbar.removeItem(at: entry.index)
             }
             toolbar.autosavesConfiguration = true
+            if toolbarSearchHadFocus || toolbarTypeHadFocus {
+                focusAreaSearch(nil)
+                if toolbarTypeHadFocus { compactSearchField.window?.makeFirstResponder(compactSearchKindPopup) }
+            }
         } else if width >= 900 && !toolbarItemsCompactedForWidth.isEmpty {
             toolbar.autosavesConfiguration = false
             for entry in toolbarItemsCompactedForWidth.sorted(by: { $0.index < $1.index }) {
@@ -941,9 +1030,26 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             }
             toolbar.autosavesConfiguration = true
             toolbarItemsCompactedForWidth = []
+            if (compactFieldHadFocus || compactTypeHadFocus),
+               toolbar.items.contains(where: { $0.itemIdentifier == .areaSearch }) {
+                compactSearchPopover.close()
+                view.window?.toolbar?.validateVisibleItems()
+                view.window?.layoutIfNeeded()
+                let target = compactTypeHadFocus ? searchKindPopup : searchField
+                view.window?.makeFirstResponder(target)
+                DispatchQueue.main.async { [weak self, weak target] in
+                    guard let self, let target else { return }
+                    self.view.window?.makeFirstResponder(target)
+                }
+            }
         }
         // Collapse target regions before AppKit evaluates their fitting widths.
         applyAdaptiveLayout(availableWidth: width)
+    }
+
+    private func searchControlHasFocus(_ control: NSSearchField) -> Bool {
+        guard let firstResponder = view.window?.firstResponder else { return false }
+        return firstResponder === control || control.currentEditor() === firstResponder
     }
 
     func validateReferenceShellLayout() {
@@ -983,6 +1089,11 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         precondition(navigationButtons[stateStore.state.selectedTab]?.accessibilityValue() as? String == "Selected", "Navigation selection must follow shell state")
         precondition(contentTitle.stringValue == stateStore.state.selectedTab.rawValue, "Page Header must follow shell state")
         precondition(toolbarAreaLabel.stringValue == stateStore.state.selectedTab.rawValue, "Toolbar location must follow shell state")
+        precondition(searchField.placeholderString == "Search", "Toolbar Search placeholder must remain area-neutral")
+        precondition(searchField.accessibilityLabel() as? String == "Search", "Toolbar Search must have a distinct VoiceOver name")
+        precondition(searchField.accessibilityHelp()?.contains("Today") == true, "Toolbar Search must expose current area scope")
+        precondition((searchKindPopup.accessibilityValue() as? String) == "All types", "Search type picker must default to All types")
+        validateJobProgressPresentationFixture()
 
         let identifiers = Set(toolbar.items.map(\.itemIdentifier.rawValue))
         [
@@ -996,6 +1107,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         removableToolbarItems.sorted(by: >).forEach(toolbar.removeItem)
         focusAreaSearch(nil)
         precondition(compactSearchPopover.isShown, "Area Search menu command must work after toolbar customization")
+        precondition(compactSearchScopeLabel.stringValue == "Scope: Today", "Customized Search must keep its current scope visible")
+        precondition(compactSearchKindPopup.selectedItem?.title == "All types", "Customized Search must keep its selected result type visible")
+        precondition(compactSearchKindPopup.window?.makeFirstResponder(compactSearchKindPopup) == true,
+                     "Customized Search result type must accept native keyboard focus")
         compactSearchPopover.close()
         toolbar.insertItem(withItemIdentifier: .currentArea, at: min(1, toolbar.items.count))
         toolbar.insertItem(withItemIdentifier: .areaSearch, at: toolbar.items.count)
@@ -1036,7 +1151,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         precondition(!todayWorkbenchView.isHidden, "Today must use the Structured Workbench")
         stateStore.state.select(.meetings)
         view.layoutSubtreeIfNeeded()
+        meetingManagementView.validateBrowserFilterPresentationFixture()
+        meetingManagementView.validateLongContentOverflowFixture()
         meetingManagementView.validateCaptionLayoutFixture()
+        meetingManagementView.validateTimelineSelectionFixture()
         meetingManagementView.validateAudioTransportFixture()
         let meetingTop = meetingManagementView.convert(NSPoint(x: 0, y: meetingManagementView.bounds.height), to: view).y
         let detailTop = detailContainer.convert(.zero, to: view).y
@@ -1076,6 +1194,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         precondition(lastAdaptiveLayout?.showsSidebar == true, "Sidebar must remain after inspector collapse")
         precondition(lastAdaptiveLayout?.detailMode == .listAndDetail, "Reference layout must retain list/detail continuity")
 
+        window.makeFirstResponder(searchField)
+        precondition(searchControlHasFocus(searchField), "Reference Search field must accept keyboard focus before resize")
         prepareForWindowResize(to: 720)
         window.setContentSize(NSSize(width: 720, height: 520))
         window.layoutIfNeeded()
@@ -1084,8 +1204,27 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         precondition(abs(view.bounds.width - 720) < 2 && abs(view.bounds.height - 520) < 2, "The shell must reach the 720×520 Minimum Operable Window")
         precondition(lastAdaptiveLayout?.showsSidebar == true, "Navigation rail must remain available at minimum width")
         precondition(lastAdaptiveLayout?.detailMode == .listOnly, "Narrow layout must replace detail with the content list")
-        focusAreaSearch(nil)
-        precondition(compactSearchPopover.isShown, "Area Search must remain reachable in the compact toolbar")
+        precondition(compactSearchPopover.isShown && searchControlHasFocus(compactSearchField),
+                     "Resize must transfer Search focus to compact presentation")
+        precondition(compactSearchField.stringValue == "preserved draft", "Resize must preserve focused Search input")
+        precondition(compactSearchScopeLabel.stringValue == "Scope: Activities",
+                     "Compact Search must show its current area scope")
+        precondition(compactSearchKindPopup.selectedItem?.title == searchKindPopup.selectedItem?.title,
+                     "Compact and toolbar Search must share one selected result type")
+        prepareForWindowResize(to: 1200)
+        precondition(searchControlHasFocus(searchField), "Expanding must return Search focus to the toolbar field")
+        prepareForWindowResize(to: 720)
+        precondition(compactSearchPopover.isShown && searchControlHasFocus(compactSearchField),
+                     "Recompacting must preserve Search focus")
+        prepareForWindowResize(to: 1200)
+        precondition(window.makeFirstResponder(searchKindPopup), "Toolbar Search type must accept keyboard focus")
+        prepareForWindowResize(to: 720)
+        precondition(compactSearchPopover.isShown && window.firstResponder === compactSearchKindPopup,
+                     "Compacting must transfer focus from the toolbar type to the compact type picker")
+        prepareForWindowResize(to: 1200)
+        precondition(window.firstResponder === searchKindPopup,
+                     "Expanding must return focus to the toolbar type picker")
+        prepareForWindowResize(to: 720)
         compactSearchPopover.close()
         precondition(abs(view.bounds.width - 720) < 2, "Compact Area Search must not force the window wider")
         precondition(workspaceSplitView.arrangedSubviews.count == 1 && workspaceSplitView.arrangedSubviews[0] === contentListContainer, "Narrow layout must initially present the list")
@@ -1154,13 +1293,42 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         view.layoutSubtreeIfNeeded()
     }
 
+    private func validateJobProgressPresentationFixture() {
+        let colors = GraphiteFocusPresentation.Colors(environment: currentPresentationEnvironment)
+        updateJobPresentation(status: "1 Job queued", colors: colors)
+        precondition(!jobProgress.isHidden && jobBadge.isHidden,
+                     "Queued Jobs must use shared native progress presentation")
+        precondition(jobProgress.progressIndicator.isIndeterminate,
+                     "Queued Jobs must expose indeterminate native progress")
+        precondition(jobProgress.statusLabel.meaning == .informational,
+                     "Job progress must not borrow attention status meaning")
+        precondition(jobProgress.statusLabel.statusText == "1 Job queued",
+                     "Job progress must retain visible stage text")
+        precondition(jobPresentationContainer.frame.height <= 22,
+                     "Job progress must fit the native toolbar height")
+
+        updateJobPresentation(status: "1 Job running", colors: colors)
+        precondition(!jobProgress.isHidden && jobProgress.valueLabel.stringValue == "Running",
+                     "Running Jobs must remain progress with an accessible activity value")
+        updateJobPresentation(status: "1 Job failed", colors: colors)
+        precondition(!jobBadge.isHidden && jobBadge.meaning == .destructive,
+                     "Failed Job meaning must remain destructive")
+        updateJobPresentation(status: "Jobs ready", colors: colors)
+        precondition(!jobBadge.isHidden && jobBadge.meaning == .informational,
+                     "Ready/idle Job meaning must remain unchanged")
+        updateJobBadge(colors: colors)
+    }
+
     func validateSearchKeyboardFocus(in window: NSWindow, width: CGFloat = 720, completion: @escaping () -> Void) {
         let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent("StillmatterSearchFocus-\(UUID().uuidString)")
         let vault = fixtureRoot.appendingPathComponent("Vault")
         do {
             try FileManager.default.createDirectory(at: vault.appendingPathComponent("Todos"), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: vault.appendingPathComponent("Meetings/planning"), withIntermediateDirectories: true)
             try Data("# Todos\n\n## Queue\n\n- [ ] First planning item\n- [ ] Second planning item\n".utf8)
                 .write(to: vault.appendingPathComponent("Todos/todo.md"))
+            try Data("# Planning meeting\n\nPlanning follow-up.\n".utf8)
+                .write(to: vault.appendingPathComponent("Meetings/planning/meeting.md"))
             let index = try SearchIndex(databaseURL: fixtureRoot.appendingPathComponent("search.sqlite"), workspaceRootURL: vault)
             try index.startupScan()
             let previousProvider = searchIndexProvider
@@ -1173,15 +1341,49 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             focusAreaSearch(nil)
             // Search is debounced; wait for the indexed fixture before exercising result focus.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
-                precondition(searchResultsView.resultCountForValidation == 2, "Fixture must produce two real search results")
-                validateSearchKeyboardFocusWithFixture(in: window, width: width) {
-                    self.searchIndexProvider = previousProvider
-                    try? FileManager.default.removeItem(at: fixtureRoot)
-                    completion()
+                precondition(searchResultsView.resultCountForValidation == 3, "Fixture must produce typed Todo and Meeting results")
+                validateSearchTypeFilteringWithFixture {
+                    self.validateSearchKeyboardFocusWithFixture(in: window, width: width) {
+                        self.compactSearchKindPopup.selectItem(at: 0)
+                        self.synchronizeSearchKindPopups(from: self.compactSearchKindPopup)
+                        self.updateSearchAccessibilityContext(area: self.stateStore.state.selectedTab)
+                        self.searchIndexProvider = previousProvider
+                        try? FileManager.default.removeItem(at: fixtureRoot)
+                        completion()
+                    }
                 }
             }
         } catch {
             fatalError("Could not set up search focus fixture: \(error)")
+        }
+    }
+
+    private func validateSearchTypeFilteringWithFixture(completion: @escaping () -> Void) {
+        guard let todoIndex = compactSearchKindPopup.itemArray.firstIndex(where: {
+            ($0.representedObject as? String) == SearchChunkKind.todo.rawValue
+        }) else {
+            preconditionFailure("Compact Search fixture is missing the Todo result type")
+        }
+        compactSearchKindPopup.selectItem(at: todoIndex)
+        compactSearchKindChanged(compactSearchKindPopup)
+        precondition(searchKindPopup.selectedItem?.representedObject as? String == SearchChunkKind.todo.rawValue,
+                     "Changing compact result type must update toolbar selection")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
+            precondition(searchResultsView.resultCountForValidation == 2,
+                         "Changing Search result type must narrow indexed results")
+            compactSearchKindPopup.selectItem(at: 0)
+            compactSearchKindChanged(compactSearchKindPopup)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
+                precondition(searchResultsView.resultCountForValidation == 3,
+                             "All types must restore results without changing query or scope")
+                compactSearchKindPopup.selectItem(at: todoIndex)
+                compactSearchKindChanged(compactSearchKindPopup)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
+                    precondition(searchResultsView.resultCountForValidation == 2,
+                                 "Filtered fixture must retain two rows for keyboard navigation")
+                    completion()
+                }
+            }
         }
     }
 
@@ -1263,11 +1465,33 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             compactSearchField.target = self
             compactSearchField.action = #selector(compactSearchChanged(_:))
             compactSearchField.delegate = self
-            compactSearchField.setAccessibilityLabel("Area Search")
+            compactSearchField.placeholderString = "Search"
+            compactSearchField.setAccessibilityLabel("Search")
+            compactSearchField.setAccessibilityHelp("Search indexed results in the current area. Choose a result type to narrow results without changing this scope.")
+            compactSearchScopeLabel.font = GraphiteFocusPresentation.Typography.metadata
+            compactSearchScopeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+            updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
+
+            let controls = NSStackView(views: [compactSearchField, compactSearchKindPopup])
+            controls.orientation = .horizontal
+            controls.alignment = .centerY
+            controls.spacing = GraphiteFocusPresentation.Space.compact
+            compactSearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true // graphite-focus-native-exception: compact native search field minimum
+            compactSearchKindPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true // graphite-focus-native-exception: native picker must show selected result type
+            let content = NSStackView(views: [compactSearchScopeLabel, controls])
+            content.orientation = .vertical
+            content.alignment = .leading
+            content.spacing = GraphiteFocusPresentation.Space.compact
+            content.edgeInsets = NSEdgeInsets(
+                top: GraphiteFocusPresentation.Space.dense,
+                left: GraphiteFocusPresentation.Space.dense,
+                bottom: GraphiteFocusPresentation.Space.dense,
+                right: GraphiteFocusPresentation.Space.dense
+            )
+            content.frame = NSRect(x: 0, y: 0, width: 320, height: 76) // graphite-focus-native-exception: compact popover fitting size for native controls
+            controls.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.dense).isActive = true
             let controller = NSViewController()
-            controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
-            compactSearchField.frame = NSRect(x: 12, y: 12, width: 296, height: 28)
-            controller.view.addSubview(compactSearchField)
+            controller.view = content
             compactSearchPopover.contentViewController = controller
             compactSearchPopover.behavior = .transient
         }
@@ -1334,7 +1558,16 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     }
 
     @objc private func searchKindChanged(_ sender: NSPopUpButton) {
+        synchronizeSearchKindPopups(from: sender)
+        updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
         stateStore.refresh()
+    }
+
+    @objc private func compactSearchKindChanged(_ sender: NSPopUpButton) {
+        synchronizeSearchKindPopups(from: sender)
+        updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
+        stateStore.refresh()
+        compactSearchField.window?.makeFirstResponder(compactSearchKindPopup)
     }
 
 }

@@ -259,6 +259,7 @@ public enum JobsError: Error, Equatable, CustomStringConvertible {
 
 /// SQLite-backed operational state for typed jobs. Canonical workspace content is never stored here.
 public final class JobStore {
+    private let databaseURL: URL
     private let database: JobSQLiteDatabase
     private let now: () -> String
     private let inbox: TasksInbox?
@@ -270,6 +271,7 @@ public final class JobStore {
         now: @escaping () -> String = TasksInbox.systemTimestamp
     ) throws {
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        self.databaseURL = databaseURL.standardizedFileURL.resolvingSymlinksInPath()
         database = try JobSQLiteDatabase(url: databaseURL)
         self.inbox = inbox
         self.now = now
@@ -299,6 +301,31 @@ public final class JobStore {
     }
 
     private var renamingMeeting = false
+
+    func sharesDatabase(with inbox: TasksInbox) -> Bool { databaseURL == inbox.databaseURL }
+
+    /// The Job transaction already owns the write lock on this SQLite file. Rewrite
+    /// Inbox references through that same connection so a second connection cannot
+    /// deadlock against it. The enclosing Job transaction rolls these changes back.
+    func rewriteInboxReferencesInRename(from oldDirectory: String, to newDirectory: String, inbox: TasksInbox) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard renamingMeeting, sharesDatabase(with: inbox) else {
+            throw JobsError.invalidManifest("Inbox references require the shared rename transaction.")
+        }
+        for table in ["inbox_items", "proposal_reviews"] {
+            let idColumn = table == "inbox_items" ? "id" : "proposal_id"
+            let entries: [(String, String)] = try database.query(
+                "SELECT \(idColumn), source_ref FROM \(table) WHERE source_ref IS NOT NULL"
+            ) { (JobSQLiteDatabase.text($0, column: 0), JobSQLiteDatabase.text($0, column: 1)) }
+            for (id, source) in entries {
+                let updated = source.replacingOccurrences(of: oldDirectory + "/", with: newDirectory + "/")
+                guard updated != source else { continue }
+                try database.run("UPDATE \(table) SET source_ref = ? WHERE \(idColumn) = ?",
+                    bindings: [.text(updated), .text(id)])
+            }
+        }
+    }
 
     /// Hold a cross-connection write transaction while the folder and its references move.
     /// An enqueue cannot slip between the active-Job check and the move.

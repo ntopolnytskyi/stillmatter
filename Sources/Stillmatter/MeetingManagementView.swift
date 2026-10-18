@@ -36,15 +36,16 @@ final class MeetingManagementView: NSView {
     private let caption = NSStackView()
     private let metadataBar = NSStackView()
     private let eyebrow = NSTextField(labelWithString: "MEETING DETAIL")
-    private let meetingTitle = NSTextField(wrappingLabelWithString: "")
+    private let meetingTitle = NSTextField(labelWithString: "")
     private let overview = NSTextField(wrappingLabelWithString: "")
     private let processingStatus = GraphiteFocusStatusLabel()
+    private let processingProgress = GraphiteFocusProgressStatusView()
     private let statusBadge = NSView()
     private let summaryPlaceholder = NSTextField(wrappingLabelWithString: "Summary unavailable or still being generated.")
     private weak var summaryEditorScroll: NSScrollView?
     private weak var notesEditorScroll: NSScrollView?
-    private var summaryCard: NSHostingView<MeetingOverviewCard>?
-    private var notesCard: NSHostingView<MeetingOverviewCard>?
+    private var summaryOverviewSection: NSHostingView<MeetingOverviewSection>?
+    private var notesOverviewSection: NSHostingView<MeetingOverviewSection>?
     private weak var summaryEditorRow: NSStackView?
     private weak var notesEditorRow: NSStackView?
     private let notes = NSTextView()
@@ -52,9 +53,11 @@ final class MeetingManagementView: NSView {
     private let actionItems = NSTextField(wrappingLabelWithString: "")
     private let overviewPage = NSStackView()
     private let timelinePage = NSStackView()
+    private let pinnedAudio = NSStackView()
+    private var overviewScrollTop: NSLayoutConstraint?
+    private var timelineScrollTop: NSLayoutConstraint?
     private let timelineRows = NSStackView()
-    private let timelineTitle = NSTextField(wrappingLabelWithString: "")
-    private let timelineSubtitle = NSTextField(wrappingLabelWithString: "")
+    private let timelineNavigation = MeetingTimelineNavigation()
     private let transcriptionButton = MeetingHeaderButton(title: "", target: nil, action: nil)
     private let editSummaryTool = MeetingHeaderButton()
     private let editNotesTool = MeetingHeaderButton()
@@ -65,11 +68,20 @@ final class MeetingManagementView: NSView {
     private let files = NSStackView()
     private let transcriptRows = NSStackView()
     private let evidenceRows = NSStackView()
+    private let myActionsContainer = NSStackView()
     private let outcomesContainer = NSStackView()
+    private weak var notesSection: NSView?
     private var actionRows: [String: MeetingOutcomeRow] = [:]
+    private var pendingActionIDs: [String] = []
+    private var actionReviewControls: [String: (edit: NSButton, review: NSButton)] = [:]
+    private weak var actionReviewEmptyState: FocusableMeetingEmptyState?
+    private var actionReviewFeedback: (meetingID: String, message: String)?
+    private weak var actionReviewFeedbackLabel: GraphiteFocusStatusLabel?
+    private var actionReviewFeedbackDismissal: DispatchWorkItem?
     private var segmentLabels: [(MeetingTranscriptSegment, NSTextField)] = []
     private var displayedDetail: MeetingBrowserDetail?
     private var evidenceTargets: [String: EvidenceTarget] = [:]
+    private var outcomeSourceTargets: [String: OutcomeSourceTarget] = [:]
     private let status = NSTextField(wrappingLabelWithString: "")
     private let retryRows = NSStackView()
     private let reprocessButton = NSButton(title: "Reprocess…", target: nil, action: nil)
@@ -84,6 +96,8 @@ final class MeetingManagementView: NSView {
     private let waveform = MeetingWaveformView()
     private var waveformRevision = UUID()
     private let audioTime = NSTextField(labelWithString: "0:00 / 0:00")
+    private var audioTimeWidth: NSLayoutConstraint?
+    private var waveformWidth: NSLayoutConstraint?
     private var audioPlayer: MeetingAudioPlayer?
     private var audioSource: MeetingPlayback?
 
@@ -146,8 +160,10 @@ final class MeetingManagementView: NSView {
         table.intercellSpacing = NSSize(width: 0, height: 1)
         table.setAccessibilityLabel("Meetings")
 
-        queryField.placeholderString = "Search Meetings"
-        queryField.setAccessibilityLabel("Search Meetings")
+        queryField.placeholderString = "Filter meetings"
+        queryField.setAccessibilityLabel("Filter meetings")
+        queryField.setAccessibilityHelp("Filters the visible Meeting browser rows; it does not run indexed toolbar Search.")
+        queryField.sendsSearchStringImmediately = true
         queryField.target = self
         queryField.action = #selector(filtersChanged(_:))
 
@@ -197,6 +213,7 @@ final class MeetingManagementView: NSView {
         advancedFiltersButton.action = #selector(toggleAdvancedFilters)
         advancedFiltersButton.setAccessibilityLabel("Show Meeting filters")
         filterStatus.font = GraphiteFocusPresentation.Typography.metadata
+        GraphiteFocusOverflow.configureSecondaryMetadata(filterStatus, fullText: "")
         let heading = NSTextField(labelWithString: "Meetings")
         heading.font = GraphiteFocusPresentation.Typography.sectionHeading
         let header = NSStackView(views: [heading, filterStatus])
@@ -251,8 +268,7 @@ final class MeetingManagementView: NSView {
         eyebrow.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).accent
         eyebrow.setAccessibilityLabel("Meeting detail")
         meetingTitle.setAccessibilityIdentifier("meeting-detail")
-        meetingTitle.font = GraphiteFocusPresentation.Typography.pageTitle
-        meetingTitle.maximumNumberOfLines = 0
+        GraphiteFocusPageHeader.configureTitleLabel(meetingTitle)
         meetingTitle.alignment = .left
         overview.alignment = .left
         overview.font = GraphiteFocusPresentation.Typography.metadata
@@ -327,6 +343,14 @@ final class MeetingManagementView: NSView {
         transport.orientation = .horizontal
         transport.alignment = .centerY
         transport.spacing = GraphiteFocusPresentation.Space.compact
+        // NSSlider has no useful intrinsic horizontal width inside a leading-aligned stack.
+        // Reserve the time label's width and let the seek surface fill the rest of the player.
+        audioTimeWidth = audioTime.widthAnchor.constraint(equalToConstant: 116)
+        waveformWidth = waveform.widthAnchor.constraint(equalTo: transport.widthAnchor,
+            constant: -(52 + 116 + 2 * GraphiteFocusPresentation.Space.compact))
+        audioTimeWidth?.isActive = true
+        waveformWidth?.isActive = true
+        waveform.widthAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
         audioStatus.font = GraphiteFocusPresentation.Typography.metadata
         audioStatus.alignment = .left
         audioTime.alignment = .left
@@ -357,21 +381,22 @@ final class MeetingManagementView: NSView {
             button.toolTip = label
             button.setAccessibilityLabel(label)
             button.setAccessibilityIdentifier(identifier)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.widthAnchor.constraint(equalToConstant: 36).isActive = true
-            button.heightAnchor.constraint(equalToConstant: 36).isActive = true
-            button.setContentCompressionResistancePriority(.required, for: .horizontal)
-            toolbar.addArrangedSubview(button)
+            // Stack views may break an image-only NSButton's size constraint
+            // while fitting other symbols. Give each native button a fixed
+            // 36-point slot instead of asking the button to size the stack.
+            let slot = NSView(frame: NSRect(x: 0, y: 0, width: 36, height: 36))
+            slot.translatesAutoresizingMaskIntoConstraints = false
+            slot.widthAnchor.constraint(equalToConstant: 36).isActive = true
+            slot.heightAnchor.constraint(equalToConstant: 36).isActive = true
+            button.frame = slot.bounds
+            button.autoresizingMask = [.width, .height]
+            slot.addSubview(button)
+            toolbar.addArrangedSubview(slot)
         }
         toolbar.orientation = .horizontal
         toolbar.alignment = .centerY
         toolbar.spacing = GraphiteFocusPresentation.Space.compact
         toolbar.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // NSStackView's top alignment positions image-only buttons at different y values
-        // depending on their symbols. Center each fixed-size native button in one row.
-        [transcriptionButton, editSummaryTool, editNotesTool, archiveButton, moreButton].forEach { button in
-            button.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor).isActive = true
-        }
         transcriptionButton.target = self
         transcriptionButton.action = #selector(openTimeline)
         transcriptionButton.setAccessibilityIdentifier("meeting-open-transcription")
@@ -384,41 +409,41 @@ final class MeetingManagementView: NSView {
         timelinePage.orientation = .vertical
         timelinePage.alignment = .leading
         timelinePage.spacing = GraphiteFocusPresentation.Space.page
-        timelinePage.addArrangedSubview(backButton)
-        timelineTitle.font = GraphiteFocusPresentation.Typography.pageTitle
-        timelineSubtitle.font = GraphiteFocusPresentation.Typography.metadata
-        timelineSubtitle.textColor = .secondaryLabelColor
-        timelinePage.addArrangedSubview(timelineTitle)
-        timelinePage.addArrangedSubview(timelineSubtitle)
-        timelinePage.addArrangedSubview(reprocessButton)
-        reprocessButton.setAccessibilityIdentifier("meeting-timeline-reprocess")
-        timelinePage.addArrangedSubview(section("Meeting audio", body: audioSection))
+        // Regeneration remains in More; do not interrupt the transport-to-timeline hierarchy.
+        pinnedAudio.orientation = .vertical
+        pinnedAudio.alignment = .leading
+        pinnedAudio.spacing = GraphiteFocusPresentation.Space.compact
+        pinnedAudio.addArrangedSubview(backButton)
+        pinnedAudio.addArrangedSubview(section("Meeting audio", body: audioSection))
+        pinnedAudio.isHidden = true
         timelinePage.addArrangedSubview(timelineRows)
         timelinePage.isHidden = true
         overviewPage.orientation = .vertical
         overviewPage.alignment = .leading
-        overviewPage.spacing = GraphiteFocusPresentation.Space.page
-        overviewPage.edgeInsets.top = 24
-        let titleSpacer = NSView()
-        titleSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        titleSpacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+        overviewPage.spacing = GraphiteFocusPresentation.Space.page + GraphiteFocusPresentation.Space.compact
+        overviewPage.edgeInsets = NSEdgeInsets(
+            top: GraphiteFocusPresentation.Space.page + GraphiteFocusPresentation.Space.compact,
+            left: GraphiteFocusPresentation.Space.panel,
+            bottom: GraphiteFocusPresentation.Space.panel,
+            right: GraphiteFocusPresentation.Space.panel
+        )
         let titleGroup = NSStackView(views: [eyebrow, meetingTitle])
         titleGroup.orientation = .vertical
         titleGroup.alignment = .leading
         titleGroup.spacing = GraphiteFocusPresentation.Space.primitive
+        titleGroup.setContentHuggingPriority(.defaultLow, for: .horizontal)
         titleGroup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         meetingTitle.widthAnchor.constraint(lessThanOrEqualTo: titleGroup.widthAnchor).isActive = true
-        titleBar.addArrangedSubview(titleGroup)
-        titleBar.addArrangedSubview(titleSpacer)
-        titleBar.addArrangedSubview(toolbar)
-        titleBar.orientation = .horizontal
-        titleBar.alignment = .top
-        titleBar.spacing = GraphiteFocusPresentation.Space.compact
-        meetingTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        toolbar.trailingAnchor.constraint(equalTo: titleBar.trailingAnchor).isActive = true
+        let headerRow = GraphiteFocusPageHeader.makeTitleAndActionsRow(title: titleGroup, actions: toolbar)
+        titleBar.addArrangedSubview(headerRow)
+        titleBar.orientation = .vertical
+        titleBar.alignment = .width
+        titleBar.spacing = 0
+        headerRow.widthAnchor.constraint(equalTo: titleBar.widthAnchor).isActive = true
+        let notesSection = section("My notes", editor: notes, height: 90, button: saveNotesButton)
+        self.notesSection = notesSection
         [section("AI summary", editor: summary, height: 150, button: saveSummaryButton),
-         section("My notes", editor: notes, height: 90, button: saveNotesButton),
-         outcomesContainer,
+         myActionsContainer, notesSection, outcomesContainer,
          retryRows, section("Source files", body: files), openRecordingButton].forEach { overviewPage.addArrangedSubview($0) }
         metadataBar.addArrangedSubview(overview)
         metadataBar.orientation = .horizontal
@@ -428,13 +453,18 @@ final class MeetingManagementView: NSView {
         statusBadge.layer?.cornerRadius = GraphiteFocusPresentation.Radius.compact
         statusBadge.layer?.borderWidth = 1
         processingStatus.translatesAutoresizingMaskIntoConstraints = false
+        processingProgress.translatesAutoresizingMaskIntoConstraints = false
         statusBadge.addSubview(processingStatus)
-        NSLayoutConstraint.activate([
-            processingStatus.leadingAnchor.constraint(equalTo: statusBadge.leadingAnchor, constant: GraphiteFocusPresentation.Space.compact),
-            processingStatus.trailingAnchor.constraint(equalTo: statusBadge.trailingAnchor, constant: -GraphiteFocusPresentation.Space.compact),
-            processingStatus.topAnchor.constraint(equalTo: statusBadge.topAnchor, constant: GraphiteFocusPresentation.Space.primitive),
-            processingStatus.bottomAnchor.constraint(equalTo: statusBadge.bottomAnchor, constant: -GraphiteFocusPresentation.Space.primitive)
-        ])
+        statusBadge.addSubview(processingProgress)
+        for stateView in [processingStatus, processingProgress] {
+            NSLayoutConstraint.activate([
+                stateView.leadingAnchor.constraint(equalTo: statusBadge.leadingAnchor, constant: GraphiteFocusPresentation.Space.compact),
+                stateView.trailingAnchor.constraint(equalTo: statusBadge.trailingAnchor, constant: -GraphiteFocusPresentation.Space.compact),
+                stateView.topAnchor.constraint(equalTo: statusBadge.topAnchor, constant: GraphiteFocusPresentation.Space.primitive),
+                stateView.bottomAnchor.constraint(equalTo: statusBadge.bottomAnchor, constant: -GraphiteFocusPresentation.Space.primitive)
+            ])
+        }
+        processingProgress.isHidden = true
         caption.addArrangedSubview(titleBar)
         caption.addArrangedSubview(metadataBar)
         caption.addArrangedSubview(statusBadge)
@@ -445,9 +475,12 @@ final class MeetingManagementView: NSView {
         metadataBar.widthAnchor.constraint(lessThanOrEqualTo: caption.widthAnchor).isActive = true
         caption.translatesAutoresizingMaskIntoConstraints = false
         addSubview(caption)
-        outcomesContainer.orientation = .vertical
-        outcomesContainer.alignment = .leading
-        outcomesContainer.widthAnchor.constraint(equalTo: overviewPage.widthAnchor).isActive = true
+        for container in [myActionsContainer, outcomesContainer] {
+            container.orientation = .vertical
+            container.alignment = .leading
+            container.widthAnchor.constraint(equalTo: overviewPage.widthAnchor,
+                constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
+        }
         let stack = MeetingDetailDocumentView(views: [overviewPage, timelinePage, status])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -456,7 +489,8 @@ final class MeetingManagementView: NSView {
         timelinePage.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         for page in [overviewPage, timelinePage] {
             for item in page.arrangedSubviews where item is NSStackView && item !== retryRows {
-                item.widthAnchor.constraint(equalTo: page.widthAnchor).isActive = true
+                let inset = page === overviewPage ? 2 * GraphiteFocusPresentation.Space.panel : 0
+                item.widthAnchor.constraint(equalTo: page.widthAnchor, constant: -inset).isActive = true
             }
         }
         status.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -466,15 +500,24 @@ final class MeetingManagementView: NSView {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.documentView = stack
+        scroll.setAccessibilityIdentifier("meeting-detail-scroll")
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pinnedAudio)
         addSubview(scroll)
+        pinnedAudio.translatesAutoresizingMaskIntoConstraints = false
+        overviewScrollTop = scroll.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact)
+        timelineScrollTop = scroll.topAnchor.constraint(equalTo: pinnedAudio.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             caption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: GraphiteFocusPresentation.Space.panel),
             caption.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -GraphiteFocusPresentation.Space.panel),
             caption.topAnchor.constraint(equalTo: topAnchor, constant: GraphiteFocusPresentation.Space.compact),
-            scroll.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact),
+            pinnedAudio.leadingAnchor.constraint(equalTo: leadingAnchor, constant: GraphiteFocusPresentation.Space.panel),
+            pinnedAudio.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -GraphiteFocusPresentation.Space.panel),
+            pinnedAudio.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact),
+            pinnedAudio.arrangedSubviews[1].widthAnchor.constraint(equalTo: pinnedAudio.widthAnchor),
+            overviewScrollTop!,
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         ])
@@ -492,11 +535,11 @@ final class MeetingManagementView: NSView {
         scroll.heightAnchor.constraint(equalToConstant: height).isActive = true
         scroll.setAccessibilityIdentifier(title.hasPrefix("AI summary") ? "meeting-summary-editor" : "meeting-notes-editor")
         let isSummary = title.hasPrefix("AI summary")
-        let card = NSHostingView(rootView: MeetingOverviewCard(title: title, content: "", unavailable: "Content unavailable.",
+        let card = NSHostingView(rootView: MeetingOverviewSection(title: title, content: "", unavailable: "Content unavailable.",
             canEdit: false, expand: {}, edit: {}, copy: {}))
         card.translatesAutoresizingMaskIntoConstraints = false
-        if isSummary { summaryCard = card; summaryEditorScroll = scroll }
-        else { notesCard = card; notesEditorScroll = scroll }
+        if isSummary { summaryOverviewSection = card; summaryEditorScroll = scroll }
+        else { notesOverviewSection = card; notesEditorScroll = scroll }
         let editorRow = NSStackView(views: [scroll, button])
         editorRow.orientation = .vertical
         editorRow.alignment = .leading
@@ -537,6 +580,15 @@ final class MeetingManagementView: NSView {
         heading.font = GraphiteFocusPresentation.Typography.sectionHeading
         heading.alignment = .left
         return heading
+    }
+
+    private func localControlRow(_ controls: [NSView]) -> NSStackView {
+        let row = NSStackView(views: controls)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = GraphiteFocusPresentation.Space.compact
+        controls.forEach(GraphiteFocusOverflow.protectTrailingControl)
+        return row
     }
 
     @objc private func toggleAdvancedFilters() {
@@ -589,12 +641,12 @@ final class MeetingManagementView: NSView {
             selectedID = nil
             rows = []
             table.reloadData()
-            meetingTitle.stringValue = "Meetings unavailable"
+            GraphiteFocusPageHeader.setTitle("Meetings unavailable", on: meetingTitle)
             statusBadge.isHidden = true
             overview.stringValue = "Choose a workspace in Settings to see your Meetings."
             status.stringValue = "Meetings unavailable. Choose a workspace in Settings."
             clearEvidence()
-            showUnavailableCards()
+            showUnavailableOverviewSections()
             reprocessButton.isEnabled = false
             renameButton.isEnabled = false
             archiveButton.isEnabled = false
@@ -608,14 +660,14 @@ final class MeetingManagementView: NSView {
             rows = browserRows.visible.filter(matchesQueue)
             configureProjectFilter(rows: browserRows.available)
             table.reloadData()
-            filterStatus.stringValue = rows.isEmpty ? "No matching Meetings" : "\(rows.count) Meetings"
+            updateFilterStatus(visibleCount: rows.count)
             guard !rows.isEmpty else {
                 clearAudio()
                 closeTimeline()
                 selectedID = nil
                 selectedDoorwayVersion = nil
                 selectedSummaryVersion = nil
-                meetingTitle.stringValue = "No matching Meetings"
+                GraphiteFocusPageHeader.setTitle("No matching Meetings", on: meetingTitle)
                 statusBadge.isHidden = true
                 summaryPlaceholder.isHidden = true
                 summaryEditorRow?.isHidden = true
@@ -626,7 +678,7 @@ final class MeetingManagementView: NSView {
                 actionItems.stringValue = ""
                 displayedDetail = nil
                 clearEvidence()
-                showUnavailableCards()
+                showUnavailableOverviewSections()
                 files.arrangedSubviews.forEach { files.removeArrangedSubview($0); $0.removeFromSuperview() }
                 saveNotesButton.isEnabled = false
                 saveSummaryButton.isEnabled = false
@@ -663,6 +715,39 @@ final class MeetingManagementView: NSView {
         }
     }
 
+    private func updateFilterStatus(visibleCount: Int) {
+        let filters = activeFilterDescriptions()
+        let countText = visibleCount == 1 ? "1 Meeting" : "\(visibleCount) Meetings"
+        let detail = filters.isEmpty ? "No list filters" : filters.joined(separator: " · ")
+        filterStatus.stringValue = "\(visibleCount == 0 ? "No matching Meetings" : countText) • \(detail)"
+        GraphiteFocusOverflow.configureSecondaryMetadata(filterStatus, fullText: filterStatus.stringValue)
+        filterStatus.setAccessibilityValue(filterStatus.stringValue)
+    }
+
+    private func activeFilterDescriptions() -> [String] {
+        var filters: [String] = ["Queue: \(queueTitle(selectedQueue))"]
+        let query = queryField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty { filters.append("Text: “\(query)”") }
+        if let project = projectFilter.selectedItem?.representedObject as? String { filters.append("Project: \(project)") }
+        if let processing = processingFilter.selectedItem?.representedObject as? MeetingProcessingFilter,
+           processing != .all,
+           let title = processingFilter.titleOfSelectedItem {
+            filters.append("State: \(title)")
+        }
+        if archiveFilter.indexOfSelectedItem == 1 { filters.append("Archived") }
+        if startDateEnabled.state == .on { filters.append("From: \(Self.filterDateFormatter.string(from: startDatePicker.dateValue))") }
+        if endDateEnabled.state == .on { filters.append("To: \(Self.filterDateFormatter.string(from: endDatePicker.dateValue))") }
+        return filters
+    }
+
+    private func queueTitle(_ queue: MeetingQueue) -> String {
+        switch queue {
+        case .recorded: return "Recorded"
+        case .attention: return "Needs attention"
+        case .ready: return "Ready"
+        }
+    }
+
     private func currentFilters() -> MeetingBrowserFilters {
         MeetingBrowserFilters(
             query: queryField.stringValue,
@@ -687,17 +772,14 @@ final class MeetingManagementView: NSView {
             playButton.updateAppearance()
             selectedDoorwayVersion = selected.doorwayVersion
             selectedSummaryVersion = selected.summaryVersion
-            meetingTitle.stringValue = selected.row.title
-            timelineTitle.stringValue = selected.row.title + " · Transcript & recording"
-            timelineSubtitle.stringValue = detailOverview(selected)
-            meetingTitle.toolTip = selected.row.title
+            GraphiteFocusPageHeader.setTitle(selected.row.title, on: meetingTitle)
             statusBadge.isHidden = false
-            processingStatus.setStatus(statusTitle(for: selected.row),
-                meaning: statusMeaning(for: selected.row), colors: presentationColors)
-            styleStatusBadge(meaning: statusMeaning(for: selected.row))
+            configureMeetingState(selected.row)
             overview.stringValue = detailOverview(selected)
             summaryPlaceholder.isHidden = true
             if changedMeeting {
+                timelineNavigation.jump = nil
+                closeTimeline()
                 summaryEditorRow?.isHidden = true
                 notesEditorRow?.isHidden = true
             }
@@ -710,7 +792,7 @@ final class MeetingManagementView: NSView {
                 summary.string = renderedSummary
                 loadedSummary = renderedSummary
             }
-            updateOverviewCards(selected)
+            updateOverviewSections(selected)
             actionItems.stringValue = actionItemText(selected)
             let evidenceChanged = displayedDetail != selected || changedMeeting
             displayedDetail = selected
@@ -718,7 +800,10 @@ final class MeetingManagementView: NSView {
             toolbar.isHidden = false
             transcriptionButton.isEnabled = true
             editSummaryTool.isEnabled = selectedSummaryVersion != nil
-            editNotesTool.isHidden = selected.humanNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let hasNotes = !selected.humanNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            editNotesTool.isHidden = !hasNotes
+            editNotesTool.superview?.isHidden = !hasNotes
+            notesSection?.isHidden = !hasNotes
             editNotesTool.isEnabled = selectedDoorwayVersion != nil
             saveNotesButton.isEnabled = selectedDoorwayVersion != nil
             saveSummaryButton.isEnabled = selectedSummaryVersion != nil
@@ -742,18 +827,112 @@ final class MeetingManagementView: NSView {
         }
     }
 
+    func validateBrowserFilterPresentationFixture() {
+        let savedQuery = queryField.stringValue
+        let savedQueue = selectedQueue
+        defer {
+            queryField.stringValue = savedQuery
+            selectedQueue = savedQueue
+            updateQueueButtons()
+            updateFilterStatus(visibleCount: rows.count)
+        }
+        precondition(queryField.placeholderString == "Filter meetings", "Meeting browser field must be labeled as a row filter")
+        precondition(queryField.accessibilityLabel() as? String == "Filter meetings", "Meeting browser filter must have a distinct VoiceOver name")
+        queryField.stringValue = "roadmap"
+        selectedQueue = .ready
+        updateQueueButtons()
+        updateFilterStatus(visibleCount: 2)
+        precondition(filterStatus.stringValue.contains("Queue: Ready") && filterStatus.stringValue.contains("Text: “roadmap”"),
+                     "Meeting browser must show active list filter context")
+    }
+
+    func validateLongContentOverflowFixture() {
+        let savedQuery = queryField.stringValue
+        let savedStatus = filterStatus.stringValue
+        defer {
+            queryField.stringValue = savedQuery
+            filterStatus.stringValue = savedStatus
+            GraphiteFocusOverflow.configureSecondaryMetadata(filterStatus, fullText: savedStatus)
+        }
+        let longTitle = "Зустріч із надзвичайно довгою перекладеною назвою про контрольні інтерфейси, цитати, фільтри та поведінку переповнення на підтримуваному мінімумі"
+        GraphiteFocusPageHeader.setTitle(longTitle, on: meetingTitle)
+        precondition(meetingTitle.maximumNumberOfLines == 1 && meetingTitle.lineBreakMode == .byTruncatingTail,
+                     "Long Meeting titles must tail-truncate visually")
+        precondition(meetingTitle.toolTip == longTitle && meetingTitle.accessibilityLabel() == longTitle,
+                     "Long Meeting titles must remain readable in full")
+        queryField.stringValue = "надзвичайно-довгий-фільтр-який-не-може-витіснити-список"
+        updateFilterStatus(visibleCount: 0)
+        precondition(filterStatus.toolTip?.contains(queryField.stringValue) == true,
+                     "Filtered empty state must expose full active Meeting filters")
+        let path = "Meetings/2026/09/20/дуже-довга-назва-наради-з-перекладеним-шляхом/transcript.json"
+        let pathLabel = NSTextField(labelWithString: path)
+        GraphiteFocusOverflow.configureSecondaryMetadata(pathLabel, fullText: path)
+        precondition(pathLabel.lineBreakMode == .byTruncatingMiddle && pathLabel.toolTip == path,
+                     "Long source paths may truncate only with a full-text route")
+        let prose = NSTextField(wrappingLabelWithString: "Status explanation with a long localized-looking sentence wraps instead of clipping or using an ellipsis as the sole essential state text.")
+        GraphiteFocusOverflow.configureWrappingText(prose, fullText: prose.stringValue)
+        precondition(prose.maximumNumberOfLines == 0 && prose.lineBreakMode == .byWordWrapping,
+                     "Status explanations and prose must wrap")
+        let citations = NSPopUpButton(frame: .zero, pullsDown: true)
+        citations.addItem(withTitle: "Sources (6)")
+        citations.setAccessibilityLabel("Transcript sources for the cited action")
+        precondition(citations.accessibilityLabel() == "Transcript sources for the cited action",
+                     "Crowded citations must have an accessible disclosure or menu route")
+        let typedReviewRow = MeetingOutcomeRow(id: "fixture", text: "Send the localized draft",
+            provenance: "Generated from meeting", reviewState: .pending, citations: [])
+        precondition(typedReviewRow.isPendingReview && typedReviewRow.detailText.contains("pending"),
+                     "Meeting review availability must use typed review state")
+        let emptyState = FocusableMeetingEmptyState(labelWithString: "No actions are awaiting review.")
+        precondition(emptyState.acceptsFirstResponder,
+                     "The Meeting review empty state must accept programmatic focus")
+        let processingRow = MeetingBrowserRow(id: "processing", title: "Processing", startedAt: nil,
+            meetingRelativePath: "Meetings/processing/meeting.md", captureState: .stopped,
+            processingState: .processing)
+        let unavailableRow = MeetingBrowserRow(id: "unavailable", title: "Unavailable", startedAt: nil,
+            meetingRelativePath: "Meetings/unavailable/meeting.md", captureState: .unavailable,
+            processingState: .unavailable)
+        precondition(statusMeaning(for: processingRow) == .informational &&
+                     statusMeaning(for: unavailableRow) == .informational,
+                     "Meeting processing and unavailable states must not borrow attention or failure meaning")
+    }
+
+    func validateTimelineSelectionFixture() {
+        let kinds = Set(MeetingTimelineMoment.Kind.allCases)
+        let moments = (0..<240).map { index in
+            MeetingTimelineMoment(id: "\(index)", seconds: Double(index * 60),
+                kind: index.isMultiple(of: 3) ? .action : .transcript,
+                text: index == 235 ? "unique late phrase" : "ordinary", context: "Speaker", seekSeconds: Double(index * 60))
+        }
+        let first = MeetingTimelineSelection.visible(moments, included: kinds, position: 0, query: "")
+        precondition(first.count == 15 && first.last?.seconds == 840, "Ordinary browsing must bound a four-hour timeline")
+        let fourthHour = MeetingTimelineSelection.visible(moments, included: [.action], position: 3 * 3600 + 15 * 60, query: "")
+        precondition(fourthHour.allSatisfy { $0.kind == .action && $0.seconds >= 11700 && $0.seconds < 12600 },
+                     "Hour jumps and independent filters must respect the selected window")
+        precondition(MeetingTimelineSelection.visible(moments, included: kinds, position: 0, query: "unique late phrase").count == 1,
+                     "Search must cover the whole recording")
+        precondition(MeetingTimelineSelection.visible(moments, included: kinds, position: 0, query: "no match").isEmpty,
+                     "Missing search terms must produce an empty result")
+        openTimeline()
+        precondition(!caption.isHidden && overviewPage.isHidden && !timelinePage.isHidden,
+                     "Transcript replaces detail content but retains the meeting header")
+        closeTimeline()
+        precondition(!overviewPage.isHidden && timelinePage.isHidden, "Back must restore meeting details")
+    }
+
     func validateCaptionLayoutFixture() {
         let savedTitle = meetingTitle.stringValue
         let savedOverview = overview.stringValue
         let savedHidden = statusBadge.isHidden
         defer {
-            meetingTitle.stringValue = savedTitle
+            GraphiteFocusPageHeader.setTitle(savedTitle, on: meetingTitle)
             overview.stringValue = savedOverview
             statusBadge.isHidden = savedHidden
         }
-        meetingTitle.stringValue = "Untitled Meeting at 2026-10-07 17:35"
+        GraphiteFocusPageHeader.setTitle("Untitled Meeting at 2026-10-07 17:35 — This deliberately localized-looking title continues far beyond the available header width so the Page Header title must truncate at the tail while all local actions remain visible", on: meetingTitle)
         overview.stringValue = "7 Oct 2026 at 17:35  ·  Project: Orchid"
         statusBadge.isHidden = false
+        processingProgress.isHidden = true
+        processingStatus.isHidden = false
         processingStatus.setStatus("Ready", meaning: .success, colors: presentationColors)
         styleStatusBadge(meaning: .success)
         layoutSubtreeIfNeeded()
@@ -762,14 +941,20 @@ final class MeetingManagementView: NSView {
         let state = statusBadge.convert(statusBadge.bounds, to: self)
         precondition(bounds.height - title.maxY < 85, "Meeting caption must occupy the compact top region")
         let toolbarFrame = toolbar.convert(toolbar.bounds, to: self)
-        precondition(state.minY >= metadata.maxY - 1, "Meeting state must occupy the third caption line")
-        precondition(abs(state.minX - metadata.minX) < 2, "Meeting state must align with the date")
+        precondition(meetingTitle.maximumNumberOfLines == 1 && meetingTitle.lineBreakMode == .byTruncatingTail,
+                     "Meeting Page Header title must be a single tail-truncated line")
+        precondition(meetingTitle.toolTip == meetingTitle.stringValue && meetingTitle.accessibilityLabel() == meetingTitle.stringValue,
+                     "Meeting Page Header title must expose the complete title outside the truncated visual line")
+        precondition(title.maxX <= toolbarFrame.minX - GraphiteFocusPresentation.Space.compact + 1,
+                     "Meeting title must yield width before overlapping local header actions")
+        precondition(state.maxY <= metadata.minY + 1, "Meeting state must occupy the third caption line")
+        precondition(abs(state.minX - metadata.minX) <= 2, "Meeting state must align with the date")
         precondition(abs(toolbarFrame.maxX - caption.convert(caption.bounds, to: self).maxX) < 2,
                      "Meeting controls must align to the right edge of the caption")
         precondition(transcriptionButton.bounds.width == 36 && transcriptionButton.bounds.height == 36,
                      "Meeting toolbar controls must match the reference dimensions")
         let controls = [transcriptionButton, editSummaryTool, editNotesTool, archiveButton, moreButton]
-        for control in controls {
+        for control in controls where !control.isHidden {
             let frame = control.convert(control.bounds, to: toolbar)
             let reference = transcriptionButton.convert(transcriptionButton.bounds, to: toolbar)
             precondition(abs(frame.minY - reference.minY) < 1 && abs(frame.maxY - reference.maxY) < 1,
@@ -829,6 +1014,10 @@ final class MeetingManagementView: NSView {
             precondition(audioStatus.stringValue.contains("microphone-only"), "Degraded playback must be labeled")
             precondition(abs(waveform.maxValue - 1) < 0.01, "Seek range must match playable duration")
             precondition(waveform.accessibilityRole() == .slider, "Waveform must retain native slider accessibility")
+            openTimeline()
+            layoutSubtreeIfNeeded()
+            precondition(waveform.bounds.width > 100 && waveform.bounds.height > 0,
+                         "Playable audio must have a visible, full-width seek target in the real detail layout")
             waveform.setFrameSize(NSSize(width: 220, height: 44))
             let click = NSEvent.mouseEvent(with: .leftMouseDown,
                 location: waveform.convert(NSPoint(x: 110, y: 22), to: nil), modifierFlags: [],
@@ -861,6 +1050,9 @@ final class MeetingManagementView: NSView {
             }
             precondition((audioPlayer?.elapsed ?? 0) < 0.9 && audioPlayer?.isPlaying == true,
                          "Playback must not count elapsed device time again on every timer tick")
+            waveform.mouseDown(with: click)
+            precondition(abs((audioPlayer?.elapsed ?? 0) - 0.5) < 0.08 && audioPlayer?.isPlaying == true,
+                         "Seeking during playback must move the playhead without stopping playback")
             playButton.performClick(nil)
             precondition(audioPlayer?.isPlaying == false && playButton.title == "Play" &&
                          playButton.accessibilityLabel() == "Play Meeting audio",
@@ -1083,6 +1275,8 @@ final class MeetingManagementView: NSView {
         waveform.isEnabled = false
         waveform.doubleValue = 0
         audioTime.stringValue = "0:00 / 0:00"
+        audioTimeWidth?.constant = 116
+        waveformWidth?.constant = -(52 + 116 + 2 * GraphiteFocusPresentation.Space.compact)
         updateActiveSegment(at: nil)
     }
 
@@ -1096,6 +1290,10 @@ final class MeetingManagementView: NSView {
             audioPlayer = player
             loadWaveform(for: playback, duration: player.duration)
             waveform.maxValue = player.duration
+            // Hour-long recordings use two HH:MM:SS labels, not the short MM:SS pair.
+            let labelWidth: CGFloat = player.duration >= 3600 ? 180 : 116
+            audioTimeWidth?.constant = labelWidth
+            waveformWidth?.constant = -(52 + labelWidth + 2 * GraphiteFocusPresentation.Space.compact)
             waveform.isEnabled = true
             playButton.isEnabled = true
             audioTime.stringValue = "0:00 / \(timeLabel(player.duration))"
@@ -1136,6 +1334,7 @@ final class MeetingManagementView: NSView {
     private func timeLabel(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "unknown" }
         let whole = Int(min(seconds, Double(Int.max / 120)))
+        if whole >= 3600 { return String(format: "%02d:%02d:%02d", whole / 3600, whole / 60 % 60, whole % 60) }
         return "\(whole / 60):\(String(format: "%02d", whole % 60))"
     }
 
@@ -1162,21 +1361,41 @@ final class MeetingManagementView: NSView {
         GraphiteFocusPresentation.Colors(environment: .system(window: window))
     }
 
+    private func configureMeetingState(_ row: MeetingBrowserRow) {
+        let failed = row.job?.status == .failed
+        let isProcessing = row.processingState == .processing && !failed
+        processingStatus.isHidden = isProcessing
+        processingProgress.isHidden = !isProcessing
+        if isProcessing {
+            let stage = row.job?.stage.map { "Stage: \($0)" } ?? "Work in progress"
+            processingProgress.configure(title: "Processing", value: nil,
+                                         valueDescription: stage, colors: presentationColors)
+            let colors = presentationColors
+            statusBadge.layer?.backgroundColor = colors.surfacePanel.cgColor
+            statusBadge.layer?.borderColor = colors.accent.withAlphaComponent(0.48).cgColor
+        } else {
+            let meaning = statusMeaning(for: row)
+            processingStatus.setStatus(statusTitle(for: row), meaning: meaning, colors: presentationColors)
+            styleStatusBadge(meaning: meaning)
+        }
+    }
+
     private func styleStatusBadge(meaning: GraphiteFocusStatusMeaning) {
         let colors = GraphiteFocusPresentation.Colors(environment: .system(window: window))
         let tint = meaning.color(in: colors)
         let fill = colors.surfacePanel
-        processingStatus.textColor = tint
+        // Meeting readiness is the sole bounded violet status exception.
+        processingStatus.textColor = meaning == .success ? colors.accent : tint
         statusBadge.layer?.backgroundColor = fill.cgColor
-        statusBadge.layer?.borderColor = tint.withAlphaComponent(0.48).cgColor
+        statusBadge.layer?.borderColor = (meaning == .success ? colors.accent : tint).withAlphaComponent(0.48).cgColor
     }
 
     private func statusMeaning(for row: MeetingBrowserRow) -> GraphiteFocusStatusMeaning {
         if row.job?.status == .failed { return .destructive }
         switch row.processingState {
         case .ready: return .success
-        case .live, .processing, .needsAttention: return .attention
-        case .unavailable: return .destructive
+        case .live, .needsAttention: return .attention
+        case .processing, .unavailable: return .informational
         }
     }
 
@@ -1185,7 +1404,10 @@ final class MeetingManagementView: NSView {
     }
 
     private func statusText(for row: MeetingBrowserRow) -> String {
-        "\(statusMeaning(for: row).symbol) \(statusTitle(for: row))"
+        if row.processingState == .processing, row.job?.status != .failed {
+            return "Processing, \(row.job?.stage.map { "stage \($0)" } ?? "work in progress")"
+        }
+        return "\(statusMeaning(for: row).symbol) \(statusTitle(for: row))"
     }
 
     private func meetingSymbol(_ name: String, label: String, color: NSColor) -> NSImageView {
@@ -1226,33 +1448,39 @@ final class MeetingManagementView: NSView {
     }
 
     @objc private func openTimeline() {
-        caption.isHidden = true
         overviewPage.isHidden = true
+        status.isHidden = true
         timelinePage.isHidden = false
+        overviewScrollTop?.isActive = false
+        pinnedAudio.isHidden = false
+        timelineScrollTop?.isActive = true
         window?.makeFirstResponder(backButton)
     }
 
     @objc private func closeTimeline() {
-        caption.isHidden = false
         timelinePage.isHidden = true
+        timelineScrollTop?.isActive = false
+        pinnedAudio.isHidden = true
+        overviewScrollTop?.isActive = true
+        status.isHidden = false
         overviewPage.isHidden = false
         window?.makeFirstResponder(transcriptionButton)
     }
 
-    private func showUnavailableCards() {
-        summaryCard?.rootView = MeetingOverviewCard(title: "AI summary", content: "", unavailable: "No meeting selected.",
+    private func showUnavailableOverviewSections() {
+        summaryOverviewSection?.rootView = MeetingOverviewSection(title: "AI summary", content: "", unavailable: "No meeting selected.",
             canEdit: false, expand: {}, edit: {}, copy: {})
-        notesCard?.rootView = MeetingOverviewCard(title: "My notes", content: "", unavailable: "No meeting selected.",
+        notesOverviewSection?.rootView = MeetingOverviewSection(title: "My notes", content: "", unavailable: "No meeting selected.",
             canEdit: false, expand: {}, edit: {}, copy: {})
     }
 
-    private func updateOverviewCards(_ detail: MeetingBrowserDetail) {
-        summaryCard?.rootView = MeetingOverviewCard(title: "AI summary", content: detail.summary?.summary ?? "",
+    private func updateOverviewSections(_ detail: MeetingBrowserDetail) {
+        summaryOverviewSection?.rootView = MeetingOverviewSection(title: "AI summary", content: detail.summary?.summary ?? "",
             unavailable: "Summary unavailable or still being generated.", canEdit: detail.summaryVersion != nil,
             expand: { [weak self] in self?.expandSummary() },
             edit: { [weak self] in self?.summaryEditorRow?.isHidden = false },
             copy: { [weak self] in self?.copySummary() })
-        notesCard?.rootView = MeetingOverviewCard(title: "My notes", content: detail.humanNotes,
+        notesOverviewSection?.rootView = MeetingOverviewSection(title: "My notes", content: detail.humanNotes,
             unavailable: "No notes yet.", canEdit: detail.doorwayVersion != nil,
             expand: { [weak self] in self?.expandNotes() },
             edit: { [weak self] in self?.notesEditorRow?.isHidden = false },
@@ -1287,9 +1515,16 @@ final class MeetingManagementView: NSView {
             group.arrangedSubviews.forEach { group.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
         segmentLabels = []
-        outcomesContainer.arrangedSubviews.forEach { outcomesContainer.removeArrangedSubview($0); $0.removeFromSuperview() }
+        for container in [myActionsContainer, outcomesContainer] {
+            container.arrangedSubviews.forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
+        }
         actionRows = [:]
+        pendingActionIDs = []
+        actionReviewControls = [:]
+        actionReviewEmptyState = nil
+        actionReviewFeedbackLabel = nil
         evidenceTargets = [:]
+        outcomeSourceTargets = [:]
         outcomeCopy = [:]
     }
 
@@ -1325,6 +1560,7 @@ final class MeetingManagementView: NSView {
                 let label = NSTextField(wrappingLabelWithString: "\(kind): \(outcome.text)")
                 label.alignment = .left
                 label.font = GraphiteFocusPresentation.Typography.body
+                GraphiteFocusOverflow.configureWrappingText(label, fullText: label.stringValue)
                 let copy = NSButton(title: "Copy", target: self, action: #selector(copyOutcome(_:)))
                 let key = UUID().uuidString
                 copy.identifier = NSUserInterfaceItemIdentifier(key)
@@ -1333,11 +1569,13 @@ final class MeetingManagementView: NSView {
                 let edit = NSButton(title: "Edit in summary ↗", target: self, action: #selector(expandSummary))
                 edit.isEnabled = detail.summaryVersion != nil
                 edit.setAccessibilityLabel("Edit \(kind) in summary Markdown document")
-                let row = NSStackView(views: [label, copy, edit])
-                row.orientation = .horizontal
-                row.alignment = .top
+                let controls = localControlRow([copy, edit])
+                let row = NSStackView(views: [label, controls])
+                row.orientation = .vertical
+                row.alignment = .leading
                 row.spacing = GraphiteFocusPresentation.Space.compact
                 evidenceRows.addArrangedSubview(row)
+                label.widthAnchor.constraint(lessThanOrEqualTo: evidenceRows.widthAnchor).isActive = true
                 for citation in outcome.citations {
                     evidenceRows.addArrangedSubview(NSTextField(wrappingLabelWithString: "Evidence: \(citation.segmentID) (≈\(timeLabel(citation.startSeconds))–\(timeLabel(citation.endSeconds)))"))
                     addEvidenceControl(to: evidenceRows, segmentID: citation.segmentID, seekSeconds: citation.seekSeconds, meetingID: detail.row.id)
@@ -1350,83 +1588,222 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderOutcomes(_ detail: MeetingBrowserDetail) {
-        outcomesContainer.arrangedSubviews.forEach { outcomesContainer.removeArrangedSubview($0); $0.removeFromSuperview() }
-        func makeRow(_ id: String, _ text: String, _ detailText: String, _ citations: [MeetingCitation]) -> MeetingOutcomeRow {
-            MeetingOutcomeRow(id: id, text: text, detail: detailText, citations: citations.map { citation in
-                (label: timeLabel(citation.startSeconds), segmentID: citation.segmentID,
-                 seconds: citation.seekSeconds.flatMap { seconds in
-                     audioPlayer.map { seconds <= $0.duration ? seconds : nil } ?? nil
-                 })
-            })
+        for container in [myActionsContainer, outcomesContainer] {
+            container.arrangedSubviews.forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
+        }
+        func makeRow(
+            _ id: String,
+            _ text: String,
+            provenance: String,
+            reviewState: ProposalReviewState? = nil,
+            citations: [MeetingCitation]
+        ) -> MeetingOutcomeRow {
+            MeetingOutcomeRow(id: id, text: text, provenance: provenance,
+                              reviewState: reviewState, citations: citations)
         }
         var groups: [MeetingOutcomeGroup] = []
-        if !detail.decisions.isEmpty {
-            groups.append(MeetingOutcomeGroup(id: "decisions", title: "Decisions", note: "\(detail.decisions.count) captured",
-                rows: detail.decisions.enumerated().map { makeRow("decision-\($0.offset)", $0.element.text, "", $0.element.citations) }))
-        }
         if !detail.myActionItems.isEmpty {
-            groups.append(MeetingOutcomeGroup(id: "mine", title: "My actions", note: "Generated · review before adding to Todos",
+            groups.append(MeetingOutcomeGroup(kind: .mine, title: "My actions", note: "Generated · review before adding to Todos",
                 rows: detail.myActionItems.map { item in
                     let proposalID = "meeting-action:\(detail.row.id):\(item.id)"
                     let saved = try? serviceProvider()?.actionDraft(id: proposalID)
-                    return makeRow(proposalID, saved?.title ?? item.text, item.reviewState.rawValue, item.citations)
+                    return makeRow(proposalID, saved?.title ?? item.text,
+                                   provenance: "Generated from meeting",
+                                   reviewState: item.reviewState, citations: item.citations)
                 }))
         }
         if !detail.otherActionItems.isEmpty {
-            groups.append(MeetingOutcomeGroup(id: "others", title: "Others’ actions", note: "Reference only",
-                rows: detail.otherActionItems.map { makeRow($0.id, $0.text, "Reference only", $0.citations) }))
+            groups.append(MeetingOutcomeGroup(kind: .others, title: "Others’ actions", note: "Reference only",
+                rows: detail.otherActionItems.map {
+                    makeRow($0.id, $0.text, provenance: "Reference only", citations: $0.citations)
+                }))
+        }
+        if !detail.decisions.isEmpty {
+            groups.append(MeetingOutcomeGroup(kind: .decisions, title: "Decisions", note: "\(detail.decisions.count) captured",
+                rows: detail.decisions.enumerated().map {
+                    makeRow("decision-\($0.offset)", $0.element.text,
+                            provenance: "Generated from meeting", citations: $0.element.citations)
+                }))
         }
         if !detail.openQuestions.isEmpty {
-            groups.append(MeetingOutcomeGroup(id: "questions", title: "Open questions", note: "\(detail.openQuestions.count) captured",
-                rows: detail.openQuestions.enumerated().map { makeRow("question-\($0.offset)", $0.element.text, "", $0.element.citations) }))
+            groups.append(MeetingOutcomeGroup(kind: .questions, title: "Open questions", note: "\(detail.openQuestions.count) captured",
+                rows: detail.openQuestions.enumerated().map {
+                    makeRow("question-\($0.offset)", $0.element.text,
+                            provenance: "Generated from meeting", citations: $0.element.citations)
+                }))
         }
-        actionRows = Dictionary(uniqueKeysWithValues: groups.filter { $0.id == "mine" }.flatMap(\.rows).map { ($0.id, $0) })
+        let reviewRows = groups.filter { $0.kind.isReviewWorkspace }.flatMap(\.rows)
+        actionRows = Dictionary(uniqueKeysWithValues: reviewRows.map { ($0.id, $0) })
+        pendingActionIDs = reviewRows.filter(\.isPendingReview).map(\.id)
+        if let feedback = actionReviewFeedback, feedback.meetingID == detail.row.id {
+            let label = GraphiteFocusStatusLabel()
+            label.setStatus(feedback.message, meaning: .success,
+                            colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+            myActionsContainer.addArrangedSubview(label)
+            actionReviewFeedbackLabel = label
+        }
         for group in groups {
-            let card = NSStackView()
-            card.orientation = .vertical
-            card.alignment = .leading
-            card.spacing = GraphiteFocusPresentation.Space.compact
-            card.edgeInsets = NSEdgeInsets(top: GraphiteFocusPresentation.Space.panel, left: GraphiteFocusPresentation.Space.panel,
-                                          bottom: GraphiteFocusPresentation.Space.panel, right: GraphiteFocusPresentation.Space.panel)
-            card.wantsLayer = true
-            card.layer?.cornerRadius = GraphiteFocusPresentation.Radius.panel
-            let colors = GraphiteFocusPresentation.Colors(environment: .system(window: window))
-            card.layer?.backgroundColor = colors.surfacePanel.cgColor
-            card.layer?.borderWidth = GraphiteFocusPresentation.Stroke.width
-            card.layer?.borderColor = colors.structuralStroke.cgColor
-            let heading = NSTextField(wrappingLabelWithString: group.title + " · " + group.note)
+            let boundedReviewWorkspace = group.kind.isReviewWorkspace
+            let section = NSStackView()
+            section.orientation = .vertical
+            section.alignment = .leading
+            section.spacing = GraphiteFocusPresentation.Space.compact
+            section.edgeInsets = NSEdgeInsets(
+                top: boundedReviewWorkspace ? GraphiteFocusPresentation.Space.panel : GraphiteFocusPresentation.Space.compact,
+                left: boundedReviewWorkspace ? GraphiteFocusPresentation.Space.panel : 0,
+                bottom: boundedReviewWorkspace ? GraphiteFocusPresentation.Space.panel : GraphiteFocusPresentation.Space.compact,
+                right: boundedReviewWorkspace ? GraphiteFocusPresentation.Space.panel : 0
+            )
+            if boundedReviewWorkspace {
+                let colors = GraphiteFocusPresentation.Colors(environment: .system(window: window))
+                section.wantsLayer = true
+                section.layer?.cornerRadius = GraphiteFocusPresentation.Radius.panel
+                section.layer?.backgroundColor = colors.surfacePanel.cgColor
+                section.layer?.borderWidth = GraphiteFocusPresentation.Stroke.width
+                section.layer?.borderColor = colors.structuralStroke.cgColor
+            }
+            let headingRow = NSStackView()
+            headingRow.orientation = .horizontal
+            headingRow.alignment = .firstBaseline
+            headingRow.spacing = GraphiteFocusPresentation.Space.compact
+            let heading = NSTextField(wrappingLabelWithString: group.title)
             heading.maximumNumberOfLines = 0
             heading.font = GraphiteFocusPresentation.Typography.sectionHeading
             heading.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            card.addArrangedSubview(heading)
-            heading.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
-            for row in group.rows {
-                let text = NSTextField(wrappingLabelWithString: row.text + "\nGenerated from meeting · " + row.detail)
+            let note = NSTextField(wrappingLabelWithString: group.note)
+            note.maximumNumberOfLines = 0
+            note.font = GraphiteFocusPresentation.Typography.metadata
+            note.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textMetadata
+            note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            headingRow.addArrangedSubview(heading)
+            headingRow.addArrangedSubview(note)
+            section.addArrangedSubview(headingRow)
+            let horizontalInset = boundedReviewWorkspace ? 2 * GraphiteFocusPresentation.Space.panel : 0
+            headingRow.widthAnchor.constraint(equalTo: section.widthAnchor, constant: -horizontalInset).isActive = true
+            for (rowOffset, row) in group.rows.enumerated() {
+                let comment = group.kind.isReviewWorkspace ? (try? serviceProvider()?.actionDraft(id: row.id))?.comment ?? "" : ""
+                let text = NSTextField(wrappingLabelWithString: row.text + "\n" + row.detailText +
+                    (comment.isEmpty ? "" : "\nComment: " + comment))
                 text.maximumNumberOfLines = 0
                 text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-                let line = NSStackView()
-                line.orientation = .horizontal
-                line.alignment = .centerY
-                line.spacing = GraphiteFocusPresentation.Space.compact
-                line.addArrangedSubview(text)
-                line.addArrangedSubview(NSView())
-                if group.id == "mine" {
-                    for (name, selector) in [("Edit", #selector(editAction(_:))), ("Review", #selector(reviewAction(_:)))] {
-                        let button = NSButton(title: name, target: self, action: selector)
-                        button.identifier = NSUserInterfaceItemIdentifier(row.id)
-                        button.toolTip = "\(name) my action: \(row.text)"
-                        button.setAccessibilityLabel(button.toolTip!)
-                        button.setAccessibilityIdentifier("meeting-action-\(name.lowercased())-\(row.id)")
-                        button.isEnabled = row.detail == "pending"
-                        button.setContentCompressionResistancePriority(.required, for: .horizontal)
-                        line.addArrangedSubview(button)
-                    }
+                GraphiteFocusOverflow.configureWrappingText(text, fullText: text.stringValue)
+                let controls = NSStackView()
+                controls.orientation = .horizontal
+                controls.alignment = .centerY
+                controls.spacing = GraphiteFocusPresentation.Space.compact
+                appendSourceControls(for: row, groupKind: group.kind, detail: detail, to: controls)
+                if group.kind.isReviewWorkspace {
+                    let edit = makeActionReviewButton(name: "Edit", selector: #selector(editAction(_:)), row: row)
+                    let review = makeActionReviewButton(name: "Review", selector: #selector(reviewAction(_:)), row: row)
+                    actionReviewControls[row.id] = (edit, review)
+                    controls.addArrangedSubview(edit)
+                    controls.addArrangedSubview(review)
                 }
-                card.addArrangedSubview(line)
-                line.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
+                let line = NSStackView(views: controls.arrangedSubviews.isEmpty ? [text] : [text, controls])
+                line.orientation = .vertical
+                line.alignment = .leading
+                line.spacing = GraphiteFocusPresentation.Space.compact
+                section.addArrangedSubview(line)
+                line.widthAnchor.constraint(equalTo: section.widthAnchor, constant: -horizontalInset).isActive = true
+                text.widthAnchor.constraint(equalTo: line.widthAnchor).isActive = true
+                if !boundedReviewWorkspace && rowOffset < group.rows.count - 1 {
+                    let separator = NSBox()
+                    separator.boxType = .separator
+                    section.addArrangedSubview(separator)
+                }
             }
-            outcomesContainer.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: outcomesContainer.widthAnchor).isActive = true
+            if boundedReviewWorkspace && pendingActionIDs.isEmpty {
+                let emptyState = FocusableMeetingEmptyState(
+                    labelWithString: "No actions are awaiting review."
+                )
+                emptyState.font = GraphiteFocusPresentation.Typography.body
+                emptyState.textColor = presentationColors.textSecondary
+                emptyState.setAccessibilityLabel("No actions are awaiting review")
+                section.addArrangedSubview(emptyState)
+                actionReviewEmptyState = emptyState
+            }
+            let container = group.kind.isReviewWorkspace ? myActionsContainer : outcomesContainer
+            container.addArrangedSubview(section)
+            section.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        }
+    }
+
+    private func makeActionReviewButton(name: String, selector: Selector, row: MeetingOutcomeRow) -> NSButton {
+        let button = NSButton(title: name, target: self, action: selector)
+        button.identifier = NSUserInterfaceItemIdentifier(row.id)
+        button.toolTip = "\(name) my action: \(row.text)"
+        button.setAccessibilityLabel(button.toolTip!)
+        button.setAccessibilityIdentifier("meeting-action-\(name.lowercased())-\(row.id)")
+        button.isEnabled = row.isPendingReview
+        GraphiteFocusOverflow.protectTrailingControl(button)
+        return button
+    }
+
+    private func appendSourceControls(for row: MeetingOutcomeRow, groupKind: MeetingOutcomeGroup.Kind, detail: MeetingBrowserDetail, to controls: NSStackView) {
+        guard !row.citations.isEmpty else { return }
+        let sourceButtons: [(key: String, button: NSButton)] = row.citations.enumerated().map { index, citation in
+            let valid = detail.transcript.contains(where: citation.matches)
+            let key = "\(row.id)-\(index)"
+            if valid {
+                outcomeSourceTargets[key] = OutcomeSourceTarget(
+                    meetingID: detail.row.id,
+                    citation: citation,
+                    kind: groupKind.timelineKind
+                )
+            }
+            let label = timeLabel(citation.startSeconds)
+            let source = NSButton(title: valid ? "↗ source \(label)" : "Source unavailable",
+                                  target: self, action: #selector(seekOutcomeSource(_:)))
+            source.identifier = NSUserInterfaceItemIdentifier(key)
+            source.setAccessibilityIdentifier("meeting-outcome-source-\(key)")
+            source.setAccessibilityLabel(valid ? "Show transcript source at \(label)" : "Transcript source unavailable")
+            source.isEnabled = valid
+            GraphiteFocusOverflow.protectTrailingControl(source)
+            return (key, source)
+        }
+        if sourceButtons.count <= 2 {
+            sourceButtons.forEach { controls.addArrangedSubview($0.button) }
+            return
+        }
+        let menuButton = NSPopUpButton(frame: .zero, pullsDown: true)
+        menuButton.addItem(withTitle: "Sources (\(sourceButtons.count))")
+        menuButton.setAccessibilityLabel("Transcript sources for \(row.text)")
+        for item in sourceButtons {
+            menuButton.menu?.addItem(NSMenuItem(title: item.button.title, action: #selector(seekOutcomeSourceMenuItem(_:)), keyEquivalent: ""))
+            menuButton.menu?.items.last?.target = self
+            menuButton.menu?.items.last?.representedObject = item.key
+            menuButton.menu?.items.last?.isEnabled = item.button.isEnabled
+        }
+        GraphiteFocusOverflow.protectTrailingControl(menuButton)
+        controls.addArrangedSubview(menuButton)
+    }
+
+    private struct OutcomeSourceTarget {
+        let meetingID: String
+        let citation: MeetingCitation
+        let kind: MeetingTimelineMoment.Kind
+    }
+
+    @objc private func seekOutcomeSourceMenuItem(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        seekOutcomeSource(key: key)
+    }
+
+    @objc private func seekOutcomeSource(_ sender: NSButton) {
+        guard let key = sender.identifier?.rawValue else { return }
+        seekOutcomeSource(key: key)
+    }
+
+    private func seekOutcomeSource(key: String) {
+        guard let target = outcomeSourceTargets[key],
+              let detail = displayedDetail, selectedID == target.meetingID,
+              detail.transcript.contains(where: target.citation.matches) else { return }
+        openTimeline()
+        timelineNavigation.show(seconds: target.citation.startSeconds,
+                                segmentID: target.citation.segmentID, kind: target.kind)
+        if audioSource == detail.playback,
+           let seconds = target.citation.validatedSeekSeconds(playbackDuration: audioPlayer?.duration) {
+            audioPlayer?.seek(to: seconds)
         }
     }
 
@@ -1434,43 +1811,151 @@ final class MeetingManagementView: NSView {
     @objc private func reviewAction(_ sender: NSButton) { presentActionEditor(sender, reviewing: true) }
 
     private func presentActionEditor(_ sender: NSButton, reviewing: Bool) {
-        guard let id = sender.identifier?.rawValue, let row = actionRows[id], row.detail == "pending",
+        guard let id = sender.identifier?.rawValue, let row = actionRows[id], row.isPendingReview,
               let meetingID = selectedID, let service = serviceProvider() else { return }
+        let removedIndex = pendingActionIDs.firstIndex(of: id)
         let draft = try? service.actionDraft(id: id)
-        let title = NSTextField(string: draft?.title ?? row.text)
-        title.setAccessibilityLabel("Action item text")
-        let comment = NSTextField(string: draft?.comment ?? "")
-        comment.setAccessibilityLabel("Comment")
-        let context = NSTextField(wrappingLabelWithString: "Generated from meeting · \(row.detail)\n\(row.citations.map(\.label).joined(separator: ", "))")
-        let fields = NSStackView(views: [context, NSTextField(labelWithString: "Action item text"), title,
-                                         NSTextField(labelWithString: "Comment"), comment])
+        let titleScroll = NSTextView.scrollableTextView()
+        let commentScroll = NSTextView.scrollableTextView()
+        let title = titleScroll.documentView as! NSTextView
+        let comment = commentScroll.documentView as! NSTextView
+        for (editor, label) in [(title, "Action item text"), (comment, "Comment")] {
+            editor.font = GraphiteFocusPresentation.Typography.body
+            editor.textColor = .labelColor
+            editor.backgroundColor = .textBackgroundColor
+            editor.isRichText = false
+            editor.textContainerInset = NSSize(width: GraphiteFocusPresentation.Space.compact,
+                                               height: GraphiteFocusPresentation.Space.compact)
+            editor.setAccessibilityLabel(label)
+        }
+        title.string = draft?.title ?? row.text
+        comment.string = draft?.comment ?? ""
+        titleScroll.hasVerticalScroller = true
+        commentScroll.hasVerticalScroller = true
+        titleScroll.heightAnchor.constraint(equalToConstant: 76).isActive = true
+        commentScroll.heightAnchor.constraint(equalToConstant: 56).isActive = true
+        let sources = row.citations.map { timeLabel($0.startSeconds) }.joined(separator: ", ")
+        let context = NSTextField(wrappingLabelWithString: "Provenance: \(row.detailText)\nSource: \(sources.isEmpty ? "No transcript citation available" : sources)")
+        let failure = GraphiteFocusStatusLabel()
+        failure.isHidden = true
+        let fields = NSStackView(views: [context, NSTextField(labelWithString: "Action item text"), titleScroll,
+                                         NSTextField(labelWithString: "Comment"), commentScroll, failure])
         fields.orientation = .vertical
         fields.alignment = .leading
         fields.spacing = GraphiteFocusPresentation.Space.compact
-        fields.frame = NSRect(x: 0, y: 0, width: 420, height: 130)
-        title.widthAnchor.constraint(equalTo: fields.widthAnchor).isActive = true
-        comment.widthAnchor.constraint(equalTo: fields.widthAnchor).isActive = true
+        fields.frame = NSRect(x: 0, y: 0, width: 480, height: 270)
+        titleScroll.widthAnchor.constraint(equalTo: fields.widthAnchor).isActive = true
+        commentScroll.widthAnchor.constraint(equalTo: fields.widthAnchor).isActive = true
+        failure.widthAnchor.constraint(equalTo: fields.widthAnchor).isActive = true
         let alert = NSAlert()
+        alert.icon = NSImage(systemSymbolName: reviewing ? "checklist" : "square.and.pencil",
+                             accessibilityDescription: reviewing ? "Review action" : "Edit action")
         alert.messageText = reviewing ? "Review my action" : "Edit my action"
-        alert.informativeText = reviewing ? "Accept creates a Todo. Decline dismisses this proposal." : "Save updates only the proposal; it does not accept it."
+        alert.informativeText = reviewing ? "Accept creates a Todo Item. Decline dismisses this proposal." : "Save updates only the proposal; it does not accept or create a Todo Item."
         alert.accessoryView = fields
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: reviewing ? "Accept" : "Save")
         if reviewing { alert.addButton(withTitle: "Decline") }
-        let choice = presentConfirmationAlert(alert)
-        guard choice != .alertFirstButtonReturn, selectedID == meetingID else { return }
-        do {
-            if choice == .alertSecondButtonReturn {
-                let newTitle = title.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !newTitle.isEmpty else { throw MeetingManagementError.retryRejected("Action text cannot be empty.") }
-                try service.saveActionDraft(id: id, title: newTitle, comment: comment.stringValue)
-                if reviewing { try service.reviewAction(id: id, accept: true) }
-            } else if reviewing && choice == .alertThirdButtonReturn {
-                try service.reviewAction(id: id, accept: false)
+
+        // Re-present the same native editor after a failure. The fields and
+        // edits remain intact, the failure stays inline, and the principal
+        // action explicitly offers Retry instead of dropping users back into
+        // the detail view with generic status text.
+        let focusTracker = MeetingEditorFocusTracker(initial: title)
+        title.delegate = focusTracker
+        comment.delegate = focusTracker
+        alert.window.initialFirstResponder = title
+        while selectedID == meetingID {
+            let choice = presentConfirmationAlert(alert)
+            guard choice != .alertFirstButtonReturn, selectedID == meetingID else { return }
+            do {
+                var success: String
+                if choice == .alertSecondButtonReturn {
+                    let newTitle = title.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !newTitle.isEmpty else { throw MeetingManagementError.retryRejected("Action text cannot be empty.") }
+                    try service.saveActionDraft(id: id, title: newTitle, comment: comment.string)
+                    if reviewing {
+                        try service.reviewAction(id: id, accept: true)
+                        success = "Added ‘\(newTitle)’ to Todos."
+                    } else {
+                        success = "Changes saved."
+                    }
+                } else if reviewing && choice == .alertThirdButtonReturn {
+                    try service.reviewAction(id: id, accept: false)
+                    success = "Proposal dismissed."
+                } else {
+                    return
+                }
+                showActionReviewSuccess(success, meetingID: meetingID)
+                displayedDetail = nil
+                reload()
+                if reviewing, let removedIndex {
+                    focusAfterActionRemoval(removedIndex: removedIndex)
+                } else {
+                    focusActionControl(id: id, reviewing: false)
+                }
+                return
+            } catch {
+                let message = "Review failed. The proposal was not changed; your edits remain here. Retry when ready. \(error.localizedDescription)"
+                failure.setStatus(message, meaning: .destructive,
+                                  colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+                failure.isHidden = false
+                alert.buttons[1].title = reviewing ? "Retry Accept" : "Retry Save"
+                alert.window.initialFirstResponder = focusTracker.current
+                alert.window.makeFirstResponder(focusTracker.current)
+                NSAccessibility.post(element: failure, notification: .announcementRequested,
+                                     userInfo: [.announcement: message])
             }
-            displayedDetail = nil
-            reload()
-        } catch { status.stringValue = "Could not update action: \(error.localizedDescription)" }
+        }
+    }
+
+    private func focusActionControl(id: String, reviewing: Bool) {
+        guard let controls = actionReviewControls[id] else {
+            focusActionReviewEmptyState()
+            return
+        }
+        let control = reviewing ? controls.review : controls.edit
+        guard control.isEnabled else {
+            focusActionReviewEmptyState()
+            return
+        }
+        window?.makeFirstResponder(control)
+        control.scrollToVisible(control.bounds)
+    }
+
+    private func focusAfterActionRemoval(removedIndex: Int) {
+        if pendingActionIDs.indices.contains(removedIndex) {
+            focusActionControl(id: pendingActionIDs[removedIndex], reviewing: true)
+        } else if let previous = pendingActionIDs.last {
+            focusActionControl(id: previous, reviewing: true)
+        } else {
+            focusActionReviewEmptyState()
+        }
+    }
+
+    private func focusActionReviewEmptyState() {
+        guard let emptyState = actionReviewEmptyState else { return }
+        window?.makeFirstResponder(emptyState)
+        emptyState.scrollToVisible(emptyState.bounds)
+        NSAccessibility.post(element: emptyState, notification: .focusedUIElementChanged)
+    }
+
+    private func showActionReviewSuccess(_ message: String, meetingID: String) {
+        actionReviewFeedbackDismissal?.cancel()
+        actionReviewFeedback = (meetingID, message)
+        NSAccessibility.post(element: self, notification: .announcementRequested,
+                             userInfo: [.announcement: message])
+        let dismissal = DispatchWorkItem { [weak self] in
+            guard self?.actionReviewFeedback?.meetingID == meetingID,
+                  self?.actionReviewFeedback?.message == message else { return }
+            self?.actionReviewFeedback = nil
+            guard self?.selectedID == meetingID, let label = self?.actionReviewFeedbackLabel else { return }
+            self?.myActionsContainer.removeArrangedSubview(label)
+            label.removeFromSuperview()
+            self?.actionReviewFeedbackLabel = nil
+        }
+        actionReviewFeedbackDismissal = dismissal
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: dismissal)
     }
 
     private func renderTimeline(_ detail: MeetingBrowserDetail) {
@@ -1489,13 +1974,15 @@ final class MeetingManagementView: NSView {
         for item in detail.myActionItems { add(.action, item.text, "My action · \(item.reviewState.rawValue)", item.citations) }
         for item in detail.otherActionItems { add(.action, item.text, "Others’ action · reference only", item.citations) }
         let hosting = NSHostingView(rootView: MeetingTimelineView(moments: moments.sorted { $0.seconds < $1.seconds },
-            duration: max(detail.playback.durationSeconds, moments.map(\.seconds).max() ?? 0), hasAudio: audioPlayer != nil) { [weak self] moment in
+            duration: max(detail.playback.durationSeconds, detail.transcript.map(\.endSeconds).max() ?? 0,
+                          moments.map(\.seconds).max() ?? 0), hasAudio: audioPlayer != nil,
+            seek: { [weak self] moment in
                 guard let self, self.selectedID == detail.row.id,
                       self.audioSource == detail.playback, let player = self.audioPlayer,
                       let seconds = moment.seekSeconds, seconds <= player.duration,
                       detail.transcript.contains(where: { $0.seekSeconds == seconds && $0.startSeconds <= moment.seconds && $0.endSeconds >= moment.seconds }) else { return }
                 player.seek(to: seconds)
-            })
+            }, navigation: timelineNavigation))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         timelineRows.addArrangedSubview(hosting)
         hosting.widthAnchor.constraint(equalTo: timelineRows.widthAnchor).isActive = true
@@ -1560,6 +2047,8 @@ final class MeetingManagementView: NSView {
             let button = NSButton(title: title, target: self, action: #selector(openArtifact(_:)))
             button.isEnabled = artifact.available
             button.identifier = NSUserInterfaceItemIdentifier(artifact.relativePath)
+            button.toolTip = artifact.relativePath
+            button.setAccessibilityLabel("\(title): \(artifact.relativePath)")
             files.addArrangedSubview(button)
         }
     }
@@ -1590,7 +2079,7 @@ final class MeetingManagementView: NSView {
         if failedJobs.isEmpty && detail.row.processingState == .needsAttention {
             let notice = NSTextField(wrappingLabelWithString: "! Needs attention · No failed Job to retry. Check the missing processing artifacts.")
             notice.font = GraphiteFocusPresentation.Typography.body
-            notice.textColor = presentationColors.destructive
+            notice.textColor = presentationColors.attention
             notice.alignment = .left
             retryRows.addArrangedSubview(notice)
         }
@@ -1777,6 +2266,15 @@ final class MeetingManagementView: NSView {
     }
 
     @objc private func openRecordingAction() { openRecording() }
+
+    private static let filterDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
 }
 
 /// Image-only AppKit buttons have inconsistent bezel heights across SF Symbols.
@@ -1800,6 +2298,32 @@ private final class MeetingDetailDocumentView: NSStackView {
     override var isFlipped: Bool { true }
 }
 
+private final class MeetingEditorFocusTracker: NSObject, NSTextViewDelegate {
+    private(set) var current: NSTextView
+
+    init(initial: NSTextView) {
+        current = initial
+    }
+
+    func textDidBeginEditing(_ notification: Notification) {
+        if let editor = notification.object as? NSTextView { current = editor }
+    }
+}
+
+private final class FocusableMeetingEmptyState: NSTextField {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        setAccessibilityFocused(true)
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        setAccessibilityFocused(false)
+        return true
+    }
+}
+
 private final class RetryFixtureExecutor: JobExecuting {
     private var attempts = 0
     private var pending: ((Result<JobStageResult, Error>) -> Void)?
@@ -1820,19 +2344,15 @@ extension MeetingManagementView: NSTableViewDataSource, NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let meeting = rows[row]
         let title = NSTextField(labelWithString: meeting.displayTitle)
-        title.toolTip = meeting.title
         title.font = GraphiteFocusPresentation.Typography.rowTitle
-        title.lineBreakMode = .byTruncatingTail
+        GraphiteFocusOverflow.configurePrimaryTitle(title, fullText: meeting.title)
         title.alignment = .left
         let date = NSTextField(labelWithString: meeting.startedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Date unavailable")
         date.font = GraphiteFocusPresentation.Typography.metadata
         date.textColor = .secondaryLabelColor
-        date.lineBreakMode = .byTruncatingTail
+        GraphiteFocusOverflow.configureSecondaryMetadata(date, fullText: date.stringValue, lineBreakMode: .byTruncatingTail)
         date.alignment = .left
         let colors = presentationColors
-        let statusName = meeting.job?.status == .failed ? "xmark.octagon.fill" :
-            meeting.requiresAttention ? "exclamationmark.circle.fill" :
-            meeting.processingState == .ready ? "checkmark.circle.fill" : "clock.arrow.circlepath"
         var metadataParts: [NSView] = [date]
         if let duration = meeting.durationSeconds, duration.isFinite, duration >= 0 {
             metadataParts.append(meetingSymbol("clock", label: "Duration", color: colors.textMetadata))
@@ -1842,7 +2362,7 @@ extension MeetingManagementView: NSTableViewDataSource, NSTableViewDelegate {
             metadataParts.append(durationLabel)
         }
         if meeting.hasMyActions {
-            metadataParts.append(meetingSymbol("person.fill", label: "My actions", color: colors.informational))
+            metadataParts.append(meetingSymbol("person.fill", label: "My actions", color: colors.accent))
         }
         if meeting.hasOthersActions {
             metadataParts.append(meetingSymbol("person.2.fill", label: "Others' actions", color: colors.textMetadata))
@@ -1850,12 +2370,28 @@ extension MeetingManagementView: NSTableViewDataSource, NSTableViewDelegate {
         if meeting.needsActionReview {
             metadataParts.append(meetingSymbol("bell.badge.fill", label: "Actions need review", color: colors.attention))
         }
-        let statusLabel = meeting.needsActionReview && meeting.processingState == .ready ? "Needs attention" : statusTitle(for: meeting)
-        let statusColor = meeting.job?.status == .failed ? colors.destructive :
-            meeting.requiresAttention ? colors.attention : meeting.processingState == .ready
-                ? colors.success
-                : statusMeaning(for: meeting).color(in: colors)
-        metadataParts.append(meetingSymbol(statusName, label: statusLabel, color: statusColor))
+        if meeting.processingState == .processing && meeting.job?.status != .failed {
+            let progress = GraphiteFocusProgressStatusView()
+            let stage = meeting.job?.stage.map { "Stage: \($0)" } ?? "Work in progress"
+            progress.configure(title: "Processing", value: nil,
+                               valueDescription: stage, colors: colors)
+            metadataParts.append(progress)
+        } else {
+            let statusName = meeting.job?.status == .failed ? "xmark.octagon.fill" :
+                meeting.requiresAttention ? "exclamationmark.circle.fill" :
+                meeting.processingState == .ready ? "checkmark.circle.fill" : "info.circle.fill"
+            let statusLabel = meeting.needsActionReview && meeting.processingState == .ready ? "Needs attention" : statusTitle(for: meeting)
+            let statusColor = meeting.job?.status == .failed ? colors.destructive :
+                meeting.requiresAttention ? colors.attention : meeting.processingState == .ready
+                    ? colors.accent
+                    : statusMeaning(for: meeting).color(in: colors)
+            metadataParts.append(meetingSymbol(statusName, label: statusLabel, color: statusColor))
+            let visibleStatus = NSTextField(labelWithString: statusLabel)
+            visibleStatus.font = GraphiteFocusPresentation.Typography.metadata
+            visibleStatus.textColor = statusColor
+            GraphiteFocusOverflow.configureSecondaryMetadata(visibleStatus, fullText: statusLabel, lineBreakMode: .byTruncatingTail)
+            metadataParts.append(visibleStatus)
+        }
         let metadata = NSStackView(views: metadataParts)
         metadata.orientation = .horizontal
         metadata.alignment = .centerY

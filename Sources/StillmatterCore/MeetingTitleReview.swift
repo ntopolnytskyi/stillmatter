@@ -40,8 +40,14 @@ public final class MeetingTitleReviewService {
             throw MeetingTitleReviewError.notMeeting
         }
         let oldTitle = String(titleLine.dropFirst(7))
-        guard oldTitle.hasPrefix("Untitled Meeting at ") else { throw MeetingTitleReviewError.changedTitle }
         guard heading == "# \(oldTitle)" else { throw MeetingTitleReviewError.changedTitle }
+        // A previous attempt may have updated Markdown before the Inbox deletion
+        // encountered an external SQLite lock. Completing it is safe and idempotent.
+        if oldTitle == cleaned {
+            try inbox.removeItem(id: id)
+            return path
+        }
+        guard oldTitle.hasPrefix("Untitled Meeting at ") else { throw MeetingTitleReviewError.changedTitle }
         let updated = text.replacingOccurrences(of: titleLine + "\n", with: "title: \(cleaned)\n")
             .replacingOccurrences(of: heading + "\n", with: "# \(cleaned)\n")
         let words = cleaned.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
@@ -51,7 +57,16 @@ public final class MeetingTitleReviewService {
         let basename = (directory as NSString).lastPathComponent
         let timePrefix = basename.components(separatedBy: "-untitled-meeting").first ?? basename
         var finalPath = path
-        if !slug.isEmpty, basename.contains("-untitled-meeting"),
+        // Moving a Meeting folder while transcription owns the original path would
+        // invalidate its inputs. The title is still editable during processing; only
+        // the optional folder rename waits until no Job is active.
+        let session = text.components(separatedBy: "\n").first(where: { $0.hasPrefix("capture_session_id: ") })
+            .map { String($0.dropFirst("capture_session_id: ".count)) }
+        let active = try jobs?.jobs().contains { job in
+            (job.status == .queued || job.status == .running) &&
+                MeetingManagementService.owns(job, session: session, path: path)
+        } ?? false
+        if !active, !slug.isEmpty, basename.contains("-untitled-meeting"),
            !directory.contains(".."), !cleaned.contains("/") {
             let candidate = "\(parent)/\(timePrefix)-\(slug)/meeting.md"
             if candidate != path {

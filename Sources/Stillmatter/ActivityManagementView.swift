@@ -100,10 +100,11 @@ final class ActivityManagementView: NSView {
     }
 
     private func buildLayout() {
-        headerLabel.font = GraphiteFocusPresentation.Typography.sectionHeading
+        GraphiteFocusPageHeader.configureTitleLabel(headerLabel, font: GraphiteFocusPresentation.Typography.sectionHeading)
         let header = NSStackView(views: [headerLabel])
         header.orientation = .horizontal
         header.alignment = .centerY
+        header.distribution = .fill
 
         ActivityStatus.allCases.forEach { status in
             statusPopup.addItem(withTitle: status.rawValue.capitalized)
@@ -116,7 +117,7 @@ final class ActivityManagementView: NSView {
         [projectLabel, datesLabel, locationLabel].forEach {
             $0.font = GraphiteFocusPresentation.Typography.metadata
             $0.textColor = colors.textMetadata
-            $0.lineBreakMode = .byTruncatingMiddle
+            GraphiteFocusOverflow.configureSecondaryMetadata($0, fullText: "")
         }
         goalLabel.font = GraphiteFocusPresentation.Typography.body
         goalLabel.maximumNumberOfLines = 0
@@ -134,8 +135,10 @@ final class ActivityManagementView: NSView {
         logButton.target = self
         logButton.action = #selector(addLog(_:))
 
+        GraphiteFocusPageHeader.protectActionCluster(statusPopup)
         let statusSpacer = NSView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        statusSpacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         let statusRow = NSStackView(views: [statusLabel, statusSpacer, statusPopup])
         statusRow.orientation = .horizontal
         statusRow.alignment = .centerY
@@ -203,6 +206,7 @@ final class ActivityManagementView: NSView {
 
     private func actionRow(field: NSTextField, button: NSButton) -> NSView {
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        GraphiteFocusPageHeader.protectActionCluster(button)
         let row = NSStackView(views: [field, button])
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -263,17 +267,22 @@ final class ActivityManagementView: NSView {
         }
         detailStack.isHidden = false
         contentStateStack.isHidden = true
-        headerLabel.stringValue = activity.title
+        GraphiteFocusPageHeader.setTitle(activity.title, on: headerLabel)
         let presentation = ActivityStatusPresentation.forStatus(activity.status)
         statusLabel.setStatus(presentation.name, meaning: presentation.meaning, colors: colors)
         statusPopup.selectItem(withTitle: activity.status.rawValue.capitalized)
         projectLabel.stringValue = "Project: \(activity.project)"
+        GraphiteFocusOverflow.configureSecondaryMetadata(projectLabel, fullText: projectLabel.stringValue)
         datesLabel.stringValue = activity.endedAt.map { "Started \(activity.startedAt)  •  Ended \($0)" } ?? "Started \(activity.startedAt)"
+        GraphiteFocusOverflow.configureSecondaryMetadata(datesLabel, fullText: datesLabel.stringValue)
         goalLabel.stringValue = activity.goal.isEmpty ? "No goal recorded." : activity.goal
+        GraphiteFocusOverflow.configureWrappingText(goalLabel, fullText: goalLabel.stringValue)
         outputList.stringValue = activity.outputs.isEmpty ? "No outputs recorded." : activity.outputs.map { "• \($0)" }.joined(separator: "\n")
+        GraphiteFocusOverflow.configureWrappingText(outputList, fullText: outputList.stringValue)
         logList.stringValue = activity.activityLog.isEmpty ? "No activity log entries." : activity.activityLog.map { "• \($0)" }.joined(separator: "\n")
+        GraphiteFocusOverflow.configureWrappingText(logList, fullText: logList.stringValue)
         locationLabel.stringValue = activity.relativePath
-        locationLabel.toolTip = activity.relativePath
+        GraphiteFocusOverflow.configureSecondaryMetadata(locationLabel, fullText: activity.relativePath)
         detailStack.setAccessibilityLabel("\(presentation.name) Activity Item: \(activity.title), Project \(activity.project)")
         setEditingEnabled(true)
     }
@@ -305,7 +314,7 @@ final class ActivityManagementView: NSView {
         }
         contentStateStack.isHidden = false
         contentStateStack.setAccessibilityLabel("\(title). \(message)")
-        headerLabel.stringValue = "Activity Item"
+        GraphiteFocusPageHeader.setTitle("Activity Item", on: headerLabel)
         setEditingEnabled(false)
     }
 
@@ -469,7 +478,7 @@ final class ActivityManagementView: NSView {
             )
         }
         activities = [
-            fixture("Active launch planning", "Project Aurora", .active, "Activities/2026/09/active-launch-planning.md", ["[[Reports/launch-plan.md|Launch plan]]"], ["2026-09-20T12:00:00Z — Established the rollout sequence"]),
+            fixture("Active launch planning with an intentionally long localized-looking title that must truncate at the tail before it can crowd Activity Item header controls", "Project Aurora", .active, "Activities/2026/09/активне-планування-запуску-з-дуже-довгою-локалізованою-назвою.md", ["[[Reports/launch-plan-with-a-very-long-translated-looking-reference-that-wraps.md|Launch plan]]"], ["2026-09-20T12:00:00Z — Established the rollout sequence"]),
             fixture("Blocked vendor review", "General", .blocked, "Activities/2026/09/blocked-vendor-review.md", [], []),
             fixture("Completed accessibility review", "Accessibility", .completed, "Activities/2026/09/completed-accessibility-review.md", Array(repeating: "A deliberately long output reference that must wrap without covering adjacent controls", count: 8), Array(repeating: "2026-09-24T10:00:00Z — A long activity log entry used to validate readable detail flow", count: 12)),
             fixture("Canceled obsolete migration", "General", .canceled, "Activities/2026/09/canceled-obsolete-migration.md", [], [])
@@ -491,7 +500,13 @@ final class ActivityManagementView: NSView {
         browserView.onActivate = originalActivation
         precondition(activationCount == 1, "Return activation must open the selected Activity Item without changing selection")
         precondition(statusLabel.statusText == "Active" && statusLabel.stringValue.contains("ⓘ"), "Active status must include text and a non-color in-progress cue")
+        precondition(headerLabel.maximumNumberOfLines == 1 && headerLabel.lineBreakMode == .byTruncatingTail,
+                     "Activity Page Header title must be a single tail-truncated line")
+        precondition(headerLabel.toolTip == activities[0].title && headerLabel.accessibilityLabel() == activities[0].title,
+                     "Activity Page Header title must expose the complete Activity Item title")
         precondition(projectLabel.stringValue.contains("Project Aurora") && locationLabel.stringValue.contains("Activities/"), "Detail must expose Project ownership and canonical location")
+        precondition(locationLabel.toolTip == activities[0].relativePath && outputList.toolTip?.contains("Launch plan") == true,
+                     "Activity metadata and long references must be readable in full outside truncated visual labels")
 
         outputField.stringValue = "Preserved output draft"
         logField.stringValue = "Preserved log draft"
@@ -743,7 +758,7 @@ final class ActivityBrowserView: NSView, NSTableViewDataSource, NSTableViewDeleg
         cell.frame = NSRect(x: 0, y: 0, width: 300, height: 64)
         cell.configure(activity)
         cell.layoutSubtreeIfNeeded()
-        return cell.hasLeadingAlignedTextForValidation()
+        return cell.hasLeadingAlignedTextForValidation() && cell.hasFullOverflowTextForValidation(activity.title)
     }
 
     @objc private func activateSelection(_ sender: Any?) {
@@ -781,7 +796,7 @@ private final class ActivityBrowserCellView: NSTableCellView {
         statusLabel.font = GraphiteFocusPresentation.Typography.caption
         metadataLabel.font = GraphiteFocusPresentation.Typography.metadata
         [titleLabel, statusLabel, metadataLabel].forEach { $0.alignment = .left }
-        metadataLabel.lineBreakMode = .byTruncatingMiddle
+        GraphiteFocusOverflow.configureSecondaryMetadata(metadataLabel, fullText: "")
         metadataLabel.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textMetadata
         let detail = NSStackView(views: [titleLabel, statusLabel, metadataLabel])
         detail.orientation = .vertical
@@ -808,8 +823,10 @@ private final class ActivityBrowserCellView: NSTableCellView {
         statusLabel.stringValue = "\(presentation.symbol) \(presentation.name.uppercased())"
         statusLabel.textColor = statusColor
         titleLabel.stringValue = activity.title
+        GraphiteFocusOverflow.configurePrimaryTitle(titleLabel, fullText: activity.title)
         metadataLabel.textColor = colors.textMetadata
         metadataLabel.stringValue = activity.project
+        GraphiteFocusOverflow.configureSecondaryMetadata(metadataLabel, fullText: activity.project)
         setAccessibilityLabel("\(presentation.name) Activity Item: \(activity.title), Project \(activity.project)")
     }
 
@@ -821,6 +838,11 @@ private final class ActivityBrowserCellView: NSTableCellView {
         return labels.allSatisfy { $0.alignment == .left }
             && origins.allSatisfy { abs($0 - firstOrigin) < 1 }
             && firstOrigin <= GraphiteFocusPresentation.Space.dense
+    }
+
+    func hasFullOverflowTextForValidation(_ title: String) -> Bool {
+        titleLabel.toolTip == title && titleLabel.accessibilityLabel() == title
+            && metadataLabel.toolTip?.isEmpty == false
     }
 }
 

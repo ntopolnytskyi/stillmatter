@@ -143,11 +143,6 @@ enum GraphiteFocusPresentation {
         }
     }
 
-    /// SwiftUI and AppKit resolve the same roles, including accessibility variants.
-    static func swiftUIColors(window: NSWindow? = nil) -> Colors {
-        Colors(environment: .system(window: window))
-    }
-
     static func applyDarkAppearance(to view: NSView) {
         view.appearance = NSAppearance(named: .darkAqua)
     }
@@ -178,7 +173,8 @@ enum GraphiteFocusStatusMeaning: CaseIterable {
     }
 }
 
-/// A status always includes a textual state and a non-color symbol cue.
+/// A status represents only the Meaning axis. Selection, control interaction,
+/// action emphasis, and progress remain native, independent presentations.
 final class GraphiteFocusStatusLabel: NSTextField {
     private(set) var meaning: GraphiteFocusStatusMeaning = .informational
     private(set) var statusText = ""
@@ -189,7 +185,14 @@ final class GraphiteFocusStatusLabel: NSTextField {
         isSelectable = false
         isBezeled = false
         drawsBackground = false
-        lineBreakMode = .byTruncatingTail
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        usesSingleLineMode = false
+        lineBreakMode = .byWordWrapping
+        maximumNumberOfLines = 0
+        cell?.wraps = true
+        cell?.isScrollable = false
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         font = GraphiteFocusPresentation.Typography.metadata
     }
 
@@ -208,5 +211,82 @@ final class GraphiteFocusStatusLabel: NSTextField {
         textColor = meaning.color(in: colors)
         setAccessibilityLabel(text)
         setAccessibilityValue(text)
+    }
+}
+
+final class GraphiteFocusInlineNoticeView: NSStackView {
+    let statusLabel = GraphiteFocusStatusLabel()
+    let detailLabel = NSTextField(wrappingLabelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = GraphiteFocusPresentation.Space.primitive
+        detailLabel.font = GraphiteFocusPresentation.Typography.body
+        detailLabel.maximumNumberOfLines = 0
+        addArrangedSubview(statusLabel)
+        addArrangedSubview(detailLabel)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    func configure(
+        title: String,
+        detail: String,
+        meaning: GraphiteFocusStatusMeaning,
+        colors: GraphiteFocusPresentation.Colors
+    ) {
+        statusLabel.setStatus(title, meaning: meaning, colors: colors)
+        detailLabel.stringValue = detail
+        detailLabel.textColor = colors.textSecondary
+        setAccessibilityLabel("\(title). \(detail)")
+    }
+}
+
+final class GraphiteFocusProgressStatusView: NSStackView {
+    let statusLabel = GraphiteFocusStatusLabel()
+    let progressIndicator = NSProgressIndicator()
+    let valueLabel = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = GraphiteFocusPresentation.Space.primitive
+        progressIndicator.isIndeterminate = true
+        progressIndicator.style = .bar
+        progressIndicator.controlSize = .small
+        valueLabel.font = GraphiteFocusPresentation.Typography.metadata
+        addArrangedSubview(statusLabel)
+        addArrangedSubview(progressIndicator)
+        addArrangedSubview(valueLabel)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    func configure(
+        title: String,
+        value: Double?,
+        valueDescription: String,
+        colors: GraphiteFocusPresentation.Colors
+    ) {
+        // Activity is conveyed by the native progress indicator. The adjacent
+        // label is informational rather than borrowing attention/status color.
+        statusLabel.setStatus(title, meaning: .informational, colors: colors)
+        progressIndicator.isIndeterminate = value == nil
+        if let value {
+            progressIndicator.minValue = 0
+            progressIndicator.maxValue = 1
+            progressIndicator.doubleValue = max(0, min(1, value))
+        }
+        valueLabel.stringValue = valueDescription
+        valueLabel.textColor = colors.textSecondary
+        setAccessibilityLabel(title)
+        setAccessibilityValue(valueDescription)
     }
 }
