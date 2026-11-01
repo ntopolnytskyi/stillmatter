@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from urllib.parse import urlsplit
 
 
 class ProbeFailure(RuntimeError):
@@ -15,7 +16,8 @@ class ProbeFailure(RuntimeError):
 
 
 def run_child(command, cwd, env=None, timeout=15, max_record_bytes=1024 * 1024,
-              max_output_bytes=4 * 1024 * 1024):
+              max_output_bytes=4 * 1024 * 1024, prompt=None,
+              expected_artifact=None):
     """Observe one isolated prompt; bounds apply to stdout and stderr together."""
     records, buffer = [], b''
     output_bytes = 0
@@ -27,7 +29,7 @@ def run_child(command, cwd, env=None, timeout=15, max_record_bytes=1024 * 1024,
         selector.register(child.stdout, selectors.EVENT_READ)
         selector.register(child.stderr, selectors.EVENT_READ)
         child.stdin.write(json.dumps({'id': 'probe-1', 'type': 'prompt',
-                                      'message': 'Return only JSON: {"probe":"synthetic"}.'}).encode() + b'\n')
+                                      'message': prompt or 'Return only JSON: {"probe":"synthetic"}.'}).encode() + b'\n')
         child.stdin.flush()
         deadline = time.monotonic() + timeout
         while selector.get_map():
@@ -101,7 +103,11 @@ def run_child(command, cwd, env=None, timeout=15, max_record_bytes=1024 * 1024,
             artifact = None
         return {'accepted': True, 'settled': settled, 'handled': handled, 'aborted': aborted,
                 'validArtifact': (settled and not handled and not aborted and not provider_failed
-                                  and artifact == {'probe': 'synthetic'}),
+                                  and final.get('stopReason') != 'length'
+                                  and artifact == (expected_artifact if expected_artifact is not None
+                                                   else {'probe': 'synthetic'})),
+                'artifact': artifact, 'assistantText': ''.join(texts),
+                'finalStopReason': final.get('stopReason'),
                 'providerFailed': provider_failed, 'events': [r.get('type') for r in records]}
     finally:
         selector.close()
@@ -114,23 +120,36 @@ def run_child(command, cwd, env=None, timeout=15, max_record_bytes=1024 * 1024,
         child.stderr.close()
 
 
-def actual_pi_unavailable_probe(pi):
+def actual_pi_local_probe(pi, base_url, model, prompt=None, expected_artifact=None, timeout=20):
+    endpoint = urlsplit(base_url)
+    if (endpoint.scheme != "http" or endpoint.hostname != "127.0.0.1"
+            or endpoint.username or endpoint.password or endpoint.path != "/v1"
+            or endpoint.query or endpoint.fragment):
+        raise ProbeFailure("Only literal HTTP loopback /v1 providers are allowed")
     with tempfile.TemporaryDirectory(prefix='stillmatter-pi-capability-') as temporary:
         root = Path(temporary)
         agent = root / 'agent'
         agent.mkdir()
         (agent / 'models.json').write_text(json.dumps({'providers': {'local-probe': {
-            'baseUrl': 'http://127.0.0.1:9/v1', 'api': 'openai-completions', 'apiKey': 'synthetic',
-            'models': [{'id': 'missing-local-model', 'name': 'Missing local model probe',
-                        'contextWindow': 4096, 'maxTokens': 256, 'reasoning': False,
+            'baseUrl': base_url, 'api': 'openai-completions', 'apiKey': 'synthetic',
+            'models': [{'id': model, 'name': 'Synthetic local model probe',
+                        'contextWindow': 8192, 'maxTokens': 512, 'reasoning': False,
+                        'samplingParams': {'temperature': 0, 'seed': 42},
                         'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}}]}}}))
-        (agent / 'settings.json').write_text(json.dumps({'retry': {'enabled': False}}))
+        (agent / 'settings.json').write_text(json.dumps({'retry': {'enabled': False},
+            'compaction': {'enabled': False, 'reserveTokens': 512, 'keepRecentTokens': 1024}}))
         env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'PI_CODING_AGENT_DIR': str(agent),
-               'PI_OFFLINE': '1', 'NO_COLOR': '1', 'TERM': 'dumb'}
+               'PI_OFFLINE': '1', 'NO_COLOR': '1', 'TERM': 'dumb', 'HOME': str(root)}
         command = [pi, '--mode', 'rpc', '--no-session', '--no-tools', '--no-mcp',
                    '--no-extensions', '--no-context-files', '--no-skills', '--no-prompt-templates',
-                   '--no-approve', '--offline', '--provider', 'local-probe', '--model', 'missing-local-model']
-        return run_child(command, root, env=env, timeout=20)
+                   '--no-approve', '--offline', '--provider', 'local-probe', '--model', model,
+                   '--system-prompt', 'You extract JSON from supplied synthetic evidence. No tools. Return only JSON.']
+        return run_child(command, root, env=env, timeout=timeout, prompt=prompt,
+                         expected_artifact=expected_artifact)
+
+
+def actual_pi_unavailable_probe(pi):
+    return actual_pi_local_probe(pi, "http://127.0.0.1:9/v1", "missing-local-model")
 
 
 if __name__ == '__main__':
