@@ -74,7 +74,7 @@ final class MeetingManagementTests: XCTestCase {
 
         let initial = try service.detail(for: path)
         let edited = try service.saveHumanNotes("Updated notes", for: path,
-                                                expectedVersion: try XCTUnwrap(initial.doorwayVersion))
+                                                expectedVersion: try XCTUnwrap(initial.notesVersion))
         XCTAssertEqual(edited.humanNotes, "Updated notes")
         XCTAssertEqual(changes, [[path]])
 
@@ -121,7 +121,7 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(archived.id, before.row.id)
         XCTAssertEqual(archived.processingState, before.row.processingState)
         XCTAssertTrue(archived.isArchived)
-        XCTAssertEqual(try service.detail(for: path).humanNotes, "Keep this")
+        XCTAssertEqual(try service.detail(for: path).humanNotes, "\nKeep this\n")
         XCTAssertEqual(try Data(contentsOf: fixture.root.appendingPathComponent(path)), original)
         XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("Meetings/legacy/transcript.md")), "Transcript evidence")
         XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("Tasks/linked.md")), link)
@@ -275,8 +275,10 @@ final class MeetingManagementTests: XCTestCase {
 
         let detail = try MeetingManagementService(vault: fixture.vault, inbox: inbox).detail(for: "outcomes")
 
-        XCTAssertEqual(detail.myActionItems.first?.reviewState, .accepted)
-        XCTAssertEqual(detail.myActionItems.first?.citations.first?.segmentID, "s1")
+        XCTAssertTrue(detail.myActionItems.isEmpty, "A missing accepted Todo must not be resurrected from old generated extraction")
+        let history = try fixture.vault.readMarkdown(relativePath: "Meetings/outcomes/meeting-artifacts.json").data
+        XCTAssertTrue(String(decoding: history, as: UTF8.self).contains("accepted"))
+        XCTAssertTrue(String(decoding: history, as: UTF8.self).contains("meeting-action:outcomes:mine"))
         XCTAssertTrue(try XCTUnwrap(detail.otherActionItems.first).referenceOnly)
         XCTAssertEqual(try inbox.proposalReviewState(id: "meeting-action:outcomes:mine"), .accepted)
     }
@@ -304,7 +306,7 @@ final class MeetingManagementTests: XCTestCase {
         let meeting = "Meetings/evidence/meeting.md"
         let transcriptPath = "Meetings/evidence/transcript.json"
         let service = MeetingManagementService(vault: fixture.vault)
-        XCTAssertTrue(try service.detail(for: "evidence").transcript.isEmpty)
+        XCTAssertEqual(try service.list().map(\.id), ["evidence"])
         let segments = [
             TranscriptSegment(id: "later", startSeconds: 0.10, endSeconds: 0.20, text: "Later", language: .english, track: .systemAudio, speaker: "Guest"),
             TranscriptSegment(id: "first", startSeconds: 0.01, endSeconds: 0.09, text: "First", language: .english, track: .microphone, speaker: "Me"),
@@ -320,9 +322,9 @@ final class MeetingManagementTests: XCTestCase {
             else { try fixture.write(transcriptPath, data) }
         }
         try fixture.write(transcriptPath, "{broken json")
-        XCTAssertTrue(try service.detail(for: "evidence").transcript.isEmpty)
+        XCTAssertThrowsError(try service.detail(for: "evidence"))
         try writeTranscript(segments, schema: 99)
-        XCTAssertTrue(try service.detail(for: "evidence").transcript.isEmpty)
+        XCTAssertThrowsError(try service.detail(for: "evidence"))
         try writeTranscript(segments)
         let valid = MeetingOutcomeCitation(segmentID: "first", startSeconds: 0.01, endSeconds: 0.09)
         let unknown = MeetingOutcomeCitation(segmentID: "unknown", startSeconds: 0.01, endSeconds: 0.09)
@@ -347,14 +349,13 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(detail.openQuestions.first?.citations.first?.seekSeconds, 0.01)
 
         try writeTranscript(segments, meetingPath: "Meetings/other/meeting.md")
-        XCTAssertTrue(try service.detail(for: "evidence").transcript.isEmpty)
+        XCTAssertThrowsError(try service.detail(for: "evidence"))
         try writeTranscript(segments, session: "other")
-        XCTAssertTrue(try service.detail(for: "evidence").transcript.isEmpty)
-        XCTAssertNil(try service.detail(for: "evidence").myActionItems.first?.citations.first?.seekSeconds)
+        XCTAssertThrowsError(try service.detail(for: "evidence"))
         try writeTranscript(segments)
         try fixture.replace(extractionPath, String(decoding: try JSONEncoder().encode(MeetingSummaryExtraction(
             meeting: "Meetings/other/meeting.md", transcript: transcriptPath, decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])), as: UTF8.self))
-        XCTAssertNil(try service.detail(for: "evidence").extraction)
+        XCTAssertEqual(try service.detail(for: "evidence").decisions.first?.text, "Decide", "Retired extraction JSON cannot overwrite canonical Markdown content")
         try Data("changed".utf8).write(to: bundle)
         let noAudio = try service.detail(for: "evidence")
         XCTAssertEqual(noAudio.transcript.map(\.text), ["First", "Later", "Outside recording"])
@@ -401,8 +402,8 @@ final class MeetingManagementTests: XCTestCase {
             ])], myActionItems: [], otherActionItems: [], openQuestions: [])
         try fixture.replace("Meetings/second/summary-extraction.json", String(decoding: try encoder.encode(wrongMeeting), as: UTF8.self))
         let switched = try service.detail(for: "second")
-        XCTAssertNil(switched.extraction)
-        XCTAssertTrue(switched.decisions.isEmpty)
+        XCTAssertEqual(switched.decisions.first?.text, "Decision in second")
+        XCTAssertEqual(switched.decisions.first?.citations.first?.seekSeconds, 0.12, "Legacy extraction is a retired source after migration; it cannot cross-link Meetings")
         XCTAssertEqual(switched.transcript.first?.seekSeconds, 0.12)
         XCTAssertEqual(try Data(contentsOf: firstAudio), originalAudio)
 
@@ -440,11 +441,12 @@ final class MeetingManagementTests: XCTestCase {
                 MeetingOutcomeCitation(segmentID: "negative", startSeconds: -0.01, endSeconds: 0.02)
             ])], myActionItems: [], otherActionItems: [], openQuestions: [])
         try fixture.write("Meetings/timing/summary-extraction.json", String(decoding: try encoder.encode(extraction), as: UTF8.self))
-        let detail = try MeetingManagementService(vault: fixture.vault).detail(for: "timing")
-        XCTAssertEqual(detail.transcript.map(\.text), ["Negative", "A", "B", "Reversed"])
-        XCTAssertEqual(detail.transcript.compactMap(\.seekSeconds), [0.02, 0.02])
-        XCTAssertEqual(detail.decisions.first?.citations.count, 3)
-        XCTAssertTrue(try XCTUnwrap(detail.decisions.first).citations.allSatisfy { $0.seekSeconds == nil })
+        XCTAssertThrowsError(try MeetingManagementService(vault: fixture.vault).detail(for: "timing")) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Transcript"))
+            XCTAssertTrue(error.localizedDescription.contains("timing"))
+        }
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: fixture.vault.readMarkdown(relativePath: transcriptPath).data) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: encoder.encode(document)) as? NSDictionary)
     }
 
     func testMissingAndNonfiniteTranscriptTimestampsCannotSeek() throws {
@@ -478,9 +480,8 @@ final class MeetingManagementTests: XCTestCase {
             json["segments"] = segments
             let invalidData = try JSONSerialization.data(withJSONObject: json)
             try fixture.replace(transcriptPath, String(decoding: invalidData, as: UTF8.self))
-            let detail = try service.detail(for: "missing-time")
-            XCTAssertTrue(detail.transcript.isEmpty, caseName)
-            XCTAssertNil(detail.decisions.first?.citations.first?.seekSeconds, caseName)
+            XCTAssertThrowsError(try service.detail(for: "missing-time"), caseName) { XCTAssertTrue($0.localizedDescription.contains("Transcript")) }
+            XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: transcriptPath).data, invalidData)
         }
     }
 
@@ -675,12 +676,12 @@ final class MeetingManagementTests: XCTestCase {
         try fixture.write(path, "---\ntitle: Live\n---\n# Live\n\n## Processing\n\n- [x] Recording Bundle\n\n## Live notes\n\n- [ ] Follow up\n")
         let service = MeetingManagementService(vault: fixture.vault)
         let first = try service.detail(for: path)
-        XCTAssertEqual(first.humanNotes, "- [ ] Follow up")
-        let saved = try service.saveHumanNotes("Revised note", for: path, expectedVersion: try XCTUnwrap(first.doorwayVersion))
+        XCTAssertEqual(TodoItemParser().parse(markdown: first.humanNotes, relativePath: "my-notes.md").map(\.title), ["Follow up"])
+        let saved = try service.saveHumanNotes("Revised note", for: path, expectedVersion: try XCTUnwrap(first.notesVersion))
         XCTAssertEqual(saved.humanNotes, "Revised note")
         XCTAssertTrue(saved.doorwayText.contains("- [x] Recording Bundle"))
         XCTAssertFalse(saved.doorwayText.contains("Follow up"))
-        XCTAssertThrowsError(try service.saveHumanNotes("Stale", for: path, expectedVersion: try XCTUnwrap(first.doorwayVersion)))
+        XCTAssertThrowsError(try service.saveHumanNotes("Stale", for: path, expectedVersion: try XCTUnwrap(first.notesVersion)))
         XCTAssertEqual(try service.detail(for: path).humanNotes, "Revised note")
     }
 
@@ -695,7 +696,7 @@ final class MeetingManagementTests: XCTestCase {
         let service = MeetingManagementService(vault: fixture.vault)
         let original = try service.detail(for: path)
         let revised = try service.saveHumanNotes("recording_bundle: \(impostorBundle.path)", for: path,
-                                                  expectedVersion: try XCTUnwrap(original.doorwayVersion))
+                                                  expectedVersion: try XCTUnwrap(original.notesVersion))
         XCTAssertEqual(revised.artifacts.first { $0.role == .recordingBundle }?.relativePath, originalBundle.path)
         XCTAssertEqual(revised.humanNotes, "recording_bundle: \(impostorBundle.path)")
     }
@@ -725,7 +726,7 @@ final class MeetingManagementTests: XCTestCase {
         let artifacts = try MeetingManagementService(vault: fixture.vault).detail(for: path).artifacts
         XCTAssertEqual(artifacts.first { $0.role == .source }?.available, false)
         XCTAssertEqual(artifacts.first { $0.role == .transcript }?.available, false)
-        XCTAssertEqual(artifacts.first { $0.role == .summary }?.available, false)
+        XCTAssertEqual(artifacts.first { $0.role == .summary }?.available, true, "Migration creates an editable empty Summary artifact")
         XCTAssertTrue(artifacts.contains { $0.role == .doorway && $0.available })
     }
 
@@ -1101,13 +1102,14 @@ final class MeetingManagementTests: XCTestCase {
             retryUnavailableReason: { _ in nil }, onReprocessQueued: { starts += 1 })
         // Merely inspecting the Meeting or dismissing the UI warning never enqueues work.
         _ = try service.detail(for: "first")
+        let canonicalSummaryBeforeReprocess = try fixture.vault.readMarkdown(relativePath: summaryPath).data
         XCTAssertTrue(try store.jobs().isEmpty)
         let job = try service.reprocess(meetingID: "first", language: .ukrainian)
         XCTAssertEqual(job.manifest.metadata["language"], "uk")
         XCTAssertEqual(job.manifest.metadata["recording_bundle_path"], bundle.path)
         XCTAssertEqual(job.manifest.metadata["transcription_audio_selection_path"], "")
         XCTAssertEqual(starts, 1)
-        XCTAssertEqual(String(data: try fixture.vault.readMarkdown(relativePath: summaryPath).data, encoding: .utf8), "## Summary\nManually corrected\n")
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: summaryPath).data, canonicalSummaryBeforeReprocess)
         XCTAssertEqual(try inbox.proposalReviewState(id: "meeting-action:first:old"), .accepted)
         XCTAssertThrowsError(try service.reprocess(meetingID: "first", language: .english))
         XCTAssertEqual(try store.jobs().count, 1)
@@ -1134,10 +1136,11 @@ final class MeetingManagementTests: XCTestCase {
         let store = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/jobs.sqlite"))
         try Data("not the original audio".utf8).write(to: bundle.deletingLastPathComponent().appendingPathComponent("mic.caf"))
         let service = MeetingManagementService(vault: fixture.vault, jobStore: store, retryUnavailableReason: { _ in nil })
+        _ = try service.detail(for: "evidence")
+        let before = try fixture.vault.readMarkdown(relativePath: "Meetings/evidence/summary.md").data
         XCTAssertThrowsError(try service.reprocess(meetingID: "evidence", language: .ukrainian))
         XCTAssertTrue(try store.jobs().isEmpty)
-        XCTAssertEqual(String(decoding: try fixture.vault.readMarkdown(relativePath: "Meetings/evidence/summary.md").data,
-            as: UTF8.self), "## Summary\nManual edit\n")
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: "Meetings/evidence/summary.md").data, before)
     }
 
     func testPlaybackRejectsBundleFromAnotherMeetingOrSessionAndUnsupportedVersion() throws {
@@ -1154,7 +1157,8 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertTrue(other.message.contains("does not match"))
 
         try fixture.replace("Meetings/source/meeting.md", "---\ntitle: Source\ncapture_session_id: impostor\nrecording_bundle: \(bundle.path)\n---\n# Source\n")
-        XCTAssertEqual(try service.detail(for: "impostor").playback.capability, .unavailable)
+        XCTAssertEqual(try service.detail(for: "source").playback.capability, .unavailable)
+        XCTAssertEqual(try service.detail(for: "source").row.id, "source", "Manifest identity survives explicit doorway metadata changes")
 
         try fixture.replace("Meetings/source/meeting.md", "---\ntitle: Source\ncapture_session_id: source\nrecording_bundle: \(bundle.path)\n---\n# Source\n")
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: bundle)) as? [String: Any])
