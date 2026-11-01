@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 /// Lossless LF-framed plain text and JSON representations of one Transcript.
 /// Only one changed representation can advance the recorded synchronized base.
@@ -28,12 +27,7 @@ enum MeetingTranscriptCodec {
         }
     }
 
-    static func hash(_ data: Data) -> String {
-        SHA256.hash(data: data).map { byte in
-            let digits = String(byte, radix: 16)
-            return digits.count == 1 ? "0" + digits : digits
-        }.joined()
-    }
+    static func hash(_ data: Data) -> String { SHA256Hex.digest(data) }
 
     static func canonicalJSON(_ data: Data) throws -> Data {
         try encodeJSON(JSONSerialization.jsonObject(with: data))
