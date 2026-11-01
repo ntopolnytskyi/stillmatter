@@ -337,6 +337,45 @@ class MigrationTests(WorkspaceCase):
         with self.assertRaises(ValueError):
             journal.commit()
 
+    def test_external_source_edits_or_created_output_invalidate_plan_before_prepare(self):
+        self.seed_legacy()
+        for relative in ('Todos/todo.md', 'Meetings/ready/meeting.md',
+                         'Meetings/ready/archive.json', 'Meetings/ready/my-notes.md'):
+            with self.subTest(relative=relative):
+                outputs = plan_legacy(self.root, 'Meetings/ready/meeting.md', [], EXTRACTION)
+                planned = dict(outputs)
+                path = self.root / relative
+                original = path.read_bytes() if path.exists() else b''
+                external = original + b'\nExternal edit after planning\n'
+                path.write_bytes(external)
+                journal = Journal(self.root, self.support)
+                before = {str(file.relative_to(self.root)): file.read_bytes()
+                          for file in self.root.rglob('*') if file.is_file()}
+                with self.assertRaisesRegex(Conflict, 'plan is stale'):
+                    journal.prepare(outputs)
+                self.assertFalse(journal.path.exists())
+                self.assertFalse(journal.visible_new())
+                self.assertEqual(dict(outputs), planned)  # Caller retains complete intended draft.
+                self.assertEqual(before, {str(file.relative_to(self.root)): file.read_bytes()
+                                         for file in self.root.rglob('*') if file.is_file()})
+                if relative == 'Meetings/ready/my-notes.md':
+                    path.unlink()
+                else:
+                    path.write_bytes(original)
+
+    def test_non_output_archive_dependency_change_after_prepare_blocks_commit(self):
+        outputs = self.plan()
+        journal = Journal(self.root, self.support)
+        journal.prepare(outputs)
+        archive = self.root / 'Meetings/ready/archive.json'
+        archive.write_text('{"archived":false}')
+        with self.assertRaisesRegex(Conflict, 'dependency changed'):
+            journal.commit()
+        self.assertFalse(journal.visible_new())
+        self.assertEqual(archive.read_text(), '{"archived":false}')
+        self.assertEqual((self.root / 'Todos/todo.md').read_text(), TODO)
+        self.assertEqual((self.root / 'Meetings/ready/meeting.md').read_text(), DOORWAY)
+
     def test_crlf_legacy_files_rollback_byte_exact_after_reopen(self):
         self.seed_legacy()
         originals = {}

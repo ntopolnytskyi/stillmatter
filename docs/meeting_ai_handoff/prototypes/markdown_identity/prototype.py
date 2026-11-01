@@ -203,6 +203,13 @@ class CanonicalWorkspace:
         atomic_write(path, draft)
 
 
+class MigrationPlan(dict):
+    """Replacements bound to exact source/destination bytes captured while planning."""
+    def __init__(self, outputs, snapshots):
+        super().__init__(outputs)
+        self.snapshots = snapshots
+
+
 class Journal:
     """Recoverable multi-file publication; readers must check the commit marker.
 
@@ -216,11 +223,16 @@ class Journal:
     def prepare(self, outputs):
         if self.path.exists():
             raise ValueError('Existing journal must be recovered first')
+        snapshots = getattr(outputs, 'snapshots', {})
+        for relative, expected in snapshots.items():
+            if read_optional(within(self.root, relative)) != expected:
+                raise Conflict('Migration plan is stale; preserve files and replan: ' + relative)
         entries = []
         for relative, new in outputs.items():
-            old = read_optional(within(self.root, relative))
+            old = snapshots[relative] if relative in snapshots else read_optional(within(self.root, relative))
             entries.append({'path': relative, 'old': old, 'new': new})
-        atomic_write(self.path, dumps({'state': 'prepared', 'entries': entries}))
+        dependencies = {relative: old for relative, old in snapshots.items() if relative not in outputs}
+        atomic_write(self.path, dumps({'state': 'prepared', 'entries': entries, 'dependencies': dependencies}))
 
     def commit(self, interrupt_after=None):
         manifest = json.loads(read_text(self.path))
@@ -228,6 +240,9 @@ class Journal:
             return
         if manifest['state'] != 'prepared':
             raise ValueError('Rolled-back migration cannot be recommitted')
+        for relative, expected in manifest.get('dependencies', {}).items():
+            if read_optional(within(self.root, relative)) != expected:
+                raise Conflict('Migration dependency changed; preserve files and journal: ' + relative)
         for index, entry in enumerate(manifest['entries']):
             path = within(self.root, entry['path'])
             current = read_optional(path)
@@ -307,14 +322,18 @@ def plan_legacy(root, doorway_path, reviews, extraction, *, confirmed_bindings=N
     """
     root = Path(root)
     confirmed_bindings = confirmed_bindings or {}
-    doorway = read_text(within(root, doorway_path))
+    directory = str(Path(doorway_path).parent)
+    paths = [doorway_path, 'Todos/todo.md'] + [directory + '/' + name for name in (
+        'archive.json', 'my-notes.md', 'action-items.md', 'meeting-metadata.json', 'legacy-review-history.json')]
+    snapshots = {relative: read_optional(within(root, relative)) for relative in paths}
+    doorway = snapshots[doorway_path]
+    if doorway is None:
+        raise ValueError('Missing legacy doorway')
     session_match = re.search(r'(?m)^capture_session_id:\s*(.+)$', doorway)
     meeting_id = session_match[1].strip() if session_match else str(uuid.uuid4())
-    directory = str(Path(doorway_path).parent)
     notes, new_doorway = notes_body(doorway)
     notes = adopt(notes, id_seed=meeting_id + ':notes')
-    todo_path = root / 'Todos/todo.md'
-    todo = read_optional(todo_path) or ''
+    todo = snapshots['Todos/todo.md'] or ''
     todo_lines = markdown_lines(todo)
     canonical, issues, imported = [], [], {}
     source_prefix = directory + '/'
@@ -368,7 +387,7 @@ def plan_legacy(root, doorway_path, reviews, extraction, *, confirmed_bindings=N
                              'citations': outcome.get('citations', []) if outcome else []}}
             canonical.append(serialize_line(item) + '\n')
         decisions.append(record)
-    archive = read_optional(root / directory / 'archive.json')
+    archive = snapshots[directory + '/archive.json']
     metadata = {'v': 2, 'id': meeting_id, 'doorway': doorway_path, 'migration_issues': issues}
     if archive:
         archived = json.loads(archive)['archived']
@@ -382,7 +401,7 @@ def plan_legacy(root, doorway_path, reviews, extraction, *, confirmed_bindings=N
         directory + '/legacy-review-history.json': dumps(decisions),
         'Todos/todo.md': ''.join(todo_lines),
     }
-    return outputs
+    return MigrationPlan(outputs, snapshots)
 
 
 TRANSCRIPT_HEADER = 'Stillmatter Transcript v2\n'
