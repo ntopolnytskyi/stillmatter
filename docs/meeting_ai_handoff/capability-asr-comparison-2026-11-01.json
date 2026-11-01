@@ -1,0 +1,72 @@
+{
+  "kind": "synthetic-configuration-comparison-only",
+  "cpuThreads": 4,
+  "device": "cpu",
+  "computeType": "int8",
+  "language": "Auto (None)",
+  "chunkBoundaryPolicy": "Known synthetic concatenation boundary; not a validated real-recording segmenter",
+  "runs": [
+    {
+      "configuration": "whole-clip-no-vad",
+      "vadFilter": false,
+      "coveredDurationSeconds": 8.8088125,
+      "elapsedSeconds": 21.392501095950138,
+      "wordErrorRate": 0.6086956521739131,
+      "pieces": [
+        {
+          "fixture": "mixed",
+          "originalStartSeconds": 0,
+          "durationSeconds": 8.8088125,
+          "language": "uk",
+          "elapsedSeconds": 21.392501095950138,
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 8.74,
+              "text": " Наша зустріч відбудеться у Татницю. Олена підготує звіт для команди."
+            }
+          ]
+        }
+      ],
+      "peakRSSBytes": 3221843968
+    },
+    {
+      "configuration": "all-fixture-chunks-auto",
+      "vadFilter": true,
+      "coveredDurationSeconds": 8.8088125,
+      "elapsedSeconds": 40.88254537497414,
+      "wordErrorRate": 0.08695652173913043,
+      "pieces": [
+        {
+          "fixture": "english",
+          "originalStartSeconds": 0,
+          "durationSeconds": 3.680875,
+          "language": "en",
+          "elapsedSeconds": 20.427314067957923,
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 3.54,
+              "text": " The launch review is on Friday. Anna will send the project notes."
+            }
+          ]
+        },
+        {
+          "fixture": "ukrainian",
+          "originalStartSeconds": 3.680875,
+          "durationSeconds": 5.1279375,
+          "language": "uk",
+          "elapsedSeconds": 20.45523130701622,
+          "segments": [
+            {
+              "start": 3.680875,
+              "end": 8.740874999999999,
+              "text": " Наша зустріч відбудеться у Татницю. Олена підготує звіт для команди."
+            }
+          ]
+        }
+      ],
+      "peakRSSBytes": 3242221568
+    }
+  ]
+}

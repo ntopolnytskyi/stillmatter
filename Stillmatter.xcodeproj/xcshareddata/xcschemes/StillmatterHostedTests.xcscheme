@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion="2630" version="1.3">
+ <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+  <BuildActionEntries><BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+   <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="115DE530AC8508AC6A0498E2" BuildableName="StillmatterHostedTestHost.app" BlueprintName="StillmatterHostedTestHost" ReferencedContainer="container:Stillmatter.xcodeproj"/>
+  </BuildActionEntry></BuildActionEntries>
+ </BuildAction>
+ <TestAction buildConfiguration="Release" selectedDebuggerIdentifier="" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.PosixSpawn" shouldUseLaunchSchemeArgsEnv="NO" codeCoverageEnabled="YES">
+  <Testables><TestableReference skipped="NO" parallelizable="NO">
+   <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="3966936DA7A4E722B11F988F" BuildableName="StillmatterHostedTests.xctest" BlueprintName="StillmatterHostedTests" ReferencedContainer="container:Stillmatter.xcodeproj"/>
+  </TestableReference></Testables>
+ </TestAction>
+ <AnalyzeAction buildConfiguration="Release"/>
+</Scheme>

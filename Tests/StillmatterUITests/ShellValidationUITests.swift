@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import StillmatterCore
 
 extension StillmatterFlowsUITests {
     func testNavigationRailAndMenuReachTheSameAreas() {
@@ -76,8 +77,13 @@ extension StillmatterFlowsUITests {
         try "# Validation Launch\n\n## My action items\n\n- Send the launch recap.\n".write(to: meeting.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
         let before = "# Todos\n\n## Queue\n"
         try before.write(to: todo, atomically: true, encoding: .utf8)
-        // Seed data only: review decisions still travel through real UI controls.
-        app.launchEnvironment["STILLMATTER_PROPOSAL_REVIEW_FIXTURE"] = "1"
+        // Prepare the real scoped operational store before launch. This works in
+        // the shipping configuration without enabling a debug-only app fixture.
+        let database = fixtureRoot.appendingPathComponent("support/operational.sqlite")
+        let inbox = try TasksInbox(databaseURL: database).scoped(to: workspace)
+        XCTAssertTrue(try inbox.queueProposal(id: "validation:accept",
+            title: "Send the launch recap #ai-proposed",
+            sourceRef: "[[Meetings/validation-launch/summary#My action items|source]]"))
         relaunch()
         app.buttons["sidebar-today"].click()
         let accept = app.buttons["proposal-accept-validation:accept"]
