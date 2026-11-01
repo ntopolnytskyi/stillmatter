@@ -8,7 +8,7 @@ Run from the repository root:
 python3 -W error::ResourceWarning -m unittest discover -s docs/meeting_ai_handoff/prototypes/markdown_identity -v
 ```
 
-Recorded on 2026-11-01 with Python 3.15.2, macOS 15.8.1 (24H32): **21 tests, 0 failures**, using newly created temporary workspace and separate support directories, destroyed after each test. No user library, preferences, media, network, credentials, or inference runtime are accessed. The prototype and fixtures are under [`prototypes/markdown_identity/`](prototypes/markdown_identity/).
+Recorded on 2026-11-01 with Python 3.15.2, macOS 15.8.1 (24H32): **22 tests, 0 failures**, using newly created temporary workspace and separate support directories, destroyed after each test. No user library, preferences, media, network, credentials, or inference runtime are accessed. The prototype and fixtures are under [`prototypes/markdown_identity/`](prototypes/markdown_identity/).
 
 ## Evidence from the existing implementation
 
@@ -60,7 +60,7 @@ This experiment uses fsync plus atomic replace. It does **not** claim OS-level c
 
 ## Transcript text/JSON authority and round trip
 
-Both files represent **one logical Transcript**, with a recorded last-synchronized document/version. The plain text contains a version header, shared metadata header, and tab-separated segment rows: stable ID, original start/end seconds, source track, language, speaker, utterance, and extension metadata. String cells are JSON escaped to preserve literal tabs/newlines/Unicode; this is readable plain UTF-8 text rather than a lossy rendered Markdown document. Unknown extension fields, including stable Person IDs and attribution evidence, round-trip.
+Both files represent **one logical Transcript**, with a recorded last-synchronized document/version. The plain text contains a version header, shared metadata header, and tab-separated segment rows: stable ID, original start/end seconds, source track, language, speaker, utterance, and extension metadata. Records are delimited only by LF; an optional final LF terminates the last record. String cells are JSON escaped to preserve literal tabs/newlines/Unicode (including U+2028 and U+2029 inside text and metadata); this is readable plain UTF-8 text rather than a lossy rendered Markdown document. Unknown extension fields, including stable Person IDs and attribution evidence, round-trip.
 
 - Starting from existing schema-1 JSON retains exact fractional timing, segment IDs, overlapping tracks, source/engine metadata, and language text. The old pretty `transcript.md` is a retained migration input/legacy derivative, not a second authoritative timed source. Production generates the new `transcript.txt` and updates controlled references while retaining recoverable prior bytes.
 - A valid one-sided edit to `.txt` or `.json` is accepted and regenerates the other representation. This includes externally changed display text or identity metadata. There is no hidden database version that wins over a valid file edit.
@@ -70,6 +70,6 @@ Both files represent **one logical Transcript**, with a recorded last-synchroniz
 
 ## Observable verification and downstream scope
 
-The 21 passing tests cover canonical projections, completion/ownership/removal, Unicode duplicate-looking tasks, immutable IDs after line edits and folder rename, approval-tag separation, malformed/duplicate IDs, persistent unsaved-draft conflicts, actual-format SQLite scope filtering, edited/completed legacy Todos, pending/dismissed/reference-only/merged history, unknown archive dates, legacy mapping ambiguity/confirmation, nested-task refusal without writes, every between-file interruption/restart, rollback, external edits during recovery, Transcript round trips/edits/conflicts/person metadata, and pair publication.
+The 22 passing tests cover canonical projections, completion/ownership/removal, Unicode duplicate-looking tasks, immutable IDs after line edits and folder rename, approval-tag separation, malformed/duplicate IDs, persistent unsaved-draft conflicts, actual-format SQLite scope filtering, edited/completed legacy Todos, pending/dismissed/reference-only/merged history, unknown archive dates, legacy mapping ambiguity/confirmation, nested-task refusal without writes, every between-file interruption/restart, rollback, external edits during recovery, Transcript round trips/edits/conflicts/person metadata, and pair publication.
 
 This ticket introduces **zero shipped Swift lines**, so there is no changed production denominator to claim at 95%. Python prototype tests do not contribute to the final whole-source Swift coverage numerator. Tickets 08/16 must port the tested contract to real workspace/operational stores, implement native edit/conflict/migration behavior, and independently pass the coverage gate and their UI expectations. Hardware/model evaluation is unrelated to this storage prototype.

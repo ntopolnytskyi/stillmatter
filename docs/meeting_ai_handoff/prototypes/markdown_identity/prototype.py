@@ -403,7 +403,11 @@ def transcript_text(document):
 def parse_transcript_text(text):
     if not text.startswith(TRANSCRIPT_HEADER):
         raise ValueError('Transcript text requires stable row metadata')
-    lines = text.splitlines()
+    # Records are LF-framed. Unicode line/paragraph separators are valid JSON
+    # string content and must never be interpreted as record boundaries.
+    lines = text.split('\n')
+    if lines[-1] == '':
+        lines.pop()  # A single final LF terminates the last record.
     if len(lines) < 3 or lines[2] != 'id\tstart\tend\ttrack\tlanguage\tspeaker\ttext\textra':
         raise ValueError('Invalid column header')
     document = json.loads(lines[1])

@@ -341,6 +341,19 @@ class TranscriptTests(WorkspaceCase):
         self.assertEqual(transcript_text(parse_transcript_text(text)), text)
         self.assertEqual(parse_transcript_text(text)['segments'][0]['start'], 4.125)
 
+    def test_unicode_line_and_paragraph_separators_round_trip_inside_cells_and_metadata(self):
+        document = copy.deepcopy(TRANSCRIPT)
+        document['diagnostics'] = ['Metadata line\u2028separator and paragraph\u2029separator']
+        document['segments'][0]['text'] = 'Text line\u2028separator and paragraph\u2029separator'
+        document['segments'][1]['speaker'] = 'Олена\u2028Петренко\u2029'
+        document['segments'][1]['annotation'] = {'note': 'Extension\u2028metadata\u2029'}
+        text = transcript_text(document)
+        self.assertIn('\u2028', text)
+        self.assertIn('\u2029', text)
+        self.assertEqual(parse_transcript_text(text), document)
+        self.assertEqual(parse_transcript_text(text.removesuffix('\n')), document)
+        self.assertEqual(transcript_text(parse_transcript_text(text)), text)
+
     def test_segment_person_identity_and_attribution_survive_display_name_change(self):
         document = copy.deepcopy(TRANSCRIPT)
         document['segments'][1].update(person_id='person-stable-id', attribution='user-confirmed')
