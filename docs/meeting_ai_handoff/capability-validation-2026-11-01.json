@@ -2,9 +2,10 @@
   "scope": "ticket03 research only; no shipped Swift/UI changes",
   "selfTests": {
     "command": "python3 -m unittest discover -s experiments/meeting-ai-capabilities -v",
-    "executed": 52,
+    "executed": 53,
     "failures": 0,
-    "skipped": 0
+    "skipped": 0,
+    "reviewFix": "4b1545e normalizes speaker RSS units; full 53-test probe suite passed in implementer worktree. No model re-execution required for unchanged Darwin conversion."
   },
   "actualPiUnavailableLoopback": {
     "accepted": true,
@@ -78,5 +79,12 @@
       }
     },
     "interpretation": "Compatible pre-existing source-hash-validated reports reused. No shipped executable Swift changed: incremental is N/A (0/0), not 100%. Existing whole-source debt remains 75.33%; final 95% gate fails. No new native test execution claimed."
+  },
+  "review": {
+    "base": "b206d08",
+    "standardsFindings": 1,
+    "standardsRemaining": 0,
+    "specFindings": 0,
+    "fixCommit": "4b1545e"
   }
 }
