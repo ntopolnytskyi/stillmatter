@@ -14,7 +14,8 @@ final class ProcessingRuntime {
     private let mayResumeTranscription: (String) -> Bool
     private let isProbe: () -> Bool
     private let makeTranscription: ((URL, SearchIndex?) -> JobExecuting)?
-    private let analysis: JobExecuting
+    private let analysisConfiguration: () -> String
+    private let makeAnalysis: (URL) -> JobExecuting
     private(set) var transcriptionScheduler: JobScheduler?
     private(set) var configurationError: String?
     private var configurationKey: String?
@@ -24,6 +25,8 @@ final class ProcessingRuntime {
          jobStore: @escaping () -> JobStore?, mayResumeTranscription: @escaping (String) -> Bool,
          isProbe: @escaping () -> Bool = { false },
          makeTranscription: ((URL, SearchIndex?) -> JobExecuting)? = nil,
+         analysisConfiguration: @escaping () -> String = { "default-analysis" },
+         makeAnalysis: ((URL) -> JobExecuting)? = nil,
          analysis: JobExecuting = UnavailableJobHandler(guidance:
             "A fully local analysis provider is required. Configure the local model, then Retry this stage. Recording and Transcript are retained; no Meeting text was uploaded.")) {
         self.applicationSupportURL = applicationSupportURL
@@ -32,7 +35,8 @@ final class ProcessingRuntime {
         self.mayResumeTranscription = mayResumeTranscription
         self.isProbe = isProbe
         self.makeTranscription = makeTranscription
-        self.analysis = analysis
+        self.analysisConfiguration = analysisConfiguration
+        self.makeAnalysis = makeAnalysis ?? { _ in analysis }
     }
 
     var schedulers: [JobScheduler] { [transcriptionScheduler].compactMap { $0 } }
@@ -63,12 +67,13 @@ final class ProcessingRuntime {
         }
         let component = componentInstaller.installedModelURL()?.path ?? "missing-model"
         let owner = root.standardizedFileURL.resolvingSymlinksInPath().path
-        let key = [owner, component, String(indexGeneration)].joined(separator: "\n")
+        let key = [owner, component, String(indexGeneration), analysisConfiguration()].joined(separator: "\n")
         guard configurationKey != key else { return }
         transcriptionScheduler?.pauseSynchronously()
         do {
             try MeetingWorkflowJob.migrate(store: store, workspaceRootURL: root)
             let transcription = makeTranscription?(root, searchIndex) ?? localTranscription(root: root, index: searchIndex)
+            let analysis = makeAnalysis(root)
             let registry = JobHandlerRegistry(handlers: [
                 MeetingWorkflowJob.type: MeetingWorkflowHandler(transcription: transcription, analysis: analysis),
                 TranscriptionJob.type: transcription, MeetingSummaryJob.type: analysis

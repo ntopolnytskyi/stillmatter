@@ -31,6 +31,31 @@ final class ProcessingRuntimeHostedTests: XCTestCase {
         XCTFail("Timed out", file: file, line: line)
     }
 
+    @MainActor
+    func testRecordingStatusUsesTheMatchingWholeWorkflowInsteadOfLegacyRows() throws {
+        let store = try JobStore(databaseURL: support.appendingPathComponent("recording-status.sqlite"))
+        let mediaRoot = root.appendingPathComponent("recording-media")
+        let capture = MeetingCaptureService(vault: WorkspaceVault(workspaceRootURL: workspace,
+            appSupportRootURL: root.appendingPathComponent("capture-support")),
+            micRecorder: MicTrackRecordingCoordinator(mediaRootURL: mediaRoot, backend: HostedMicBackend()),
+            bundleFinalizer: RecordingBundleFinalizer(), preflight: { .readyForTesting })
+        let session = try capture.startManual()
+        _ = try capture.stopManual()
+        let sessionID = try XCTUnwrap(capture.snapshot.recordingBundle?.captureSessionID)
+        XCTAssertEqual(session.id, sessionID)
+        let legacy = JobManifest(type: TranscriptionJob.type, title: "Transcribe A", executionClass: .heavy,
+            stages: [.init(id: "transcribe", title: "Transcribe A")],
+            sourceArtifacts: [.init(relativePath: "Meetings/A/meeting.md", role: "meeting-doorway")],
+            metadata: ["capture_session_id": sessionID]).owned(by: workspace)
+        _ = try store.enqueue(id: "A", manifest: MeetingWorkflowJob.manifest(transcription: legacy))
+        let view = CaptureRecordingView(serviceProvider: { capture }, rootURLProvider: { self.workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { (try? store.jobs()) ?? [] }, onOpenSettings: {})
+        view.refresh(isVisible: true)
+        XCTAssertTrue(view.renderedArtifactTitles.contains("Meeting — Queued"))
+        XCTAssertFalse(view.renderedArtifactTitles.contains("Transcript — Queued"))
+        XCTAssertFalse(view.renderedArtifactTitles.contains("Summary — Waiting"))
+    }
+
     func testSingleRegisteredSchedulerPersistsActualStagesAndDoesNotHoldCapture() throws {
         let store = try JobStore(databaseURL: support.appendingPathComponent("jobs.sqlite"))
         let handler = HostedWorkflowControl()
@@ -187,6 +212,21 @@ final class ProcessingRuntimeHostedTests: XCTestCase {
         noStore.configure(settings: settings(workspace), searchIndex: nil, indexGeneration: 0)
         XCTAssertNil(noStore.transcriptionScheduler)
         noStore.stop()
+    }
+}
+
+private final class HostedMicBackend: MicTrackRecordingBackend {
+    func startWritingRecovery(to recoveryURL: URL) throws -> MicTrackTechnicalInfo {
+        try FileManager.default.createDirectory(at: recoveryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("synthetic capture bytes".utf8).write(to: recoveryURL)
+        return MicTrackTechnicalInfo(durationSeconds: 1, codec: "synthetic", sampleRate: 16_000, channelCount: 1)
+    }
+    func stopAndFinalize(recoveryURL: URL, finalURL: URL) throws -> MicTrackTechnicalInfo {
+        try Data(contentsOf: recoveryURL).write(to: finalURL)
+        return MicTrackTechnicalInfo(durationSeconds: 1, codec: "synthetic", sampleRate: 16_000, channelCount: 1)
+    }
+    func recover(recoveryURL: URL, finalURL: URL) throws -> MicTrackTechnicalInfo {
+        try stopAndFinalize(recoveryURL: recoveryURL, finalURL: finalURL)
     }
 }
 

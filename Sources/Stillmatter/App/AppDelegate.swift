@@ -130,6 +130,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             #else
             return false
             #endif
+        },
+        analysisConfiguration: { PiIntegration().detectedExecutableURL()?.standardizedFileURL.path ?? "missing-pi" },
+        makeAnalysis: { [weak self] root in
+            guard let self, let inbox = self.tasksInbox,
+                  let executable = PiIntegration().detectedExecutableURL() else {
+                return UnavailableJobHandler(guidance: "Pi CLI is unavailable. Install/configure Pi, then Retry this stage. No Meeting text was uploaded.")
+            }
+            let worker = PiCodexWorker(executableURL: executable, vaultRootURL: root)
+            return MeetingSummaryJobExecutor(worker: worker, workspaceRootURL: root,
+                vault: WorkspaceVault(workspaceRootURL: root, appSupportRootURL: Self.applicationSupportURL), inbox: inbox,
+                onApplied: { [weak self] in
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, !self.isShuttingDown,
+                              self.effectiveWorkspacePath == root.standardizedFileURL.resolvingSymlinksInPath().path else { return }
+                        self.stateStore.publish(.tasks)
+                        self.stateStore.publish(.jobStatus)
+                    }
+                })
         }
     )
     var heavyExecutionGate: JobHeavyExecutionGate { processingRuntime.heavyExecutionGate }
