@@ -277,7 +277,7 @@ public final class MeetingDetailModel: ObservableObject {
 
     public func reloadDraftsAfterConfirmation() {
         guard let detail else { return }
-        notesDraft?.reload(originalText: detail.humanNotes, baseVersion: detail.doorwayVersion)
+        notesDraft?.reload(originalText: detail.humanNotes, baseVersion: detail.notesVersion)
         summaryDraft?.reload(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion)
     }
 
@@ -291,7 +291,7 @@ public final class MeetingDetailModel: ObservableObject {
                 progress: "Saving notes…", completion: completion) { [weak self] output in
             guard case let .detail(saved) = output else { throw MeetingManagementError.unavailable }
             self?.apply(saved)
-            self?.notesDraft?.saved(text: saved.humanNotes, baseVersion: saved.doorwayVersion)
+            self?.notesDraft?.saved(text: saved.humanNotes, baseVersion: saved.notesVersion)
         }
     }
 
@@ -443,8 +443,8 @@ public final class MeetingDetailModel: ObservableObject {
         guard selectedReference?.id == detail.row.id,
               selectedReference?.meetingRelativePath == detail.row.meetingRelativePath else { return }
         self.detail = detail
-        if notesDraft == nil { notesDraft = MeetingTextDraft(originalText: detail.humanNotes, baseVersion: detail.doorwayVersion) }
-        else { notesDraft?.refresh(originalText: detail.humanNotes, baseVersion: detail.doorwayVersion) }
+        if notesDraft == nil { notesDraft = MeetingTextDraft(originalText: detail.humanNotes, baseVersion: detail.notesVersion) }
+        else { notesDraft?.refresh(originalText: detail.humanNotes, baseVersion: detail.notesVersion) }
         if summaryDraft == nil { summaryDraft = MeetingTextDraft(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion) }
         else { summaryDraft?.refresh(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion) }
         loadState = .loaded

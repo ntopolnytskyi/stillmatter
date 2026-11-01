@@ -73,6 +73,8 @@ final class MeetingManagementView: NSView {
     let textEditPanel = MeetingTextEditPanel()
     private var selectionSyncScheduled = false
     private var modalBaseVersion: WorkspaceFileVersion?
+    private var modalField: EditableTextField?
+    private var modalOriginalText = ""
     private enum EditableTextField { case notes, summary }
     let overviewPage = NSStackView()
     let timelinePage = NSStackView()
@@ -134,7 +136,7 @@ final class MeetingManagementView: NSView {
     private var snapshotRenderScheduled = false
     var displayedDetail: MeetingBrowserDetail? { meetingsModel?.detail.detail }
     var selectedID: String? { meetingsModel?.selectedMeetingID }
-    private var selectedDoorwayVersion: WorkspaceFileVersion? { meetingsModel?.detail.notesDraft?.baseVersion }
+    private var selectedDoorwayVersion: WorkspaceFileVersion? { displayedDetail?.doorwayVersion }
     private var selectedSummaryVersion: WorkspaceFileVersion? { meetingsModel?.detail.summaryDraft?.baseVersion }
     private let presentationMetrics: MeetingPresentationMetrics?
 
@@ -812,6 +814,7 @@ final class MeetingManagementView: NSView {
         case .loading:
             status.stringValue = "Loading Meeting detail…"
         case let .unavailable(message), let .failed(message):
+            if textEditPanel.isOpen { textEditPanel.showError(message + " Your text is still here.", conflict: true) }
             status.stringValue = meetingsModel.detail.isShowingStaleDetail
                 ? "\(message) Showing stale detail for this Meeting."
                 : message
@@ -1026,6 +1029,7 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderDetail(_ selected: MeetingBrowserDetail) {
+            refreshModalText(from: selected)
             isApplyingFeatureState = true
             defer { isApplyingFeatureState = false }
             let changedMeeting = renderedMeetingID != selected.row.id
@@ -1050,9 +1054,9 @@ final class MeetingManagementView: NSView {
             if evidenceChanged { renderEvidence(selected) }
             toolbar.isHidden = false
             transcriptionButton.isEnabled = true
-            editSummaryTool.isEnabled = selectedSummaryVersion != nil
+            editSummaryTool.isEnabled = selectedSummaryVersion != nil && !selected.row.isArchived
             notesSection?.isHidden = false
-            editNotesTool.isEnabled = selectedDoorwayVersion != nil
+            editNotesTool.isEnabled = selected.notesVersion != nil && !selected.row.isArchived
             openRecordingButton.isHidden = selected.row.captureState != .live
             let pending = selected.myActionItems.filter { $0.reviewState == .pending }.count
             reviewPrompt.isHidden = pending == 0
@@ -1251,7 +1255,7 @@ final class MeetingManagementView: NSView {
     private func beginNotesEditing() { beginTextEditing(.notes) }
 
     private func beginTextEditing(_ field: EditableTextField) {
-        guard let detail = displayedDetail, let window, !textEditPanel.isOpen,
+        guard let detail = displayedDetail, let window, !textEditPanel.isOpen, !detail.row.isArchived,
               selectedID == detail.row.id, !meetingsModel.detail.hasDirtyDrafts else { return }
         let text: String
         switch field {
@@ -1260,12 +1264,14 @@ final class MeetingManagementView: NSView {
             text = detail.summary?.summary ?? ""
             meetingsModel.detail.beginEditingSummary()
         case .notes:
-            guard detail.doorwayVersion != nil else { return }
+            guard detail.notesVersion != nil else { return }
             text = detail.humanNotes
             meetingsModel.detail.beginEditingNotes()
         }
         let meetingID = detail.row.id
-        modalBaseVersion = field == .summary ? detail.summaryVersion : detail.doorwayVersion
+        modalBaseVersion = field == .summary ? detail.summaryVersion : detail.notesVersion
+        modalField = field
+        modalOriginalText = text
         textEditPanel.present(over: window, field: field == .summary ? "Summary" : "My notes",
                               meeting: detail.row.title, text: text,
                               onChange: { [weak self] text in
@@ -1278,10 +1284,27 @@ final class MeetingManagementView: NSView {
             guard let self else { return }
             self.meetingsModel.detail.discardDrafts()
             self.modalBaseVersion = nil
+            self.modalField = nil
             self.textEditPanel.finish()
         }, onReload: { [weak self] in
             self?.reloadModalText(field, meetingID: meetingID)
         })
+    }
+
+    /// Refresh a clean editor immediately; a dirty editor keeps its original base and draft.
+    private func refreshModalText(from detail: MeetingBrowserDetail) {
+        guard textEditPanel.isOpen, let field = modalField else { return }
+        let latestVersion = field == .summary ? detail.summaryVersion : detail.notesVersion
+        guard latestVersion != modalBaseVersion else { return }
+        if textEditPanel.text == modalOriginalText {
+            let latest = field == .summary ? detail.summary?.summary ?? "" : detail.humanNotes
+            textEditPanel.showLatest(latest)
+            modalOriginalText = latest
+            modalBaseVersion = latestVersion
+        } else {
+            let name = field == .summary ? "Summary" : "My Notes"
+            textEditPanel.showError("\(name) changed while the editor was open. Your draft is preserved. Choose Reload Latest to replace it with the saved content, or Cancel.", conflict: true)
+        }
     }
 
     private func saveModalText(_ field: EditableTextField, meetingID: String, text: String) {
@@ -1296,12 +1319,8 @@ final class MeetingManagementView: NSView {
         guard dirty else {
             meetingsModel.detail.discardDrafts()
             modalBaseVersion = nil
+            modalField = nil
             textEditPanel.finish()
-            return
-        }
-        let currentVersion = field == .summary ? displayedDetail?.summaryVersion : displayedDetail?.doorwayVersion
-        guard currentVersion == modalBaseVersion else {
-            textEditPanel.showError("This Meeting changed while the editor was open. Reload Latest before saving, or Cancel.", conflict: true)
             return
         }
         textEditPanel.setSaving(true)
@@ -1310,11 +1329,13 @@ final class MeetingManagementView: NSView {
             switch result {
             case .success:
                 self.modalBaseVersion = nil
+                self.modalField = nil
                 self.textEditPanel.finish()
                 self.status.stringValue = field == .summary ? "Summary saved." : "Notes saved."
             case let .failure(error):
                 let conflict: Bool
                 if case .failed(_, conflict: true) = self.meetingsModel.detail.mutationState { conflict = true }
+                else if case .malformed = error as? MeetingManagementError { conflict = true }
                 else { conflict = false }
                 self.textEditPanel.showError("Could not save: \(error.localizedDescription). Your text is still here.", conflict: conflict)
             }
@@ -1331,7 +1352,7 @@ final class MeetingManagementView: NSView {
             switch result {
             case .success:
                 self.meetingsModel.detail.reloadDraftsAfterConfirmation()
-                self.modalBaseVersion = field == .summary ? self.displayedDetail?.summaryVersion : self.displayedDetail?.doorwayVersion
+                self.modalBaseVersion = field == .summary ? self.displayedDetail?.summaryVersion : self.displayedDetail?.notesVersion
                 if field == .summary {
                     self.meetingsModel.detail.beginEditingSummary()
                     self.textEditPanel.showLatest(self.meetingsModel.detail.summaryDraft?.editedText ?? "")
@@ -1339,6 +1360,7 @@ final class MeetingManagementView: NSView {
                     self.meetingsModel.detail.beginEditingNotes()
                     self.textEditPanel.showLatest(self.meetingsModel.detail.notesDraft?.editedText ?? "")
                 }
+                self.modalOriginalText = self.textEditPanel.text
                 self.textEditPanel.setSaving(false)
             case let .failure(error):
                 self.textEditPanel.showError("Could not reload: \(error.localizedDescription). Your text is still here.", conflict: true)
@@ -1351,12 +1373,12 @@ final class MeetingManagementView: NSView {
             unavailable: detail.jobs.contains(where: { $0.status == .queued || $0.status == .running })
                 ? "Summary is processing. The recording and notes remain available."
                 : "No Summary is available. Check Processing & source files for artifacts or failed Jobs.",
-            canEdit: detail.summaryVersion != nil,
+            canEdit: detail.summaryVersion != nil && !detail.row.isArchived,
             expand: { [weak self] in self?.expandSummary() },
             edit: { [weak self] in self?.beginSummaryEditing() },
             copy: { [weak self] in self?.copySummary() }))
         notesOverviewSection?.update(MeetingOverviewSection(title: "My notes", editIdentifier: "meeting-overview-edit-notes", content: detail.humanNotes,
-            unavailable: "No notes yet. Choose Edit to add notes.", canEdit: detail.doorwayVersion != nil,
+            unavailable: "No notes yet. Choose Edit to add notes.", canEdit: detail.notesVersion != nil && !detail.row.isArchived,
             expand: { [weak self] in self?.expandNotes() },
             edit: { [weak self] in self?.beginNotesEditing() },
             copy: { [weak self] in self?.copyNotes() }))

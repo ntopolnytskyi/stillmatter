@@ -14,7 +14,7 @@ struct TodoMarkdownCheckbox {
 
     static func parse(_ line: String) -> TodoMarkdownCheckbox? {
         let pattern = #"^(\s*)[-*]\s+\[([ xXbBcC])\]\s+(.*)$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .dotMatchesLineSeparators),
               let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               let whitespaceRange = Range(match.range(at: 1), in: line),
               let markerRange = Range(match.range(at: 2), in: line),
@@ -62,6 +62,8 @@ public struct TodoItem: Equatable {
     public let dueDate: String?
     public let sourceRef: String?
     public let location: TodoSourceLocation
+    /// A queue projection keeps its displayed location while mutations target this checkbox.
+    public let canonicalLocation: TodoSourceLocation?
     public let section: String?
     public let indentation: Int
     public let parentID: String?
@@ -78,7 +80,8 @@ public struct TodoItem: Equatable {
         section: String?,
         indentation: Int,
         parentID: String?,
-        comments: [String] = []
+        comments: [String] = [],
+        canonicalLocation: TodoSourceLocation? = nil
     ) {
         self.id = id
         self.title = title
@@ -87,6 +90,7 @@ public struct TodoItem: Equatable {
         self.dueDate = dueDate
         self.sourceRef = sourceRef
         self.location = location
+        self.canonicalLocation = canonicalLocation
         self.section = section
         self.indentation = indentation
         self.parentID = parentID
@@ -124,6 +128,7 @@ public struct TodoTaskViews: Equatable {
         let normalizedQuery = query.lowercased()
         return allIndexed.filter { item in
             item.location.relativePath.lowercased().contains(normalizedQuery)
+                || (item.canonicalLocation?.relativePath.lowercased().contains(normalizedQuery) ?? false)
                 || (item.sourceRef?.lowercased().contains(normalizedQuery) ?? false)
         }
     }
@@ -137,8 +142,9 @@ public struct TodoItemParser {
         var stack: [(indentation: Int, id: String)] = []
         var currentSection: String?
 
-        let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        for (index, line) in lines.enumerated() {
+        let lines = markdown.components(separatedBy: "\n")
+        for (index, rawLine) in lines.enumerated() {
+            let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
             if let heading = Self.headingTitle(in: line) {
                 currentSection = heading
                 stack.removeAll()
@@ -151,7 +157,8 @@ public struct TodoItemParser {
                 }
 
                 let lineNumber = index + 1
-                let id = "\(relativePath):\(lineNumber)"
+                let metadata = Self.metadata(in: checkbox.text)
+                let id = metadata?.id.lowercased() ?? "\(relativePath):\(lineNumber)"
                 let rawText = checkbox.text.trimmingCharacters(in: .whitespaces)
                 let item = TodoItem(
                     id: id,
@@ -191,8 +198,15 @@ public struct TodoItemParser {
         return trimmed.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
     }
 
+    fileprivate static func metadata(in text: String) -> MeetingItemMetadata? {
+        guard let start = text.range(of: "<!-- sm-item:"), text.hasSuffix(" -->"),
+              let item = try? JSONDecoder().decode(MeetingItemMetadata.self, from: Data(text[start.upperBound..<text.index(text.endIndex, offsetBy: -4)].utf8)),
+              item.v == 1, UUID(uuidString: item.id) != nil else { return nil }
+        return item
+    }
+
     private static func displayTitle(from rawText: String) -> String {
-        var title = rawText
+        var title = rawText.replacingOccurrences(of: #"\s*<!-- sm-item:.* -->$"#, with: "", options: .regularExpression)
         title = title.replacingOccurrences(of: #"\bdue:\s*\d{4}-\d{2}-\d{2}\b"#, with: "", options: .regularExpression)
         title = title.replacingOccurrences(of: #"\[\[[^\]]+\]\]"#, with: "", options: .regularExpression)
         return title.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
@@ -213,8 +227,20 @@ public struct TodoItemParser {
     }
 }
 
-public enum TodoItemMutationError: Error, Equatable {
+public enum TodoItemMutationError: Error, Equatable, LocalizedError {
     case itemNotFound(String)
+    case duplicateIdentity(String)
+    case invalidReference(String)
+    case staleCanonicalItem(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .itemNotFound(id): return "Todo \(id) no longer exists. Reload the task list."
+        case let .duplicateIdentity(id): return "Multiple checkboxes or queue references use Todo identity \(id). Keep one canonical checkbox and one queue reference, then reload."
+        case let .invalidReference(line): return "Invalid Todo reference: \(line). Restore its item UUID and reload."
+        case let .staleCanonicalItem(id): return "Todo \(id) changed in its canonical file. Your source is preserved; reload before editing it."
+        }
+    }
 }
 
 public struct TodoItemDraft: Equatable {
@@ -254,7 +280,10 @@ public final class TodoItemMutator {
         _ items: [TodoItemDraft],
         expectedVersion: WorkspaceFileVersion?
     ) throws -> WorkspaceFileVersion {
-        let markdown = try readMainTodoMarkdown()
+        try writeMainTodoMarkdown(Self.insertingInQueue(items, into: readMainTodoMarkdown()), expectedVersion: expectedVersion)
+    }
+
+    static func insertingInQueue(_ items: [TodoItemDraft], into markdown: String) -> String {
         var lines = Self.lines(from: markdown)
         let itemLines = items.map {
             "- [ ] " + Self.todoText(title: $0.title, dueDate: $0.dueDate, sourceRefs: $0.sourceRefs)
@@ -271,10 +300,13 @@ public final class TodoItemMutator {
             insertionIndex = lines.count
         }
         lines.insert(contentsOf: itemLines, at: insertionIndex)
-        return try writeMainTodoMarkdown(Self.markdown(from: lines), expectedVersion: expectedVersion)
+        return Self.markdown(from: lines)
     }
 
     public func updateStatus(item: TodoItem, status: TodoStatus, expectedVersion: WorkspaceFileVersion) throws -> WorkspaceFileVersion {
+        if item.canonicalLocation != nil {
+            return try updateProjection(item, status: status, dueDate: nil, changingDueDate: false, expectedVersion: expectedVersion)
+        }
         let markdown = try readMainTodoMarkdown()
         var lines = Self.lines(from: markdown)
         let lineIndex = item.location.lineNumber - 1
@@ -289,12 +321,58 @@ public final class TodoItemMutator {
     }
 
     public func updateDueDate(item: TodoItem, dueDate: String?, expectedVersion: WorkspaceFileVersion) throws -> WorkspaceFileVersion {
+        if item.canonicalLocation != nil {
+            return try updateProjection(item, status: nil, dueDate: dueDate, changingDueDate: true, expectedVersion: expectedVersion)
+        }
         let markdown = try readMainTodoMarkdown()
         var lines = Self.lines(from: markdown)
         let lineIndex = item.location.lineNumber - 1
         guard lines.indices.contains(lineIndex) else { throw TodoItemMutationError.itemNotFound(item.id) }
         lines[lineIndex] = Self.replacingDueDate(in: lines[lineIndex], with: dueDate)
         return try writeMainTodoMarkdown(Self.markdown(from: lines), expectedVersion: expectedVersion)
+    }
+
+    private func updateProjection(_ item: TodoItem, status: TodoStatus?, dueDate: String?,
+                                  changingDueDate: Bool, expectedVersion: WorkspaceFileVersion) throws -> WorkspaceFileVersion {
+        let queuePath = TodoItemIndex.mainTodoRelativePath
+        let queue = try vault.readMarkdown(relativePath: queuePath)
+        guard queue.version == expectedVersion else {
+            throw WorkspaceVaultError.conflict(relativePath: queuePath, expected: expectedVersion, actual: queue.version)
+        }
+        // Re-resolve UUIDs so ordinary source line insertions and external renames remain safe.
+        let resolved = try TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems()
+        guard let current = resolved.first(where: { $0.id == item.id && $0.canonicalLocation != nil }),
+              let location = current.canonicalLocation else { throw TodoItemMutationError.itemNotFound(item.id) }
+        guard current.rawText == item.rawText, current.status == item.status else {
+            throw TodoItemMutationError.staleCanonicalItem(item.id)
+        }
+        let source = try vault.readMarkdown(relativePath: location.relativePath)
+        guard let sourceText = String(data: source.data, encoding: .utf8),
+              let exact = TodoItemParser().parse(markdown: sourceText, relativePath: location.relativePath).first(where: { $0.id == item.id }),
+              exact.rawText == item.rawText, exact.status == item.status else {
+            throw TodoItemMutationError.staleCanonicalItem(item.id)
+        }
+        var sourceLines = Self.lines(from: sourceText)
+        let sourceIndex = exact.location.lineNumber - 1
+        if changingDueDate { sourceLines[sourceIndex] = Self.replacingDueDate(in: sourceLines[sourceIndex], with: dueDate) }
+        if let status {
+            sourceLines[sourceIndex] = Self.replacingCheckboxMarker(in: sourceLines[sourceIndex], with: Self.marker(for: status))
+            if status == .done { sourceLines[sourceIndex] = Self.appendingCompletionDate(to: sourceLines[sourceIndex], date: today()) }
+        }
+        var queueLines = Self.lines(from: String(decoding: queue.data, as: UTF8.self))
+        if status == .done {
+            let start = current.location.lineNumber - 1
+            let range = Self.itemBlockRange(startingAt: start, indentation: current.indentation, in: queueLines)
+            let block = Self.removingLeadingColumns(current.indentation, from: Array(queueLines[range]))
+            queueLines.removeSubrange(range)
+            Self.removeExtraBlankLinesAroundRemoval(at: range.lowerBound, in: &queueLines)
+            Self.insertDoneBlock(block, date: today(), in: &queueLines)
+        }
+        try vault.replaceMarkdownTransaction([
+            .init(relativePath: location.relativePath, data: Data(Self.markdown(from: sourceLines).utf8), expectedVersion: source.version),
+            .init(relativePath: queuePath, data: Data(Self.markdown(from: queueLines).utf8), expectedVersion: queue.version)
+        ])
+        return try vault.readMarkdown(relativePath: queuePath).version
     }
 
     private func moveItemToDone(
@@ -336,7 +414,7 @@ public final class TodoItemMutator {
     }
 
     private static func lines(from markdown: String) -> [String] {
-        markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        markdown.components(separatedBy: "\n")
     }
 
     private static func markdown(from lines: [String]) -> String {
@@ -373,12 +451,18 @@ public final class TodoItemMutator {
     private static func replacingDueDate(in line: String, with dueDate: String?) -> String {
         let stripped = line.replacingOccurrences(of: #"\s*\bdue:\s*\d{4}-\d{2}-\d{2}\b"#, with: "", options: .regularExpression)
         guard let dueDate = dueDate else { return stripped }
-        return stripped + " due: \(dueDate)"
+        return appendingBeforeMetadata(" due: \(dueDate)", to: stripped)
     }
 
     private static func appendingCompletionDate(to line: String, date: String) -> String {
         if line.range(of: #"\bdone:\s*\d{4}-\d{2}-\d{2}\b"#, options: .regularExpression) != nil { return line }
-        return line + " done: \(date)"
+        return appendingBeforeMetadata(" done: \(date)", to: line)
+    }
+
+    private static func appendingBeforeMetadata(_ suffix: String, to line: String) -> String {
+        guard let marker = line.range(of: "<!-- sm-item:") else { return line + suffix }
+        let prefix = String(line[..<marker.lowerBound]).replacingOccurrences(of: #"[ \t]+$"#, with: "", options: .regularExpression)
+        return prefix + suffix + " " + line[marker.lowerBound...]
     }
 
     private static func itemBlockRange(startingAt start: Int, indentation: Int, in lines: [String]) -> Range<Int> {
@@ -390,6 +474,8 @@ public final class TodoItemMutator {
                lines.indices.contains(end + 1),
                headingTitle(in: lines[end + 1]) != nil { break }
             if let checkbox = checkboxIndentation(in: line), checkbox <= indentation { break }
+            if line.range(of: #"^\s*[-*]\s+\[\[item:"#, options: .regularExpression) != nil,
+               TodoMarkdownCheckbox.indentation(of: line) <= indentation { break }
             end += 1
         }
         return start..<end
@@ -483,7 +569,7 @@ public final class TodoItemIndex {
         let items = try loadAllItems()
         let mainItems = items.filter { $0.isFromMainTodoFile }
         return TodoTaskViews(
-            queue: mainItems.filter { $0.section == "Queue" },
+            queue: mainItems.filter { $0.section == "Queue" && $0.status != .done },
             done: mainItems.filter { $0.section == "Done" || $0.status == .done },
             blocked: items.filter { $0.status == .blocked },
             overdue: items.filter { item in
@@ -495,12 +581,61 @@ public final class TodoItemIndex {
     }
 
     public func loadAllItems() throws -> [TodoItem] {
-        let paths = try markdownRelativePaths()
-        return try paths.flatMap { path in
-            let fileURL = workspaceRootURL.appendingPathComponent(path)
-            let markdown = try String(contentsOf: fileURL)
-            return parser.parse(markdown: markdown, relativePath: path)
+        var parsed: [TodoItem] = [], queueMarkdown = ""
+        for path in try markdownRelativePaths() {
+            let markdown = try String(contentsOf: workspaceRootURL.appendingPathComponent(path), encoding: .utf8)
+            if path.caseInsensitiveCompare(Self.mainTodoRelativePath) == .orderedSame { queueMarkdown = markdown }
+            if !markdown.contains("<!-- stillmatter-artifact:summary:v1 -->") {
+                parsed += parser.parse(markdown: markdown, relativePath: path)
+            }
         }
+        var canonical: [String: TodoItem] = [:]
+        for item in parsed where TodoItemParser.metadata(in: item.rawText) != nil {
+            guard canonical.updateValue(item, forKey: item.id) == nil else {
+                throw TodoItemMutationError.duplicateIdentity(item.id)
+            }
+        }
+        var references: Set<String> = [], projections: [TodoItem] = []
+        var section: String?
+        var hierarchy: [(indentation: Int, id: String)] = []
+        let standaloneRows = Dictionary(uniqueKeysWithValues: parsed.filter(\.isFromMainTodoFile).map { ($0.location.lineNumber, $0) })
+        for (index, line) in queueMarkdown.components(separatedBy: "\n").enumerated() {
+            let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.hasPrefix("#") {
+                section = text.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
+                hierarchy.removeAll()
+            }
+            let indentation = TodoMarkdownCheckbox.indentation(of: line)
+            if let standalone = standaloneRows[index + 1] {
+                while let last = hierarchy.last, last.indentation >= indentation { hierarchy.removeLast() }
+                hierarchy.append((indentation, standalone.id))
+            }
+            guard text.hasPrefix("- [[item:") || text.hasPrefix("* [[item:") else { continue }
+            let value = text.dropFirst(9)
+            guard text.hasSuffix("]]"), let end = value.firstIndex(where: { $0 == "|" || $0 == "]" }),
+                  value[end] == "|" || value[end...] == "]]",
+                  let identity = UUID(uuidString: String(value[..<end])) else {
+                throw TodoItemMutationError.invalidReference(text)
+            }
+            let id = identity.uuidString.lowercased()
+            guard references.insert(id).inserted else { throw TodoItemMutationError.duplicateIdentity(id) }
+            guard let item = canonical[id] else { continue } // Explicit checkbox removal removes the projected task.
+            guard let metadata = TodoItemParser.metadata(in: item.rawText), metadata.owner == "me", metadata.review == "approved" else { continue }
+            while let last = hierarchy.last, last.indentation >= indentation { hierarchy.removeLast() }
+            let parentID = hierarchy.last?.id
+            hierarchy.append((indentation, item.id))
+            projections.append(TodoItem(id: item.id, title: item.title, rawText: item.rawText, status: item.status,
+                dueDate: item.dueDate, sourceRef: item.sourceRef,
+                location: TodoSourceLocation(relativePath: Self.mainTodoRelativePath, lineNumber: index + 1),
+                section: section, indentation: indentation, parentID: parentID,
+                comments: item.comments, canonicalLocation: item.location))
+        }
+        let unprojected = parsed.filter { !references.contains($0.id) }.filter { item in
+            guard let metadata = TodoItemParser.metadata(in: item.rawText) else { return true }
+            return metadata.owner == "me" && metadata.review == "approved"
+        }
+        let main = (unprojected.filter(\.isFromMainTodoFile) + projections).sorted { $0.location.lineNumber < $1.location.lineNumber }
+        return main + unprojected.filter { !$0.isFromMainTodoFile }
     }
 
     private func markdownRelativePaths() throws -> [String] {
