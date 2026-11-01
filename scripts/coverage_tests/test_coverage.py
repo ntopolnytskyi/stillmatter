@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -218,11 +219,96 @@ class CoverageTests(unittest.TestCase):
         self.assertFalse(gate.passes(gate.summarize(self.manifest, merged)))
 
     def test_changed_lines_support_added_deleted_unicode_and_space_paths(self):
-        diff = "+++ b/Sources/Код Файл.swift\n@@ -1,2 +1,3 @@\n+new\n+++ b/Sources/Deleted.swift\n@@ -1,2 +0,0 @@\n+++ b/Sources/Single.swift\n@@ -0,0 +4 @@\n+new\n"
+        diff = "diff --git a/Sources/Код Файл.swift b/Sources/Код Файл.swift\n+++ b/Sources/Код Файл.swift\n@@ -1,2 +1,3 @@\n+new\ndiff --git a/Sources/Deleted.swift b/Sources/Deleted.swift\n+++ b/Sources/Deleted.swift\n@@ -1,2 +0,0 @@\ndiff --git a/Sources/Single.swift b/Sources/Single.swift\n+++ b/Sources/Single.swift\n@@ -0,0 +4 @@\n+new\n"
         lines = gate.changed_lines(diff)
         self.assertEqual(lines["Sources/Код Файл.swift"], {1, 2, 3})
         self.assertEqual(lines["Sources/Deleted.swift"], set())
         self.assertEqual(lines["Sources/Single.swift"], {4})
+
+    def test_changed_lines_parse_git_generated_paths_with_spaces_and_c_escapes(self):
+        repository = self.root / "git-diff"
+        repository.mkdir()
+        paths = [
+            "Sources/Space Name.swift",
+            'Sources/Quoted"Name.swift',
+            "Sources/Back\\slash.swift",
+            "Sources/Tab\tName.swift",
+            "Sources/New\nLine.swift",
+            "Sources/Код.swift",
+            "Sources/Line\u2028Separator.swift",
+            "Sources/Paragraph\u2029Separator.swift",
+        ]
+        for path in paths:
+            destination = repository / path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text("before\n")
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "user.email", "coverage@example.test"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "user.name", "Coverage Test"], cwd=repository, check=True)
+        subprocess.run(["git", "add", "--", "Sources"], cwd=repository, check=True)
+        subprocess.run(["git", "commit", "-qm", "baseline"], cwd=repository, check=True)
+        for path in paths:
+            (repository / path).write_text("after\n")
+
+        diff = gate.command([
+            "git", "-c", "core.quotePath=false", "diff", "--no-ext-diff",
+            "--no-renames", "--unified=0", "HEAD", "--", "Sources",
+        ], cwd=repository)
+        lines = gate.changed_lines(diff)
+        self.assertEqual(set(lines), set(paths))
+        self.assertTrue(all(value == {1} for value in lines.values()))
+        synthetic_manifest = {"files": {path: {"module": "Stillmatter"} for path in paths}}
+        uncovered = {path: {"1": False} for path in paths}
+        changed_summary = gate.summarize(synthetic_manifest, uncovered, lines)
+        self.assertEqual(changed_summary["aggregate"]["total"], len(paths))
+        self.assertFalse(gate.passes(changed_summary))
+
+    def test_lcov_records_preserve_unicode_line_separator_filenames(self):
+        paths = ["Sources/Line\u2028Separator.swift", "Sources/Paragraph\u2029Separator.swift"]
+        manifest = {"files": {}}
+        contents = ""
+        for path in paths:
+            source = self.root / path
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("func example() {}\n")
+            manifest["files"][path] = {"module": "Stillmatter"}
+            contents += f"SF:{source}\nDA:1,0\nend_of_record\n"
+        self.assertEqual(gate.parse_lcov(contents, self.root, manifest), {path: {"1": False} for path in paths})
+
+    def test_changed_lines_do_not_treat_added_multiline_string_as_file_header(self):
+        repository = self.root / "git-hunk"
+        source = repository / "Sources/Real.swift"
+        source.parent.mkdir(parents=True)
+        source.write_text("""let text = \"\"\"\nfirst\nthird\n\"\"\"\nlet one = 1\nlet two = 2\nlet three = 3\nlet four = 4\nlet five = 5\nlet six = 6\nlet seven = 7\nlet eight = 8\nlet nine = 9\nlet ten = 10\nlet target = 0\n""")
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "user.email", "coverage@example.test"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "user.name", "Coverage Test"], cwd=repository, check=True)
+        subprocess.run(["git", "add", "--", "Sources/Real.swift"], cwd=repository, check=True)
+        subprocess.run(["git", "commit", "-qm", "baseline"], cwd=repository, check=True)
+        source.write_text("""let text = \"\"\"\nfirst\n++ b/Sources/Fake.swift\nthird\n\"\"\"\nlet one = 1\nlet two = 2\nlet three = 3\nlet four = 4\nlet five = 5\nlet six = 6\nlet seven = 7\nlet eight = 8\nlet nine = 9\nlet ten = 10\nlet target = 1\n""")
+
+        diff = gate.command([
+            "git", "-c", "core.quotePath=false", "diff", "--no-ext-diff",
+            "--no-renames", "--unified=0", "HEAD", "--", "Sources",
+        ], cwd=repository)
+        lines = gate.changed_lines(diff)
+        self.assertEqual(set(lines), {"Sources/Real.swift"})
+        self.assertGreater(len(lines["Sources/Real.swift"]), 1)
+        synthetic_manifest = {"files": {"Sources/Real.swift": {"module": "Stillmatter"}}}
+        uncovered = {"Sources/Real.swift": {str(number): False for number in lines["Sources/Real.swift"]}}
+        self.assertFalse(gate.passes(gate.summarize(synthetic_manifest, uncovered, lines)))
+
+    def test_changed_lines_ignore_git_unified_diff_timestamp_separator(self):
+        source = self.root / "Sources/Space Name.swift"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("func example() {}\n")
+        diff = subprocess.run(
+            ["git", "diff", "--no-index", "--text", "--unified=0", "/dev/null", "Sources/Space Name.swift"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, cwd=self.root,
+        ).stdout
+        self.assertIn("+++ ", diff)
+        path = gate.changed_lines(diff)
+        self.assertEqual(path, {"Sources/Space Name.swift": {1}})
 
     def test_package_execution_requires_non_skipped_tests_and_reports_skips(self):
         self.assertEqual(runner.package_counts("Executed 303 tests, with 4 tests skipped and 0 failures"), {"total": 303, "skipped": 4, "failed": 0})

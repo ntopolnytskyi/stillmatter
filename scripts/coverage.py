@@ -4,6 +4,7 @@ import argparse
 from collections import defaultdict
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -129,7 +130,7 @@ def parse_lcov(contents, source_root, manifest):
     source_root = source_root.resolve()
     files = {}
     current = None
-    for line in contents.splitlines():
+    for line in contents.split("\n"):
         if line.startswith("SF:"):
             path = Path(line[3:])
             if not path.is_absolute():
@@ -187,18 +188,81 @@ def merge_reports(manifest, reports):
     return merged
 
 
+def _git_quoted_path(value):
+    """Decode Git's C-quoted unified-diff path into a filesystem path."""
+    if not value.startswith('"'):
+        raise CoverageError("Malformed quoted unified diff path")
+    encoded = bytearray()
+    index = 1
+    while index < len(value):
+        char = value[index]
+        if char == '"':
+            suffix = value[index + 1:]
+            if suffix and not suffix.startswith("\t"):
+                raise CoverageError("Malformed quoted unified diff path suffix")
+            return os.fsdecode(bytes(encoded))
+        if char != "\\":
+            encoded.extend(char.encode("utf-8"))
+            index += 1
+            continue
+        index += 1
+        if index >= len(value):
+            raise CoverageError("Malformed escape in quoted unified diff path")
+        escaped = value[index]
+        controls = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13}
+        if escaped in controls:
+            encoded.append(controls[escaped])
+            index += 1
+        elif escaped in {'"', "\\"}:
+            encoded.extend(escaped.encode("ascii"))
+            index += 1
+        elif escaped in "01234567":
+            end = index
+            while end < min(index + 3, len(value)) and value[end] in "01234567":
+                end += 1
+            encoded.append(int(value[index:end], 8))
+            index = end
+        else:
+            raise CoverageError("Unknown escape in quoted unified diff path")
+    raise CoverageError("Unterminated quoted unified diff path")
+
+
+def _unified_diff_path(header):
+    if not header.startswith("+++ "):
+        return None
+    value = header[4:]
+    if value == "/dev/null":
+        return None
+    if value.startswith('"'):
+        value = _git_quoted_path(value)
+    else:
+        # Unified diff permits a tab-delimited timestamp after the path. Git
+        # quotes control characters in paths, so a tab here is the delimiter.
+        value = value.split("\t", 1)[0]
+    if not value.startswith("b/"):
+        return None
+    return value[2:]
+
+
 def changed_lines(diff):
     result = defaultdict(set)
     path = None
-    for line in diff.splitlines():
-        if line.startswith("+++ "):
-            path = line[6:] if line.startswith("+++ b/") else None
+    in_hunk = False
+    for line in diff.split("\n"):
+        if line.startswith("diff --git "):
+            path = None
+            in_hunk = False
+        elif not in_hunk and line.startswith("+++ "):
+            path = _unified_diff_path(line)
         elif line.startswith("@@ ") and path:
             match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
             if not match:
                 raise CoverageError("Malformed unified diff hunk")
             start, count = int(match[1]), int(match[2] or 1)
             result[path].update(range(start, start + count))
+            in_hunk = True
+        elif line.startswith("@@ "):
+            in_hunk = True
     return result
 
 
