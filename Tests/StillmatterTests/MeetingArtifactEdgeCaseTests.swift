@@ -91,4 +91,33 @@ final class MeetingArtifactEdgeCaseTests: XCTestCase {
             XCTAssertThrowsError(try TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems())
         }
     }
+
+    func testMissingCanonicalProducerPathReturnsActionableError() throws {
+        try withStore { vault, store in
+            let meeting = "Meetings/edge/meeting.md"
+            try write("---\ntitle: Edge\ntype: meeting\n---\n\n## Notes\n\nNotes\n",
+                      path: meeting, vault: vault)
+            let loaded = try store.load(meetingPath: meeting, meetingID: meeting)
+            let incomplete = MeetingArtifactStore.Loaded(notes: loaded.notes, notesVersion: loaded.notesVersion,
+                sections: loaded.sections, summaryVersion: loaded.summaryVersion, extraction: loaded.extraction,
+                transcript: loaded.transcript, paths: [:], versions: loaded.versions,
+                reviewStates: loaded.reviewStates, completionStates: loaded.completionStates)
+            XCTAssertThrowsError(try store.publishGenerated(summary: Data(), extraction: loaded.extraction,
+                extractionData: Data(), base: incomplete, meetingPath: meeting, meetingID: meeting,
+                expectedExtraction: nil)) { error in
+                XCTAssertTrue(error.localizedDescription.contains("action-items path"))
+            }
+        }
+    }
+
+    func testNonObjectTranscriptJSONIsAnActionableError() {
+        XCTAssertThrowsError(try MeetingTranscriptCodec.text(Data("[]".utf8))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Transcript JSON structure"))
+        }
+    }
+
+    func testTranscriptHashRetainsLowercaseTwoDigitHexEncoding() {
+        XCTAssertEqual(MeetingTranscriptCodec.hash(Data("abc".utf8)),
+                       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    }
 }
