@@ -39,7 +39,7 @@ def atomic_write(path, text):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + '.prototype-new')
-    with temp.open('w', encoding='utf-8') as file:
+    with temp.open('w', encoding='utf-8', newline='') as file:
         file.write(text)
         file.flush()
         os.fsync(file.fileno())
@@ -51,8 +51,23 @@ def atomic_write(path, text):
         os.close(descriptor)
 
 
+def read_text(path):
+    # Universal-newline translation would destroy exact legacy recovery bytes.
+    return Path(path).read_bytes().decode('utf-8')
+
+
 def read_optional(path):
-    return path.read_text() if path.exists() else None
+    return read_text(path) if path.exists() else None
+
+
+def markdown_lines(text):
+    # Only LF/CRLF frame Markdown records; Unicode separators remain prose.
+    parts = text.split('\n')
+    return [part + '\n' for part in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
+
+
+def line_ending(line):
+    return '\r\n' if line.endswith('\r\n') else '\n' if line.endswith('\n') else ''
 
 
 def within(root, relative):
@@ -73,7 +88,7 @@ class Interrupted(Exception):
 def parse_items(markdown, origin='note', allocate=None):
     """Read without mutating. Missing IDs are unadopted until an explicit save."""
     items, seen = [], set()
-    for number, line in enumerate(markdown.splitlines()):
+    for number, line in enumerate(line.rstrip('\r\n') for line in markdown_lines(markdown)):
         match = CHECKBOX.fullmatch(line)
         if not match:
             continue
@@ -115,13 +130,13 @@ def serialize_line(item, original_line=None):
 
 
 def adopt(markdown, origin='note', id_seed=None):
-    lines = markdown.splitlines(keepends=True)
+    lines = markdown_lines(markdown)
     allocate = lambda number: stable(id_seed + ':' + str(number)) if id_seed else str(uuid.uuid4())
     for item in parse_items(markdown, origin, allocate):
         old = lines[item['line']]
-        if not META.search(old.rstrip('\n')):
-            ending = '\n' if old.endswith('\n') else ''
-            lines[item['line']] = serialize_line(item, old.rstrip('\n')) + ending
+        if not META.search(old.rstrip('\r\n')):
+            ending = line_ending(old)
+            lines[item['line']] = serialize_line(item, old.rstrip('\r\n')) + ending
     return ''.join(lines)
 
 
@@ -135,7 +150,7 @@ class CanonicalWorkspace:
     def catalog(self):
         result = {}
         for path in self.root.rglob('*.md'):
-            for item in parse_items(path.read_text()):
+            for item in parse_items(read_text(path)):
                 item_id = item['meta']['id']
                 if item_id is None:
                     continue
@@ -152,13 +167,20 @@ class CanonicalWorkspace:
         return [item for item in self.meeting_view(ids)
                 if item['meta']['owner'] == 'me' and item['meta']['review'] == 'approved']
 
-    def edit(self, item_id, expected_text, *, text=None, marker=None, owner=...):
-        path, item = self.catalog()[item_id]
-        current = path.read_text()
+    def edit(self, item_id, expected_text, *, text=None, marker=None, owner=..., relative_path=None):
+        # A real editor retains its document path as well as the base snapshot.
+        # Supplying it permits conflict recovery even after external deletion.
+        path = within(self.root, relative_path) if relative_path is not None else self.catalog()[item_id][0]
+        current = read_optional(path)
+        base_items = [candidate for candidate in parse_items(expected_text)
+                      if candidate['meta']['id'] == item_id]
+        if len(base_items) != 1:
+            raise ValueError('Draft base does not identify item')
+        item = base_items[0]
         draft_item = dict(item)
         draft_item['meta'] = dict(item['meta'])
         if text is not None:
-            if '\n' in text or '<!-- sm-item:' in text:
+            if '\n' in text or '\r' in text or '<!-- sm-item:' in text:
                 raise ValueError('Item text cannot introduce new metadata/records')
             draft_item['text'] = text
         if marker is not None:
@@ -168,16 +190,12 @@ class CanonicalWorkspace:
         if owner is not ...:
             draft_item['meta']['owner'] = owner
         # Draft uses the caller's full base file, never a guessed merge.
-        base_items = [candidate for candidate in parse_items(expected_text)
-                      if candidate['meta']['id'] == item_id]
-        if len(base_items) != 1:
-            raise ValueError('Draft base does not identify item')
-        lines = expected_text.splitlines(keepends=True)
+        lines = markdown_lines(expected_text)
         number = base_items[0]['line']
-        lines[number] = serialize_line(draft_item, lines[number].rstrip('\n')) + ('\n' if lines[number].endswith('\n') else '')
+        lines[number] = serialize_line(draft_item, lines[number].rstrip('\r\n')) + line_ending(lines[number])
         draft = ''.join(lines)
         if current != expected_text:
-            record = {'path': str(path.relative_to(self.root)), 'base': expected_text,
+            record = {'path': str(path.resolve().relative_to(self.root.resolve())), 'base': expected_text,
                       'external': current, 'draft': draft}
             conflict_path = self.support / 'conflicts' / (str(uuid.uuid4()) + '.json')
             atomic_write(conflict_path, dumps(record))
@@ -205,7 +223,7 @@ class Journal:
         atomic_write(self.path, dumps({'state': 'prepared', 'entries': entries}))
 
     def commit(self, interrupt_after=None):
-        manifest = json.loads(self.path.read_text())
+        manifest = json.loads(read_text(self.path))
         if manifest['state'] == 'committed':
             return
         if manifest['state'] != 'prepared':
@@ -222,10 +240,10 @@ class Journal:
         atomic_write(self.path, dumps(manifest))
 
     def visible_new(self):
-        return self.path.exists() and json.loads(self.path.read_text())['state'] == 'committed'
+        return self.path.exists() and json.loads(read_text(self.path))['state'] == 'committed'
 
     def rollback(self):
-        manifest = json.loads(self.path.read_text())
+        manifest = json.loads(read_text(self.path))
         if manifest['state'] == 'committed':
             raise ValueError('Rollback is only an interrupted-migration experiment')
         for entry in manifest['entries']:
@@ -266,7 +284,7 @@ def legacy_reviews(database, workspace=None):
 
 
 def notes_body(doorway):
-    heading = re.search(r'(?m)^## (?:Live notes|Notes)[ \t]*\n', doorway)
+    heading = re.search(r'(?m)^## (?:Live notes|Notes)[ \t]*\r?\n', doorway)
     if not heading:
         return '', doorway
     following = re.search(r'(?m)^## [^\n]+$', doorway[heading.end():])
@@ -289,7 +307,7 @@ def plan_legacy(root, doorway_path, reviews, extraction, *, confirmed_bindings=N
     """
     root = Path(root)
     confirmed_bindings = confirmed_bindings or {}
-    doorway = within(root, doorway_path).read_text()
+    doorway = read_text(within(root, doorway_path))
     session_match = re.search(r'(?m)^capture_session_id:\s*(.+)$', doorway)
     meeting_id = session_match[1].strip() if session_match else str(uuid.uuid4())
     directory = str(Path(doorway_path).parent)
@@ -297,7 +315,7 @@ def plan_legacy(root, doorway_path, reviews, extraction, *, confirmed_bindings=N
     notes = adopt(notes, id_seed=meeting_id + ':notes')
     todo_path = root / 'Todos/todo.md'
     todo = read_optional(todo_path) or ''
-    todo_lines = todo.splitlines(keepends=True)
+    todo_lines = markdown_lines(todo)
     canonical, issues, imported = [], [], {}
     source_prefix = directory + '/'
     todos = parse_items(todo, 'legacy-todo', lambda line: stable(meeting_id + ':legacy-todo:' + str(line)))
@@ -306,7 +324,7 @@ def plan_legacy(root, doorway_path, reviews, extraction, *, confirmed_bindings=N
         sources = LINK.findall(item['text'])
         if not any(source.split('|')[0].startswith(source_prefix) for source in sources):
             continue
-        if CHECKBOX.fullmatch(todo_lines[item['line']].rstrip('\n'))[1][0].isspace():
+        if CHECKBOX.fullmatch(todo_lines[item['line']].rstrip('\r\n'))[1][0].isspace():
             raise ValueError('Nested meeting-linked task requires explicit migration review')
         start = item['line']
         end = start + 1
@@ -314,13 +332,13 @@ def plan_legacy(root, doorway_path, reviews, extraction, *, confirmed_bindings=N
             end += 1
         block = ''.join(todo_lines[start:end])
         # Nested checkboxes are deliberately not auto-moved independently.
-        if any(CHECKBOX.fullmatch(line.rstrip('\n')) for line in todo_lines[start + 1:end]):
+        if any(CHECKBOX.fullmatch(line.rstrip('\r\n')) for line in todo_lines[start + 1:end]):
             raise ValueError('Nested task block requires explicit migration review')
         item['meta']['review'] = 'approved'
         item['meta']['owner'] = 'me'
         item['meta']['legacy_location'] = 'Todos/todo.md:' + str(start + 1)
         item['meta']['source_refs'] = sources
-        canonical.append(serialize_line(item, todo_lines[start].rstrip('\n')) + '\n' + ''.join(todo_lines[start + 1:end]))
+        canonical.append(serialize_line(item, todo_lines[start].rstrip('\r\n')) + '\n' + ''.join(todo_lines[start + 1:end]))
         imported[start] = item
         todo_lines[start] = '- [[item:' + item['meta']['id'] + '|' + legacy_title(item['text']) + ']]\n'
         for number in range(start + 1, end):
