@@ -29,6 +29,8 @@ final class CaptureRecordingView: NSView {
     private let jobRecordsProvider: () -> [JobRecord]
     private let onOpenSettings: () -> Void
 
+    private let controls: GraphiteFocusControls
+
     let contentStack = NSStackView()
     let statePanel = NSView()
     let stateSymbolLabel = NSTextField(labelWithString: "")
@@ -37,19 +39,19 @@ final class CaptureRecordingView: NSView {
     let elapsedLabel = NSTextField(labelWithString: "00:00:00")
     private let meetingPathLabel = NSTextField(wrappingLabelWithString: "")
     private let meetingActions = NSStackView()
-    let startButton = NSButton(title: "Start Capture", target: nil, action: nil)
-    let stopButton = NSButton(title: "Stop Capture", target: nil, action: nil)
-    private let openFolderButton = NSButton(title: "Open Meeting Folder", target: nil, action: nil)
-    private let languagePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let regenerateButton = NSButton(title: "Regenerate Transcript", target: nil, action: nil)
-    let noteField = NSTextField()
-    private let addNoteButton = NSButton(title: "Add Note", target: nil, action: nil)
-    private let addActionButton = NSButton(title: "Add Action Checkbox", target: nil, action: nil)
+    let startButton: NSButton
+    let stopButton: NSButton
+    private let openFolderButton: NSButton
+    private let languagePopup: NSPopUpButton
+    private let regenerateButton: NSButton
+    let noteField: NSTextField
+    private let addNoteButton: NSButton
+    private let addActionButton: NSButton
     private let preflightRows = NSStackView()
     private let artifactsRows = NSStackView()
     private let teamsRows = NSStackView()
-    let artifactsDisclosure = NSButton(title: "Show Processing & Artifacts", target: nil, action: nil)
-    let teamsDisclosure = NSButton(title: "Show Teams Detection Signals", target: nil, action: nil)
+    let artifactsDisclosure: NSButton
+    let teamsDisclosure: NSButton
     let artifactsContainer = NSStackView()
     let teamsContainer = NSStackView()
     let errorLabel = NSTextField(wrappingLabelWithString: "")
@@ -60,6 +62,7 @@ final class CaptureRecordingView: NSView {
     var operationFailure: String?
 
     init(
+        controls: GraphiteFocusControls = GraphiteFocusControls(),
         serviceProvider: @escaping () -> MeetingCaptureService?,
         rootURLProvider: @escaping () -> URL?,
         teamsDetectionProvider: @escaping () -> TeamsDetectionSnapshot?,
@@ -68,6 +71,17 @@ final class CaptureRecordingView: NSView {
         jobRecordsProvider: @escaping () -> [JobRecord],
         onOpenSettings: @escaping () -> Void
     ) {
+        self.controls = controls
+        startButton = controls.button("Start Capture", identifier: "recording-start")
+        stopButton = controls.button("Stop Capture", identifier: "recording-stop")
+        openFolderButton = controls.button("Open Meeting Folder", identifier: "recording-open-folder")
+        regenerateButton = controls.button("Regenerate Transcript", identifier: "recording-regenerate")
+        addNoteButton = controls.button("Add Note", identifier: "recording-add-note")
+        addActionButton = controls.button("Add Action Checkbox", identifier: "recording-add-action")
+        artifactsDisclosure = controls.disclosure("Show Processing & Artifacts", identifier: "recording-artifacts")
+        teamsDisclosure = controls.disclosure("Show Teams Detection Signals", identifier: "recording-teams")
+        languagePopup = controls.popup(identifier: "recording-language")
+        noteField = controls.textField(identifier: "recording-note")
         self.serviceProvider = serviceProvider
         self.rootURLProvider = rootURLProvider
         self.teamsDetectionProvider = teamsDetectionProvider
@@ -337,13 +351,11 @@ final class CaptureRecordingView: NSView {
 
         startButton.target = self
         startButton.action = #selector(startCapture(_:))
-        startButton.bezelStyle = .rounded
         startButton.keyEquivalent = "\r"
         startButton.setAccessibilityHelp("Runs Capture Preflight and starts a new Capture Session when every blocking check passes.")
 
         stopButton.target = self
         stopButton.action = #selector(stopCapture(_:))
-        stopButton.bezelStyle = .rounded
         stopButton.setAccessibilityHelp("Stops the active Capture Session and begins finalizing its artifacts.")
 
         elapsedLabel.font = .monospacedDigitSystemFont(ofSize: 26, weight: .semibold)
@@ -446,10 +458,6 @@ final class CaptureRecordingView: NSView {
     }
 
     private func makeDisclosureSection(button: NSButton, container: NSStackView, action: Selector) -> NSView {
-        button.setButtonType(.pushOnPushOff)
-        button.isBordered = false
-        button.alignment = .left
-        button.font = GraphiteFocusPresentation.Typography.sectionHeading
         button.contentTintColor = colors.textPrimary
         button.target = self
         button.action = action
@@ -508,12 +516,9 @@ final class CaptureRecordingView: NSView {
         startButton.isHidden = !canStart
         startButton.isEnabled = canStart
         elapsedLabel.isHidden = canStart || presentation.elapsedSeconds == 0
-        startButton.bezelColor = palette.accent
-        startButton.contentTintColor = palette.accentOn
+        controls.applyCaptureColors(start: startButton, stop: stopButton, colors: palette)
         stopButton.isHidden = !isRecording
         stopButton.isEnabled = isRecording
-        stopButton.bezelColor = palette.destructive
-        stopButton.contentTintColor = nil
         meetingPathLabel.isHidden = presentation.meetingPath == nil
         meetingActions.isHidden = presentation.meetingPath == nil
         openFolderButton.isEnabled = presentation.meetingPath != nil
@@ -621,7 +626,7 @@ final class CaptureRecordingView: NSView {
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         var views: [NSView] = [marker, text]
         if item.settingsAction != nil {
-            let settings = ClosureButton(title: settingsActionTitle(item.settingsAction), action: { [weak self] in
+            let settings = controls.actionButton(settingsActionTitle(item.settingsAction), identifier: "recording-preflight-\(item.id)", action: { [weak self] in
                 self?.onOpenSettings()
             })
             settings.setAccessibilityLabel("\(settings.title) for \(item.title)")
@@ -916,25 +921,4 @@ final class CaptureRecordingView: NSView {
     }
 
 
-}
-
-private final class ClosureButton: NSButton {
-    private let invoke: () -> Void
-
-    init(title: String, action: @escaping () -> Void) {
-        invoke = action
-        super.init(frame: .zero)
-        self.title = title
-        bezelStyle = .rounded
-        target = self
-        self.action = #selector(activate)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    @objc private func activate() {
-        invoke()
-    }
 }

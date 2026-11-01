@@ -93,6 +93,40 @@ final class TranscriptionComponentInstallerTests: XCTestCase {
         XCTAssertTrue(stagingContents.isEmpty)
     }
 
+    func testTerminalCancellationWaitsForCleanupAndAllowsRetryFromItsObserver() throws {
+        let acquirer = CancellationThenSuccessAcquirer()
+        let fileManager = GatedStagingRemovalFileManager()
+        let fixture = try InstallerFixture(acquirer: acquirer, fileManager: fileManager)
+        fileManager.stagingRoot = fixture.paths.stagingRootURL
+        let failed = expectation(description: "cancelled only after cleanup")
+        let ready = expectation(description: "retry requested by terminal observer completes")
+        var observedTerminal = false
+        _ = fixture.installer.observe { state in
+            if case let .failed(message) = state, message.contains("cancelled"), !observedTerminal {
+                observedTerminal = true
+                let contents = (try? FileManager.default.contentsOfDirectory(atPath: fixture.paths.stagingRootURL.path)) ?? []
+                XCTAssertTrue(contents.isEmpty, "Terminal observers must not see abandoned partial downloads")
+                fixture.installer.install()
+                XCTAssertTrue(fixture.installer.state().isBusy, "The terminal observer must be able to retry immediately")
+                failed.fulfill()
+            }
+            if case .ready = state { ready.fulfill() }
+        }
+        fixture.installer.install()
+        XCTAssertEqual(acquirer.started.wait(timeout: .now() + 3), .success)
+        fixture.installer.cancel()
+        defer { fileManager.allowRemoval.signal() }
+        XCTAssertEqual(fileManager.removalStarted.wait(timeout: .now() + 3), .success)
+        XCTAssertTrue(fixture.installer.state().isBusy, "Cancellation remains busy until cleanup completes")
+        let callbacksDrained = expectation(description: "callbacks queued before cleanup have been delivered")
+        DispatchQueue.main.async { callbacksDrained.fulfill() }
+        wait(for: [callbacksDrained], timeout: 3)
+        XCTAssertFalse(observedTerminal, "The failed callback must wait for staging cleanup")
+        fileManager.allowRemoval.signal()
+        wait(for: [failed, ready], timeout: 5)
+        XCTAssertEqual(fixture.installer.installedModelChoice(), .recommended)
+    }
+
     func testModelCompatibilitySupportsIntelAndAppleSiliconMacs() {
         for hardwareModel in ["MacBookPro18,3", "Mac14,7", "MacPro7,1", "x86_64", "unknown"] {
             XCTAssertTrue(TranscriptionModelCompatibility.isSupported(.recommended, hardwareModel: hardwareModel))
@@ -284,16 +318,51 @@ private final class InstallerFixture {
     let paths: TranscriptionComponentPaths
     let installer: TranscriptionComponentInstaller
 
-    init(acquirer: TranscriptionModelAcquiring) throws {
+    init(acquirer: TranscriptionModelAcquiring, fileManager: FileManager = .default) throws {
         rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("StillmatterInstallerTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         paths = TranscriptionComponentPaths(applicationSupportURL: rootURL)
         installer = TranscriptionComponentInstaller(
             paths: paths,
             acquirer: acquirer,
+            fileManager: fileManager,
             availableCapacity: { _ in Int64.max }
         )
     }
 
     deinit { try? FileManager.default.removeItem(at: rootURL) }
+}
+
+private final class CancellationThenSuccessAcquirer: TranscriptionModelAcquiring {
+    private let first = BlockingAcquirer()
+    private var attempts = 0
+    var started: DispatchSemaphore { first.started }
+
+    func acquireModel(_ model: TranscriptionModelChoice, in stagingURL: URL,
+                      cancellation: TranscriptionInstallCancellation,
+                      progress: @escaping (TranscriptionInstallProgress) -> Void) throws -> URL {
+        attempts += 1
+        if attempts == 1 {
+            return try first.acquireModel(model, in: stagingURL, cancellation: cancellation, progress: progress)
+        }
+        return try FixtureAcquirer().acquireModel(model, in: stagingURL, cancellation: cancellation, progress: progress)
+    }
+}
+
+private final class GatedStagingRemovalFileManager: FileManager, @unchecked Sendable {
+    var stagingRoot: URL?
+    let removalStarted = DispatchSemaphore(value: 0)
+    let allowRemoval = DispatchSemaphore(value: 0)
+    private var hasBlocked = false
+
+    override func removeItem(at url: URL) throws {
+        if !hasBlocked, url.deletingLastPathComponent() == stagingRoot {
+            hasBlocked = true
+            removalStarted.signal()
+            guard allowRemoval.wait(timeout: .now() + 10) == .success else {
+                throw CocoaError(.userCancelled)
+            }
+        }
+        try super.removeItem(at: url)
+    }
 }

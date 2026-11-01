@@ -3,5 +3,9 @@
 import AppKit
 
 let application = NSApplication.shared
-application.setActivationPolicy(.prohibited)
+let controlsRoot = ProcessInfo.processInfo.environment["STILLMATTER_CONTROLS_UI_TEST_ROOT"]
+let controlsDelegate = controlsRoot.flatMap { try? ControlsTestApplication(root: URL(fileURLWithPath: $0),
+    scenario: ProcessInfo.processInfo.environment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] ?? "ready") }
+application.setActivationPolicy(controlsDelegate == nil ? .prohibited : .regular)
+application.delegate = controlsDelegate
 application.run()
