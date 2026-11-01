@@ -26,6 +26,7 @@ Relevant accepted decisions: [file authority and shared identity](../../../docs/
 
 ## Acceptance criteria
 
+<<<<<<< HEAD
 - [x] Migrate legacy Meeting content into canonical Markdown artifacts and a separate My Notes file using the contract from 04.
 - [x] Load valid external edits as authoritative and refresh current views; do not overwrite existing user content during migration.
 - [x] Preserve an unsaved in-app draft when an external update conflicts, with explicit reload/resolve instead of silent replacement.
@@ -44,10 +45,31 @@ Relevant accepted decisions: [file authority and shared identity](../../../docs/
 - [x] Record executed tests, results, and any separate hardware/model evaluation evidence; never claim a fake provider proves real model quality or source isolation.
 - [x] Test all feature behavior introduced here in this slice. Production changes use the 95% new/changed executable-line gate established by ticket 01; report existing debt separately. Final ticket 50 requires at least 95% across all shipped first-party Swift source, including app/UI/platform code.
 - [x] Verify migration/restart and workspace/media/support isolation where affected; do not use a real user library or secret namespace as a fixture.
+=======
+- [ ] Migrate legacy Meeting content into canonical Markdown artifacts and a separate My Notes file using the contract from 04.
+- [ ] Load valid external edits as authoritative and refresh current views; do not overwrite existing user content during migration.
+- [ ] Preserve an unsaved in-app draft when an external update conflicts, with explicit reload/resolve instead of silent replacement.
+- [ ] Unreadable/malformed files produce a localized actionable error and do not turn into empty successful content.
+
+## Required tests
+
+- [ ] Load old/new fixtures and verify notes, accepted items, references, archive metadata and Transcript representations survive round trips.
+- [ ] Interrupt each migration/write phase, reopen and assert recoverable old/new content with no duplicated task identities.
+- [ ] Externally edit/rename content while a draft is open; assert updated source remains intact and the draft remains available.
+
+- [ ] Native interaction tests cover the changed controls, applicable shortcuts/focus, resulting persisted state, and the relevant empty/disabled/error case. Use semantic test identifiers and observable waits; source-text checks or screenshots without assertions do not substitute for behavior.
+
+## Completion evidence
+
+- [ ] Record executed tests, results, and any separate hardware/model evaluation evidence; never claim a fake provider proves real model quality or source isolation.
+- [ ] Test all feature behavior introduced here in this slice. Production changes use the 95% new/changed executable-line gate established by ticket 01; report existing debt separately. Final ticket 50 requires at least 95% across all shipped first-party Swift source, including app/UI/platform code.
+- [ ] Verify migration/restart and workspace/media/support isolation where affected; do not use a real user library or secret namespace as a fixture.
+>>>>>>> 5e136c9 (Claim ticket 08 canonical Meeting artifact implementation)
 
 ## Comments
 
 Published from the user-approved 50-ticket breakdown. The ready-for-agent label means specified; execution still waits for every declared blocker to complete. Implementation has not begun.
+<<<<<<< HEAD
 
 ### 2026-11-02 — implementation and verification complete
 
@@ -63,3 +85,5 @@ Executed final-source checks:
 - Review since `93329d7`: Standards **0 remaining findings**; Spec **0 findings**. Final `git diff --check` passed. All workspace, support, and media fixtures were isolated and synthetic.
 
 Capability limits: ticket 08 establishes file migration/edit behavior only. It does not establish real Teams/Zoom/Meet source isolation, OS permission/device behavior, ASR/diarization quality, or model quality; those remain separate research/evaluation lanes. Legacy accepted Todo copies without a proposal ID cannot be matched back to an exact proposal without guessing; migration preserves one canonical approved task and unresolved association evidence for explicit downstream resolution. No real hardware/model evaluation was required or claimed for this storage/UI slice.
+=======
+>>>>>>> 5e136c9 (Claim ticket 08 canonical Meeting artifact implementation)
