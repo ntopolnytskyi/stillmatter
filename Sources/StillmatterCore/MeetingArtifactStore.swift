@@ -21,7 +21,6 @@ final class MeetingArtifactStore {
         var meetingPath: String
         var files: [String: String]
         var transcriptBaseHash: String?
-        var transcriptSessionID: String?
         var legacyReview: [String: String]
         var reviewIntents: [String: String] = [:]
         var legacyMappings: [String: [String]]?
@@ -42,30 +41,6 @@ final class MeetingArtifactStore {
 
     func identity(at meetingPath: String) throws -> String? {
         try manifest(at: sibling(meetingPath, "meeting-artifacts.json"))?.meetingID
-    }
-
-    /// Compatibility while the existing recorder/producer still owns legacy files.
-    /// No file adoption occurs until capture and its current processing work finish.
-    func legacyLoaded(meetingPath: String, meetingID: String) throws -> Loaded {
-        let doorway = try vault.readMarkdown(relativePath: meetingPath)
-        let text = try decode(doorway.data, path: meetingPath)
-        let range = legacyNotesRange(in: text)
-        let notes = range.map { String(text[$0.bodyStart..<$0.end]) } ?? ""
-        let summaryPath = sibling(meetingPath, "summary.md")
-        let summary = try optional(summaryPath)
-        let summaryText = try summary.map { try decode($0.data, path: summaryPath) } ?? ""
-        let extractionPath = sibling(meetingPath, "summary-extraction.json")
-        let extraction = try optional(extractionPath).map { try JSONDecoder().decode(MeetingSummaryExtraction.self, from: $0.data) }
-            ?? MeetingSummaryExtraction(meeting: meetingPath, transcript: sibling(meetingPath, "transcript.json"), decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
-        let transcriptPath = sibling(meetingPath, "transcript.json")
-        let transcript = try optional(transcriptPath).map { try MeetingTranscriptCodec.document($0.data, path: transcriptPath) }
-        let reviews = try Dictionary(uniqueKeysWithValues: extraction.myActionItems.map {
-            ($0.id, try inbox?.proposalReviewState(id: "meeting-action:" + meetingID + ":" + $0.id) ?? .referenceOnly)
-        })
-        return Loaded(notes: notes, notesVersion: doorway.version,
-            sections: MeetingSummarySections(summary: summaryText), summaryVersion: summary?.version ?? doorway.version,
-            extraction: extraction, transcript: transcript, paths: ["notes": meetingPath, "summary": summaryPath],
-            versions: summary.map { ["notes": doorway.version, "summary": $0.version] } ?? ["notes": doorway.version], reviewStates: reviews, completionStates: [:])
     }
 
     func load(meetingPath: String, meetingID: String) throws -> Loaded {
@@ -100,14 +75,14 @@ final class MeetingArtifactStore {
         for (kind, name) in Self.names {
             let identified = try paths.filter { path in
                 guard (path as NSString).deletingLastPathComponent == (meetingPath as NSString).deletingLastPathComponent else { return false }
-                return hasArtifactMarker(kind, in: try decode(vault.readMarkdown(relativePath: path).data, path: path))
+                return (try decode(vault.readMarkdown(relativePath: path).data, path: path)).contains(marker(kind))
             }
             guard identified.count <= 1 else { throw malformed(name, "Multiple files claim this artifact identity. Keep one canonical file.") }
             let defaultPath = sibling(meetingPath, name)
             let path = identified.first ?? (state.files[kind].map { sibling(meetingPath, ($0 as NSString).lastPathComponent) }) ?? defaultPath
             guard let source = try optional(path) else { throw malformed(path, "The canonical file is missing. Restore it or its artifact identity, then Reload Latest.") }
             let full = try decode(source.data, path: path)
-            let body = try removingMarker(kind, from: full)
+            let body = removingMarker(kind, from: full)
             contents[kind] = body
             versions[kind] = source.version
             state.files[kind] = path
@@ -118,10 +93,8 @@ final class MeetingArtifactStore {
         }
         var canonicalIDs: Set<String> = []
         for kind in ["notes", "actions", "decisions", "open"] {
-            let content = try required(contents[kind], path: statePath, field: "\(kind) content")
-            let path = try required(state.files[kind], path: statePath, field: "\(kind) path")
-            let ids = try validateItems(content, path: path)
-            guard canonicalIDs.isDisjoint(with: ids) else { throw malformed(path, "The same item ID appears in multiple canonical files. Keep one checkbox and use references.") }
+            let ids = try validateItems(contents[kind]!, path: state.files[kind]!)
+            guard canonicalIDs.isDisjoint(with: ids) else { throw malformed(state.files[kind]!, "The same item ID appears in multiple canonical files. Keep one checkbox and use references.") }
             canonicalIDs.formUnion(ids)
         }
         let jsonPath = sibling(meetingPath, "transcript.json"), textPath = sibling(meetingPath, "transcript.txt")
@@ -132,13 +105,11 @@ final class MeetingArtifactStore {
             var pair = pair
             let document = try MeetingTranscriptCodec.document(pair.json, path: jsonPath)
             guard document.meetingRelativePath == meetingPath || document.meetingRelativePath == state.meetingPath,
-                  (state.transcriptSessionID.map { document.captureSessionID == $0 } ?? (meetingID == meetingPath || document.captureSessionID == meetingID)) else {
+                  meetingID == meetingPath || document.captureSessionID == meetingID else {
                 throw malformed(jsonPath, "Transcript identity does not match this Meeting. Restore its correct source files before reloading.")
             }
             if document.meetingRelativePath != meetingPath {
-                guard var object = try JSONSerialization.jsonObject(with: pair.json) as? [String: Any] else {
-                    throw malformed(jsonPath, "Transcript root must be a JSON object. Restore valid Transcript data before reloading.")
-                }
+                var object = try JSONSerialization.jsonObject(with: pair.json) as! [String: Any]
                 object["meeting_relative_path"] = meetingPath
                 pair.json = try MeetingTranscriptCodec.encodeJSON(object)
                 pair.text = try MeetingTranscriptCodec.text(pair.json)
@@ -150,99 +121,41 @@ final class MeetingArtifactStore {
                 if current?.data != data && !unchangedJSON { replacements.append(.init(relativePath: path, data: data, expectedVersion: current?.version)) }
             }
             state.transcriptBaseHash = MeetingTranscriptCodec.hash(pair.json)
-            state.transcriptSessionID = document.captureSessionID
         }
         state.meetingPath = meetingPath
         let stateData = try JSONEncoder().encode(state)
         let oldState = stateSource
         if stateData != oldState.data {
             // Encode with stable keys so an unchanged read does not cause a write loop.
-            guard let currentState = try JSONSerialization.jsonObject(with: stateData) as? NSDictionary,
-                  let previousState = try JSONSerialization.jsonObject(with: oldState.data) as? NSDictionary else {
-                throw malformed(statePath, "The artifact manifest must be a JSON object. Restore its valid source before reloading.")
-            }
-            if !currentState.isEqual(previousState) {
+            if try JSONSerialization.jsonObject(with: stateData) as! NSDictionary != JSONSerialization.jsonObject(with: oldState.data) as! NSDictionary {
                 replacements.append(.init(relativePath: statePath, data: stateData, expectedVersion: oldState.version))
             }
         }
         if !replacements.isEmpty {
             try transaction.publish(replacements)
         }
-        let actionPath = try required(state.files["actions"], path: statePath, field: "action-items path")
-        let actionContent = try required(contents["actions"], path: statePath, field: "action-items content")
-        let actionItems = try outcomes(actionContent, path: actionPath)
+        let actionItems = try outcomes(contents["actions"]!, path: state.files["actions"]!)
         let exposedIDs = actionItems.map { $0.outcome.id }
-        guard Set(exposedIDs).count == exposedIDs.count else { throw malformed(actionPath, "Duplicate legacy item references require explicit resolution.") }
-        let summaryContent = try required(contents["summary"], path: statePath, field: "summary content")
-        let decisionsContent = try required(contents["decisions"], path: statePath, field: "decisions content")
-        let openContent = try required(contents["open"], path: statePath, field: "open-items content")
-        let notesContent = try required(contents["notes"], path: statePath, field: "notes content")
-        let notesVersion = try required(versions["notes"], path: statePath, field: "notes version")
-        let sections = MeetingSummarySections(summary: String(summaryContent.dropFirst(try frontmatter(summaryContent).count)), decisions: decisionsContent,
-            myActionItems: actionContent, otherActionItems: "", openQuestions: openContent)
+        guard Set(exposedIDs).count == exposedIDs.count else { throw malformed(state.files["actions"]!, "Duplicate legacy item references require explicit resolution.") }
+        let sections = MeetingSummarySections(summary: String(contents["summary"]!.dropFirst(try frontmatter(contents["summary"]!).count)), decisions: contents["decisions"]!,
+            myActionItems: contents["actions"]!, otherActionItems: "", openQuestions: contents["open"]!)
         let extraction = MeetingSummaryExtraction(meeting: meetingPath, transcript: jsonPath,
-            decisions: try outcomes(decisionsContent, path: required(state.files["decisions"], path: statePath, field: "decisions path")).map(\.outcome),
+            decisions: try outcomes(contents["decisions"]!, path: state.files["decisions"]!).map(\.outcome),
             myActionItems: actionItems.filter { $0.item.owner == "me" }.map(\.outcome),
             otherActionItems: actionItems.filter { $0.item.owner != "me" }.map(\.outcome),
-            openQuestions: try outcomes(openContent, path: required(state.files["open"], path: statePath, field: "open-items path")).map(\.outcome))
-        return Loaded(notes: notesContent, notesVersion: notesVersion, sections: sections,
-            summaryVersion: try combined(versions.filter { $0.key != "notes" }), extraction: extraction,
+            openQuestions: try outcomes(contents["open"]!, path: state.files["open"]!).map(\.outcome))
+        return Loaded(notes: contents["notes"]!, notesVersion: versions["notes"]!, sections: sections,
+            summaryVersion: combined(versions.filter { $0.key != "notes" }), extraction: extraction,
             transcript: transcript, paths: state.files, versions: versions,
             reviewStates: Dictionary(uniqueKeysWithValues: actionItems.map { item in
                 (item.outcome.id, item.item.review == "approved" ? .accepted : item.item.review == "rejected" ? .dismissed : ProposalReviewState(rawValue: item.item.review) ?? .pending)
             }), completionStates: Dictionary(uniqueKeysWithValues: actionItems.compactMap { value in value.completion.map { (value.outcome.id, $0) } }))
     }
 
-    /// Existing analysis producers publish into the current canonical files rather
-    /// than creating a second set of outcomes after a Meeting has been migrated.
-    func publishGenerated(summary: Data, extraction: MeetingSummaryExtraction, extractionData: Data,
-                          base: Loaded, meetingPath: String, meetingID: String,
-                          expectedExtraction: WorkspaceFileVersion?) throws {
-        Self.lock.lock(); defer { Self.lock.unlock() }
-        let actionsPath = try required(base.paths["actions"], path: meetingPath, field: "action-items path")
-        let currentItems = try outcomes(base.sections.myActionItems, path: actionsPath)
-        let preserved = currentItems.filter { $0.item.origin != "generated" || $0.item.review != "pending" }
-        let preservedIDs = Set(preserved.compactMap { $0.item.legacyID })
-        let oldGenerated = Dictionary(uniqueKeysWithValues: currentItems.filter { $0.item.origin == "generated" }.map { ($0.outcome.id, $0.item) })
-        var retainedLines: [String] = []
-        for raw in base.sections.myActionItems.components(separatedBy: "\n") {
-            let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
-            if let start = line.range(of: "<!-- sm-item:"), line.hasSuffix(" -->") {
-                let metadata = try decodeItem(Data(line[start.upperBound..<line.index(line.endIndex, offsetBy: -4)].utf8), path: actionsPath)
-                if metadata.origin == "generated" && metadata.review == "pending" { continue }
-            }
-            retainedLines.append(raw)
-        }
-        func render(_ values: [MeetingOutcome], owner: String?, checkboxes: Bool) throws -> String {
-            try values.filter { !checkboxes || !preservedIDs.contains($0.id) }.map { value in
-                let old = checkboxes ? oldGenerated[value.id] : nil
-                let metadata = Item(v: 1, id: old?.id ?? UUID().uuidString.lowercased(), owner: owner,
-                    review: "pending", origin: "generated", legacyID: value.id, citations: value.citations)
-                return (checkboxes ? "- [ ] " : "- ") + value.text + (checkboxes ? " #ai-gen #need-approve" : "")
-                    + " <!-- sm-item:" + String(decoding: try JSONEncoder().encode(metadata), as: UTF8.self) + " -->"
-            }.joined(separator: "\n")
-        }
-        let mine = try render(extraction.myActionItems, owner: "me", checkboxes: true)
-        let others = try render(extraction.otherActionItems, owner: nil, checkboxes: true)
-        let summaryPath = try required(base.paths["summary"], path: meetingPath, field: "summary path")
-        let values = ["summary": try decode(summary, path: summaryPath),
-            "actions": (retainedLines + [mine, others]).joined(separator: "\n"),
-            "decisions": try render(extraction.decisions, owner: nil, checkboxes: false),
-            "open": try render(extraction.openQuestions, owner: nil, checkboxes: false)]
-        var replacements: [WorkspaceMarkdownReplacement] = []
-        for kind in values.keys.sorted() {
-            let path = try required(base.paths[kind], path: meetingPath, field: "\(kind) path")
-            let content = try required(values[kind], path: meetingPath, field: "\(kind) content")
-            replacements.append(.init(relativePath: path, data: Data(try wrapped(kind, content).utf8), expectedVersion: base.versions[kind]))
-        }
-        replacements.append(.init(relativePath: sibling(meetingPath, "summary-extraction.json"), data: extractionData, expectedVersion: expectedExtraction))
-        try MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint).publish(replacements)
-    }
-
     func saveNotes(_ text: String, meetingPath: String, meetingID: String, expected: WorkspaceFileVersion) throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
         let loaded = try load(meetingPath: meetingPath, meetingID: meetingID)
-        let path = try required(loaded.paths["notes"], path: meetingPath, field: "notes path")
+        let path = loaded.paths["notes"]!
         guard loaded.notesVersion == expected else {
             try keepConflict(text, external: loaded.notes, meetingID: meetingID, path: path)
             throw WorkspaceVaultError.conflict(relativePath: path, expected: expected, actual: loaded.notesVersion)
@@ -257,19 +170,17 @@ final class MeetingArtifactStore {
         Self.lock.lock(); defer { Self.lock.unlock() }
         let loaded = try load(meetingPath: meetingPath, meetingID: meetingID)
         guard loaded.summaryVersion == expected else {
-            let path = try required(loaded.paths["summary"], path: meetingPath, field: "summary path")
-            try keepConflict(sections.summary, external: loaded.sections.summary, meetingID: meetingID, path: path)
-            throw WorkspaceVaultError.conflict(relativePath: path, expected: expected, actual: loaded.summaryVersion)
+            try keepConflict(sections.summary, external: loaded.sections.summary, meetingID: meetingID, path: loaded.paths["summary"]!)
+            throw WorkspaceVaultError.conflict(relativePath: loaded.paths["summary"]!, expected: expected, actual: loaded.summaryVersion)
         }
         let values = ["summary": sections.summary, "decisions": sections.decisions, "actions": sections.myActionItems, "open": sections.openQuestions]
         var replacements: [WorkspaceMarkdownReplacement] = []
         for (kind, body) in values {
-            let path = try required(loaded.paths[kind], path: meetingPath, field: "\(kind) path")
-            let old = try vault.readMarkdown(relativePath: path)
+            let path = loaded.paths[kind]!, old = try vault.readMarkdown(relativePath: path)
             guard old.version == loaded.versions[kind] else { throw WorkspaceVaultError.conflict(relativePath: path, expected: loaded.versions[kind], actual: old.version) }
             let canonicalBody: String
             if kind == "summary" {
-                let existing = try removingMarker(kind, from: decode(old.data, path: path))
+                let existing = try decode(old.data, path: path).replacingOccurrences(of: marker(kind) + "\n", with: "")
                 canonicalBody = try frontmatter(existing) + body
             } else { canonicalBody = try adopting(body, path: path, kind: kind) }
             let data = Data(try wrapped(kind, canonicalBody).utf8)
@@ -283,8 +194,7 @@ final class MeetingArtifactStore {
     func review(proposalID: String, accept: Bool, meetingPath: String, meetingID: String) throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
         let loaded = try load(meetingPath: meetingPath, meetingID: meetingID)
-        let path = try required(loaded.paths["actions"], path: meetingPath, field: "action-items path")
-        let source = try vault.readMarkdown(relativePath: path)
+        let path = loaded.paths["actions"]!, source = try vault.readMarkdown(relativePath: path)
         let original = try decode(source.data, path: path)
         let records = try outcomes(original.replacingOccurrences(of: marker("actions") + "\n", with: ""), path: path)
         guard let record = records.first(where: { "meeting-action:\(meetingID):" + ($0.item.legacyID ?? $0.item.id) == proposalID }) else {
@@ -295,11 +205,10 @@ final class MeetingArtifactStore {
         var item = record.item
         item.review = accept ? "approved" : "rejected"
         let metadata = String(decoding: try JSONEncoder().encode(item), as: UTF8.self)
-        guard let oldLine = try original.components(separatedBy: "\n").first(where: { raw in
-            let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
+        let oldLine = try original.components(separatedBy: "\n").first { line in
             guard let start = line.range(of: "<!-- sm-item:"), line.hasSuffix(" -->") else { return false }
             return try decodeItem(Data(line[start.upperBound..<line.index(line.endIndex, offsetBy: -4)].utf8), path: path).id == item.id
-        }) else { throw malformed(path, "Action Item identity changed during review. Reload the Meeting and try again.") }
+        }!
         var replacements: [WorkspaceMarkdownReplacement] = []
         let newLine: String
         if accept {
@@ -315,7 +224,7 @@ final class MeetingArtifactStore {
         } else {
             newLine = oldLine.replacingOccurrences(of: #"<!-- sm-item:.* -->$"#, with: "<!-- sm-item:" + metadata + " -->", options: .regularExpression)
         }
-        replacements.append(.init(relativePath: path, data: Data(original.replacingOccurrences(of: oldLine, with: newLine + (oldLine.hasSuffix("\r") ? "\r" : "")).utf8), expectedVersion: source.version))
+        replacements.append(.init(relativePath: path, data: Data(original.replacingOccurrences(of: oldLine, with: newLine).utf8), expectedVersion: source.version))
         let statePath = sibling(meetingPath, "meeting-artifacts.json"), oldState = try vault.readMarkdown(relativePath: statePath)
         var state = try JSONDecoder().decode(Manifest.self, from: oldState.data)
         state.reviewIntents[proposalID] = accept ? "accepted" : "dismissed"
@@ -336,7 +245,7 @@ final class MeetingArtifactStore {
         let range = legacyNotesRange(in: doorwayText)
         let embedded = range.map { String(doorwayText[$0.bodyStart..<$0.end]) } ?? ""
         let notes = try oldNotes.map { try decode($0.data, path: notePath) } ?? embedded
-        if oldNotes != nil && !embedded.isEmpty && notes.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")) != embedded.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")) {
+        if oldNotes != nil && !embedded.isEmpty && notes.trimmingCharacters(in: .newlines) != embedded {
             throw malformed(notePath, "This separate file and the doorway's embedded Notes differ. Both are preserved; resolve the two versions before migration.")
         }
         if let extraction, extraction.meeting != meetingPath || extraction.transcript != sibling(meetingPath, "transcript.json") {
@@ -411,19 +320,12 @@ final class MeetingArtifactStore {
             "decisions": try render(extraction?.decisions ?? [], owner: nil, checkboxes: false),
             "open": try render(extraction?.openQuestions ?? [], owner: nil, checkboxes: false)]
         let otherActions = try render(extraction?.otherActionItems ?? [], owner: nil, checkboxes: true)
-        if !otherActions.isEmpty || !migratedTodos.isEmpty {
-            guard var actions = bodies["actions"] else { throw malformed(meetingPath, "Legacy action-items content is missing; no files were changed.") }
-            if !otherActions.isEmpty { actions += "\n" + otherActions }
-            if !migratedTodos.isEmpty { actions += "\n" + migratedTodos.joined(separator: "\n") }
-            bodies["actions"] = actions
-        }
+        if !otherActions.isEmpty { bodies["actions"]! += "\n" + otherActions }
+        if !migratedTodos.isEmpty { bodies["actions"]! += "\n" + migratedTodos.joined(separator: "\n") }
 
         for (kind, heading) in [("decisions", "Decisions"), ("open", "Open questions")] {
             let edited = section(heading, in: summary, missing: "")
-            if !edited.isEmpty {
-                let name = try required(Self.names[kind], path: meetingPath, field: "\(kind) filename")
-                bodies[kind] = try adopting(edited, path: sibling(meetingPath, name), kind: kind)
-            }
+            if !edited.isEmpty { bodies[kind] = try adopting(edited, path: sibling(meetingPath, Self.names[kind]!), kind: kind) }
         }
         // A previously authored separate artifact always wins over generated/embedded content.
         var replacements: [WorkspaceMarkdownReplacement] = []
@@ -431,14 +333,14 @@ final class MeetingArtifactStore {
         for (kind, name) in Self.names.sorted(by: { $0.key < $1.key }) {
             let path = sibling(meetingPath, name), old = try optional(path)
             var body: String
-            if kind == "summary" { body = try required(bodies[kind], path: meetingPath, field: "summary content") }
+            if kind == "summary" { body = bodies[kind]! }
             else if let old {
                 body = try decode(old.data, path: path)
                 if kind == "actions" && !migratedTodos.isEmpty { body += "\n" + migratedTodos.joined(separator: "\n") }
             }
-            else { body = try required(bodies[kind], path: meetingPath, field: "\(kind) content") }
+            else { body = bodies[kind]! }
             files[kind] = path
-            let normalized = try removingMarker(kind, from: body)
+            let normalized = removingMarker(kind, from: body)
             let canonicalBody = kind == "summary" ? normalized : try adopting(normalized, path: path, kind: kind)
             replacements.append(.init(relativePath: path, data: Data(try wrapped(kind, canonicalBody).utf8), expectedVersion: old?.version))
         }
@@ -574,18 +476,8 @@ final class MeetingArtifactStore {
         let front = kind == "summary" ? try frontmatter(body) : ""
         return front + marker(kind) + "\n" + body.dropFirst(front.count)
     }
-    private func hasArtifactMarker(_ kind: String, in text: String) -> Bool {
-        let front = kind == "summary" ? ((try? frontmatter(text)) ?? "") : ""
-        let body = text.dropFirst(front.count)
-        return body.hasPrefix(marker(kind) + "\n") || body.hasPrefix(marker(kind) + "\r\n") || body == marker(kind)
-    }
-    private func removingMarker(_ kind: String, from text: String) throws -> String {
-        let front = kind == "summary" ? try frontmatter(text) : ""
-        let body = text.dropFirst(front.count)
-        for header in [marker(kind) + "\r\n", marker(kind) + "\n", marker(kind)] where body.hasPrefix(header) {
-            return front + body.dropFirst(header.count)
-        }
-        return text
+    private func removingMarker(_ kind: String, from text: String) -> String {
+        text.replacingOccurrences(of: marker(kind) + "\r\n", with: "").replacingOccurrences(of: marker(kind) + "\n", with: "")
     }
     private func marker(_ kind: String) -> String { "<!-- stillmatter-artifact:\(kind):v1 -->" }
     private func sibling(_ path: String, _ name: String) -> String { (path as NSString).deletingLastPathComponent + "/" + name }
@@ -596,27 +488,16 @@ final class MeetingArtifactStore {
         return String(markdown[heading.upperBound..<end]).trimmingCharacters(in: .newlines)
     }
     private func frontmatter(_ markdown: String) throws -> String {
-        let body = markdown
-        guard body.hasPrefix("---\n") || body.hasPrefix("---\r\n") else { return "" }
-        guard let end = body.range(of: "\n---\n", range: body.index(body.startIndex, offsetBy: 4)..<body.endIndex)
-            ?? body.range(of: "\r\n---\r\n", range: body.index(body.startIndex, offsetBy: 4)..<body.endIndex) else {
+        let body = markdown.replacingOccurrences(of: marker("summary") + "\n", with: "")
+        guard body.hasPrefix("---\n") else { return "" }
+        guard let end = body.range(of: "\n---\n", range: body.index(body.startIndex, offsetBy: 4)..<body.endIndex) else {
             throw malformed("summary.md", "Close the YAML frontmatter with --- before saving.")
         }
         return String(body[..<end.upperBound])
     }
-    private func combined(_ versions: [String: WorkspaceFileVersion]) throws -> WorkspaceFileVersion {
-        guard let modificationDate = versions.values.map(\.modificationDate).max() else {
-            throw malformed("meeting-artifacts.json", "No canonical artifact versions are available. Restore the missing files before reloading.")
-        }
-        let contentHash = try versions.keys.sorted().map { key in
-            key + ":" + (try required(versions[key], path: "meeting-artifacts.json", field: "\(key) version")).contentHash
-        }.joined(separator: "|")
-        return WorkspaceFileVersion(contentHash: contentHash, modificationDate: modificationDate,
-            byteCount: versions.values.reduce(0) { $0 + $1.byteCount })
-    }
-    private func required<Value>(_ value: Value?, path: String, field: String) throws -> Value {
-        guard let value else { throw malformed(path, "Missing required \(field). Restore the artifact state and Reload Latest.") }
-        return value
+    private func combined(_ versions: [String: WorkspaceFileVersion]) -> WorkspaceFileVersion {
+        WorkspaceFileVersion(contentHash: versions.keys.sorted().map { $0 + ":" + versions[$0]!.contentHash }.joined(separator: "|"),
+            modificationDate: versions.values.map(\.modificationDate).max()!, byteCount: versions.values.reduce(0) { $0 + $1.byteCount })
     }
     func keepConflict(_ draft: String, external: String, meetingID: String, path: String) throws {
         let record = ["meeting": meetingID, "path": path, "draft": draft, "external": external]

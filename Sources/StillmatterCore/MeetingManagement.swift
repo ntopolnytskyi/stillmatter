@@ -203,22 +203,8 @@ public final class MeetingManagementService {
         do {
             let detail = try self.detail(for: id)
             guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting content is read-only.") }
-            if try legacyWriterIsActive(for: detail.row) {
-                // Capture still appends to the doorway until the live-notes writer is
-                // migrated. Keep this representation authoritative for that session.
-                let updated = Self.replaceNotes(in: detail.doorwayText, notes: notes)
-                do {
-                    _ = try vault.writeMarkdown(Data(updated.utf8), relativePath: detail.row.meetingRelativePath, expectedVersion: expectedVersion)
-                } catch {
-                    try artifactStore.keepConflict(notes, external: Self.notes(from: String(decoding: try vault.readMarkdown(relativePath: detail.row.meetingRelativePath).data, as: UTF8.self)),
-                        meetingID: detail.row.id, path: detail.row.meetingRelativePath)
-                    throw error
-                }
-                try? index?.update(relativePath: detail.row.meetingRelativePath)
-            } else {
-                try artifactStore.saveNotes(notes, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
-                try? index?.update(relativePath: Self.sibling(detail.row.meetingRelativePath, "my-notes.md"))
-            }
+            try artifactStore.saveNotes(notes, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
+            try? index?.update(relativePath: Self.sibling(detail.row.meetingRelativePath, "my-notes.md"))
             onMeetingChanged([detail.row.meetingRelativePath])
             return try self.detail(for: id)
         } catch {
@@ -232,18 +218,8 @@ public final class MeetingManagementService {
         do {
             let detail = try self.detail(for: id)
             guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting content is read-only.") }
-            let summaryPath = Self.sibling(detail.row.meetingRelativePath, "summary.md")
-            if try legacyWriterIsActive(for: detail.row) {
-                do {
-                    _ = try vault.writeMarkdown(Data(sections.summary.utf8), relativePath: summaryPath, expectedVersion: expectedVersion)
-                } catch {
-                    try artifactStore.keepConflict(sections.summary, external: detail.summary?.summary ?? "", meetingID: detail.row.id, path: summaryPath)
-                    throw error
-                }
-            } else {
-                try artifactStore.saveSummary(sections, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
-            }
-            try? index?.update(relativePath: summaryPath)
+            try artifactStore.saveSummary(sections, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
+            try? index?.update(relativePath: Self.sibling(detail.row.meetingRelativePath, "summary.md"))
             onMeetingChanged([detail.row.meetingRelativePath])
             return try self.detail(for: id)
         } catch {
@@ -515,16 +491,8 @@ public final class MeetingManagementService {
         if let s=captureSnapshot(), let p=s.meetingRelativePath, s.state != .idle && s.state != .failed, !rows.contains(where:{$0.meetingRelativePath==p}) { rows.append(MeetingBrowserRow(id:p,title:s.meetingTitle ?? Self.fallbackTitle(p),startedAt:nil,meetingRelativePath:p,captureState:.live,processingState:.live)) }
         return rows.sorted { if let a=$0.startedAt, let b=$1.startedAt, a != b { return a>b }; if $0.startedAt != nil { return true }; if $1.startedAt != nil { return false }; return $0.meetingRelativePath < $1.meetingRelativePath }
     }
-    private func legacyWriterIsActive(for row: MeetingBrowserRow) throws -> Bool {
-        guard row.captureState == .live || row.processingState == .processing else { return false }
-        return try artifactStore.identity(at: row.meetingRelativePath) == nil
-    }
-
     private func makeDetail(row: MeetingBrowserRow, source: (data: Data, version: WorkspaceFileVersion)) throws -> MeetingBrowserDetail {
-        let usesLegacyArtifacts = try legacyWriterIsActive(for: row)
-        let canonical = try usesLegacyArtifacts
-            ? artifactStore.legacyLoaded(meetingPath: row.meetingRelativePath, meetingID: row.id)
-            : artifactStore.load(meetingPath: row.meetingRelativePath, meetingID: row.id)
+        let canonical = try artifactStore.load(meetingPath: row.meetingRelativePath, meetingID: row.id)
         let source = try vault.readMarkdown(relativePath: row.meetingRelativePath)
         let text = String(data: source.data, encoding: .utf8) ?? ""
         let path = row.meetingRelativePath
@@ -532,15 +500,7 @@ public final class MeetingManagementService {
         let session = Self.fields(text).sessionID
         let allOwned = (try? workspaceJobs().filter { Self.owns($0, session: session, path: path) }) ?? []
         let owned = Self.currentJobs(allOwned)
-        if let workflow = owned.first(where: { $0.manifest.type == MeetingWorkflowJob.type && $0.status != .succeeded && $0.status != .dismissed }) {
-            let presentation = Self.presentation(for: workflow,
-                retryReason: workflow.status == .failed ? retryUnavailableReason(workflow.manifest.type) : nil)
-            return MeetingBrowserDetail(row: row, doorwayText: "", job: presentation,
-                jobs: presentation.map { [$0] } ?? [])
-        }
-        let sum = try? vault.readMarkdown(relativePath: dir + "/summary.md")
-        let ext = try? vault.readMarkdown(relativePath: dir + "/summary-extraction.json")
-        let extraction = ext.flatMap { try? JSONDecoder().decode(MeetingSummaryExtraction.self, from: $0.data) }
+        let extraction = canonical.extraction
         let playback = resolvePlayback(text: text, path: path, session: session)
         let transcript = makeTranscriptSegments(canonical.transcript, playback: playback)
         let validExtraction: MeetingSummaryExtraction? = extraction
@@ -586,7 +546,7 @@ public final class MeetingManagementService {
                      ? retryUnavailableReason(candidate.manifest.type) : "This Job type cannot be retried here.")
                 return Self.presentation(for: candidate, retryReason: reason)!
             },
-            summaryVersion: usesLegacyArtifacts ? canonical.versions["summary"] : canonical.summaryVersion, summary: canonical.sections,
+            summaryVersion: canonical.summaryVersion, summary: canonical.sections,
             extraction: validExtraction, myActionItems: mine, otherActionItems: other, staleProposals: stale, transcript: transcript,
             decisions: (validExtraction?.decisions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) },
             openQuestions: (validExtraction?.openQuestions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) }, playback: playback, actionDrafts: actionDrafts)

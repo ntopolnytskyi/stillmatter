@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Lossless LF-framed plain text and JSON representations of one Transcript.
 /// Only one changed representation can advance the recorded synchronized base.
@@ -27,27 +28,20 @@ enum MeetingTranscriptCodec {
         }
     }
 
-    static func hash(_ data: Data) -> String { SHA256Hex.digest(data) }
+    static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
     static func canonicalJSON(_ data: Data) throws -> Data {
         try encodeJSON(JSONSerialization.jsonObject(with: data))
     }
 
     static func text(_ json: Data) throws -> Data {
-        guard var object = try JSONSerialization.jsonObject(with: json) as? [String: Any],
-              let segments = object.removeValue(forKey: "segments") as? [[String: Any]] else {
-            throw MeetingManagementError.malformed("Could not read Transcript JSON structure. Restore valid Transcript data and Reload Latest.")
-        }
         _ = try document(json, path: "transcript.json")
+        var object = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+        let segments = object.removeValue(forKey: "segments") as! [[String: Any]]
         var lines = [heading, String(decoding: try encodeJSON(object), as: UTF8.self), (columns + ["extra"]).joined(separator: "\t")]
         for segment in segments {
             let extra = segment.filter { !columns.contains($0.key) }
-            let cells = try columns.map { column in
-                guard let value = segment[column] else {
-                    throw MeetingManagementError.malformed("Transcript segment is missing its \(column) field. Restore complete segment data and Reload Latest.")
-                }
-                return String(decoding: try encodeJSON(value), as: UTF8.self)
-            }
+            let cells = try columns.map { String(decoding: try encodeJSON(segment[$0]!), as: UTF8.self) }
             lines.append((cells + [String(decoding: try encodeJSON(extra), as: UTF8.self)]).joined(separator: "\t"))
         }
         return Data((lines.joined(separator: "\n") + "\n").utf8)

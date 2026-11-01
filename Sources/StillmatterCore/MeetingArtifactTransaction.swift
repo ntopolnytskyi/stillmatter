@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// A durable publication plan retains exact prior/intended bytes before changing live files.
 /// File coordination serializes cooperating editors; byte preconditions reject stale plans.
@@ -11,7 +12,8 @@ final class MeetingArtifactTransaction {
 
     init(vault: WorkspaceVault, identity: String, checkpoint: @escaping (Int) throws -> Void = { _ in }) {
         self.vault = vault
-        let key = SHA256Hex.digest(Data((vault.rootURL.path + "\n" + identity).utf8))
+        let key = SHA256.hash(data: Data((vault.rootURL.path + "\n" + identity).utf8))
+            .map { String(format: "%02x", $0) }.joined()
         journal = vault.meetingArtifactStateURL.appendingPathComponent(key + ".json")
         self.checkpoint = checkpoint
     }
