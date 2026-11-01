@@ -210,6 +210,9 @@ public final class MeetingSummaryJobExecutor: JobExecuting {
             TranscriptDocument.self,
             from: Data(contentsOf: workspaceRootURL.appendingPathComponent(transcriptPath))
         )
+        let artifacts = MeetingArtifactStore(vault: vault, inbox: inbox)
+        let canonicalID = try artifacts.identity(at: transcript.meetingRelativePath)
+        let canonicalBase = try canonicalID.map { try artifacts.load(meetingPath: transcript.meetingRelativePath, meetingID: $0) }
         let expectedVersions = try Dictionary(uniqueKeysWithValues: workflow.expectedOutputs.map {
             ($0.relativePath, try vault.versionOfMarkdown(relativePath: $0.relativePath))
         })
@@ -238,13 +241,16 @@ public final class MeetingSummaryJobExecutor: JobExecuting {
         }
         try validate(extraction, transcript: transcript, transcriptPath: transcriptPath)
 
-        try vault.replaceMarkdownTransaction(result.artifacts.map {
-            WorkspaceMarkdownReplacement(
-                relativePath: $0.relativePath,
-                data: $0.data,
-                expectedVersion: expectedVersions[$0.relativePath] ?? nil
-            )
-        })
+        if let canonicalBase, let canonicalID {
+            try artifacts.publishGenerated(summary: summary.data, extraction: extraction, extractionData: extractionArtifact.data,
+                base: canonicalBase, meetingPath: transcript.meetingRelativePath, meetingID: canonicalID,
+                expectedExtraction: expectedVersions[paths.extraction] ?? nil)
+        } else {
+            try vault.replaceMarkdownTransaction(result.artifacts.map {
+                WorkspaceMarkdownReplacement(relativePath: $0.relativePath, data: $0.data,
+                    expectedVersion: expectedVersions[$0.relativePath] ?? nil)
+            })
+        }
         let sourceRef = Self.summarySourceRef(meetingRelativePath: transcript.meetingRelativePath)
         var queued = 0
         for item in extraction.myActionItems {

@@ -51,6 +51,7 @@ public enum MeetingReadError: Error {
     case workspaceUnavailable
     case stopped
     case meetingNotInBrowser(MeetingReference)
+    case superseded
     case sourceFailure(Error)
 }
 
@@ -354,8 +355,13 @@ public final class MeetingReadModel {
             return request
         }
         scheduleRead { [weak self] in
-            guard let self, !request.isCancelled,
-                  self.isActiveDetailRequest(requestID, generation: generation, reference: reference, detailRevision: detailRevision) else { return }
+            guard let self else { return }
+            guard !request.isCancelled else { return }
+            guard self.isCurrentDetailRequest(requestID, generation: generation) else { return }
+            guard self.isCurrentDetailRevision(reference, detailRevision: detailRevision) else {
+                self.deliver { completion(.failure(.superseded)) }
+                return
+            }
             do {
                 let detail = try self.requiredSource().detail(for: reference, browserRow: row)
                 self.deliverDetail(.success(detail), request: request, requestID: requestID,
@@ -522,9 +528,13 @@ public final class MeetingReadModel {
                                detailRevision: UInt64,
                                completion: @escaping (Result<MeetingBrowserDetail, MeetingReadError>) -> Void) {
         deliver { [weak self] in
-            guard let self, !request.isCancelled,
-                  self.isActiveDetailRequest(requestID, generation: generation, reference: reference,
-                                             detailRevision: detailRevision) else { return }
+            guard let self else { return }
+            guard !request.isCancelled else { return }
+            guard self.isCurrentDetailRequest(requestID, generation: generation) else { return }
+            guard self.isCurrentDetailRevision(reference, detailRevision: detailRevision) else {
+                completion(.failure(.superseded))
+                return
+            }
             completion(result)
         }
     }
@@ -596,6 +606,14 @@ public final class MeetingReadModel {
             !stopped && workspaceGeneration == generation && latestDetailRequestID == id &&
                 detailRevisions[reference.meetingRelativePath, default: 0] == detailRevision
         }
+    }
+
+    private func isCurrentDetailRequest(_ id: UInt64, generation: UInt64) -> Bool {
+        stateLock.withLock { !stopped && workspaceGeneration == generation && latestDetailRequestID == id }
+    }
+
+    private func isCurrentDetailRevision(_ reference: MeetingReference, detailRevision: UInt64) -> Bool {
+        stateLock.withLock { detailRevisions[reference.meetingRelativePath, default: 0] == detailRevision }
     }
 
     private func isCurrentWorkspace(_ generation: UInt64) -> Bool {

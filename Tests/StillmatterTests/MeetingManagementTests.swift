@@ -213,6 +213,84 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(row.captureState, .live)
     }
 
+    func testLiveLegacyDoorwayDefersMigrationAndRetainsTheLatestRecorderNotes() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let path = "Meetings/live-legacy/meeting.md"
+        let original = "---\ntitle: Live legacy\ncapture_session_id: live-legacy\n---\n# Live legacy\n\n## Live notes\n\nInitial recorder note.\n"
+        try fixture.write(path, original)
+        var snapshot: CaptureSnapshot? = CaptureSnapshot(state: .recording, meetingTitle: "Live legacy", meetingRelativePath: path,
+            elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil,
+            systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
+        let service = MeetingManagementService(vault: fixture.vault, captureSnapshot: { snapshot })
+        let live = try service.detail(for: path)
+        XCTAssertEqual(live.row.captureState, .live)
+        XCTAssertEqual(live.notesVersion, live.doorwayVersion)
+        XCTAssertNil(live.summaryVersion)
+        XCTAssertTrue(live.humanNotes.contains("Initial recorder note."))
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: path).data, Data(original.utf8))
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/live-legacy/meeting-artifacts.json"))
+        let edited = try service.saveHumanNotes("Notes edited while capture continues.", for: path, expectedVersion: XCTUnwrap(live.notesVersion))
+        XCTAssertTrue(edited.humanNotes.contains("Notes edited while capture continues."))
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/live-legacy/my-notes.md"))
+        let recorded = String(decoding: try fixture.vault.readMarkdown(relativePath: path).data, as: UTF8.self) + "A later recorder note.\n"
+        try fixture.replace(path, recorded)
+        XCTAssertThrowsError(try service.saveHumanNotes("Stale edit", for: path, expectedVersion: XCTUnwrap(edited.notesVersion)))
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: path).data, Data(recorded.utf8))
+        snapshot = nil
+        let stopped = try service.detail(for: path)
+        XCTAssertEqual(stopped.row.captureState, .stopped)
+        XCTAssertTrue(stopped.humanNotes.contains("Notes edited while capture continues."))
+        XCTAssertTrue(stopped.humanNotes.contains("A later recorder note."))
+        let canonical = try fixture.vault.readMarkdown(relativePath: "Meetings/live-legacy/my-notes.md")
+        XCTAssertEqual(stopped.notesVersion, canonical.version)
+        XCTAssertNotEqual(stopped.notesVersion, stopped.doorwayVersion)
+        XCTAssertNotNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/live-legacy/meeting-artifacts.json"))
+    }
+
+    func testProcessingLegacyFilesStayWritableUntilTheCurrentProducerFinishes() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let path = "Meetings/processing-legacy/meeting.md"
+        try fixture.write(path, "---\ntitle: Processing legacy\ncapture_session_id: processing-legacy\n---\n# Processing\n\n## Notes\n\nOld notes.\n")
+        try fixture.write("Meetings/processing-legacy/summary.md", "## Summary\n\nOld producer output.\n")
+        let store = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/processing.sqlite"))
+        let manifest = JobManifest(type: "meeting.transcription", title: "Legacy producer", executionClass: .heavy,
+            stages: [JobStageDefinition(id: "run", title: "Run")], metadata: ["capture_session_id": "processing-legacy"], maxAutomaticRetries: 0)
+        _ = try store.enqueue(id: "legacy-producer", manifest: manifest)
+        let service = MeetingManagementService(vault: fixture.vault, jobStore: store)
+        let processing = try service.detail(for: path)
+        XCTAssertEqual(processing.row.processingState, .processing)
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/processing-legacy/meeting-artifacts.json"))
+        var summary = try XCTUnwrap(processing.summary)
+        summary.summary = "## Summary\n\nEdited prior output while queued.\n"
+        let saved = try service.saveSummary(summary, for: path, expectedVersion: XCTUnwrap(processing.summaryVersion))
+        XCTAssertTrue(saved.summary?.summary.contains("Edited prior output while queued.") == true)
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/processing-legacy/meeting-artifacts.json"))
+        let later = "---\ntitle: Processing legacy\ncapture_session_id: processing-legacy\n---\n# Processing\n\n## Notes\n\nLatest producer-context notes.\n"
+        try fixture.replace(path, later)
+        let scheduler = JobScheduler(store: store, executor: FailingMeetingExecutor())
+        defer { scheduler.stop() }
+        scheduler.start()
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline && (try? store.job(id: "legacy-producer"))?.status != .failed {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(try store.job(id: "legacy-producer")?.status, .failed)
+        let completed = try service.detail(for: path)
+        XCTAssertTrue(completed.humanNotes.contains("Latest producer-context notes."))
+        XCTAssertTrue(completed.summary?.summary.contains("Edited prior output while queued.") == true)
+        XCTAssertNotNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/processing-legacy/meeting-artifacts.json"))
+        // A later reprocess uses the already canonical files without moving notes back.
+        scheduler.stop()
+        _ = try store.enqueue(id: "next-producer", manifest: manifest)
+        let reprocessing = try service.detail(for: path)
+        XCTAssertEqual(reprocessing.row.processingState, .processing)
+        XCTAssertEqual(reprocessing.humanNotes, completed.humanNotes)
+        XCTAssertEqual(reprocessing.notesVersion, completed.notesVersion)
+        XCTAssertFalse(String(decoding: try fixture.vault.readMarkdown(relativePath: path).data, as: UTF8.self).contains("Latest producer-context notes."))
+    }
+
     func testSearchUsesIndexedSummaryContentAndKeepsSelectedMeetingPaths() throws {
         let fixture = try Fixture()
         try fixture.write("Meetings/alpha/meeting.md", "---\ntitle: Alpha\n---\n# Alpha\n")

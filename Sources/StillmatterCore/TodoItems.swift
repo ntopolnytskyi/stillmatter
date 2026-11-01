@@ -231,6 +231,7 @@ public enum TodoItemMutationError: Error, Equatable, LocalizedError {
     case itemNotFound(String)
     case duplicateIdentity(String)
     case invalidReference(String)
+    case invalidCanonicalMetadata(String)
     case staleCanonicalItem(String)
 
     public var errorDescription: String? {
@@ -238,6 +239,7 @@ public enum TodoItemMutationError: Error, Equatable, LocalizedError {
         case let .itemNotFound(id): return "Todo \(id) no longer exists. Reload the task list."
         case let .duplicateIdentity(id): return "Multiple checkboxes or queue references use Todo identity \(id). Keep one canonical checkbox and one queue reference, then reload."
         case let .invalidReference(line): return "Invalid Todo reference: \(line). Restore its item UUID and reload."
+        case let .invalidCanonicalMetadata(path): return "Malformed Action Item identity metadata in \(path). Repair its sm-item comment before reloading Todo."
         case let .staleCanonicalItem(id): return "Todo \(id) changed in its canonical file. Your source is preserved; reload before editing it."
         }
     }
@@ -588,6 +590,9 @@ public final class TodoItemIndex {
             if !markdown.contains("<!-- stillmatter-artifact:summary:v1 -->") {
                 parsed += parser.parse(markdown: markdown, relativePath: path)
             }
+        }
+        for item in parsed where item.rawText.contains("<!-- sm-item:") && TodoItemParser.metadata(in: item.rawText) == nil {
+            throw TodoItemMutationError.invalidCanonicalMetadata(item.location.relativePath)
         }
         var canonical: [String: TodoItem] = [:]
         for item in parsed where TodoItemParser.metadata(in: item.rawText) != nil {

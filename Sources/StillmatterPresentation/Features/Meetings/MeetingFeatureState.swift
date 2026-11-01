@@ -254,6 +254,7 @@ public final class MeetingDetailModel: ObservableObject {
                 guard let self, self.requestRevision == revision, self.selectedReference == reference else { return }
                 switch result {
                 case let .success(detail): self.apply(detail); completion?(.success(detail))
+                case .failure(.superseded): self.refreshSelectedDetail(completion: completion)
                 case let .failure(error):
                     let message = Self.message(for: error)
                     self.loadState = message.hasPrefix("Choose a workspace") ? .unavailable(message) : .failed(message)
@@ -506,6 +507,7 @@ public final class MeetingDetailModel: ObservableObject {
         switch error {
         case .workspaceUnavailable: return "Meeting workspace is unavailable."
         case .stopped: return "Meeting reads have stopped."
+        case .superseded: return "Meeting changed while it was refreshing. Reload the Meeting."
         case let .meetingNotInBrowser(reference): return "Meeting is no longer available: \(reference.meetingRelativePath)"
         case let .sourceFailure(sourceError):
             if (sourceError as? MeetingManagementError) == .some(.unavailable) {
@@ -860,6 +862,7 @@ public final class MeetingsModel: ObservableObject {
         switch error {
         case .workspaceUnavailable: return "Meeting workspace is unavailable."
         case .stopped: return "Meeting reads have stopped."
+        case .superseded: return "Meeting changed while it was refreshing. Reload the Meeting."
         case let .meetingNotInBrowser(reference): return "Meeting is no longer available: \(reference.meetingRelativePath)"
         case let .sourceFailure(sourceError):
             if (sourceError as? MeetingManagementError) == .some(.unavailable) {

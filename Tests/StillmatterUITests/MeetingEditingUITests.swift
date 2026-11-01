@@ -17,7 +17,7 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(editor.value as? String, "Notes saved through the UI")
     }
 
-    func testEscapeCancelsNotesWithoutChangingFileOrSelection() throws {
+    func testEscapeCommandReturnNotesEditing() throws {
         try seedMeeting()
         openFixtureMeeting()
         let before = try meetingText()

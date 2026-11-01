@@ -1063,6 +1063,10 @@ final class MeetingManagementView: NSView {
             reviewCount.stringValue = "\(pending) action\(pending == 1 ? "" : "s") need review"
             renderArtifacts(selected.artifacts)
             renderRetryActions(selected)
+            for button in [editSummaryTool, editNotesTool, archiveButton, transcriptionButton] {
+                button.isHidden = false
+                button.superview?.isHidden = false
+            }
             let canChangeFolder = selected.row.captureState == .stopped && !selected.jobs.contains(where: { $0.status == .queued || $0.status == .running })
             reprocessButton.isEnabled = canChangeFolder && !meetingsModel.isDirty
             renameButton.isEnabled = canChangeFolder && selected.doorwayVersion != nil && !meetingsModel.isDirty
@@ -1265,7 +1269,9 @@ final class MeetingManagementView: NSView {
             meetingsModel.detail.beginEditingSummary()
         case .notes:
             guard detail.notesVersion != nil else { return }
-            text = detail.humanNotes
+            // The doorway heading's separator newlines frame the Markdown body;
+            // they are not part of the text a user edits in the modal.
+            text = detail.humanNotes.trimmingCharacters(in: .newlines)
             meetingsModel.detail.beginEditingNotes()
         }
         let meetingID = detail.row.id
@@ -1285,10 +1291,14 @@ final class MeetingManagementView: NSView {
             self.meetingsModel.detail.discardDrafts()
             self.modalBaseVersion = nil
             self.modalField = nil
-            self.textEditPanel.finish()
+            self.finishTextEditing()
         }, onReload: { [weak self] in
             self?.reloadModalText(field, meetingID: meetingID)
         })
+    }
+
+    private func finishTextEditing() {
+        textEditPanel.finish()
     }
 
     /// Refresh a clean editor immediately; a dirty editor keeps its original base and draft.
@@ -1297,7 +1307,7 @@ final class MeetingManagementView: NSView {
         let latestVersion = field == .summary ? detail.summaryVersion : detail.notesVersion
         guard latestVersion != modalBaseVersion else { return }
         if textEditPanel.text == modalOriginalText {
-            let latest = field == .summary ? detail.summary?.summary ?? "" : detail.humanNotes
+            let latest = field == .summary ? detail.summary?.summary ?? "" : detail.humanNotes.trimmingCharacters(in: .newlines)
             textEditPanel.showLatest(latest)
             modalOriginalText = latest
             modalBaseVersion = latestVersion
@@ -1320,7 +1330,7 @@ final class MeetingManagementView: NSView {
             meetingsModel.detail.discardDrafts()
             modalBaseVersion = nil
             modalField = nil
-            textEditPanel.finish()
+            finishTextEditing()
             return
         }
         textEditPanel.setSaving(true)
@@ -1330,7 +1340,7 @@ final class MeetingManagementView: NSView {
             case .success:
                 self.modalBaseVersion = nil
                 self.modalField = nil
-                self.textEditPanel.finish()
+                self.finishTextEditing()
                 self.status.stringValue = field == .summary ? "Summary saved." : "Notes saved."
             case let .failure(error):
                 let conflict: Bool
@@ -1358,7 +1368,7 @@ final class MeetingManagementView: NSView {
                     self.textEditPanel.showLatest(self.meetingsModel.detail.summaryDraft?.editedText ?? "")
                 } else {
                     self.meetingsModel.detail.beginEditingNotes()
-                    self.textEditPanel.showLatest(self.meetingsModel.detail.notesDraft?.editedText ?? "")
+                    self.textEditPanel.showLatest((self.meetingsModel.detail.notesDraft?.editedText ?? "").trimmingCharacters(in: .newlines))
                 }
                 self.modalOriginalText = self.textEditPanel.text
                 self.textEditPanel.setSaving(false)
@@ -1377,7 +1387,7 @@ final class MeetingManagementView: NSView {
             expand: { [weak self] in self?.expandSummary() },
             edit: { [weak self] in self?.beginSummaryEditing() },
             copy: { [weak self] in self?.copySummary() }))
-        notesOverviewSection?.update(MeetingOverviewSection(title: "My notes", editIdentifier: "meeting-overview-edit-notes", content: detail.humanNotes,
+        notesOverviewSection?.update(MeetingOverviewSection(title: "My notes", editIdentifier: "meeting-overview-edit-notes", content: detail.humanNotes.trimmingCharacters(in: .newlines),
             unavailable: "No notes yet. Choose Edit to add notes.", canEdit: detail.notesVersion != nil && !detail.row.isArchived,
             expand: { [weak self] in self?.expandNotes() },
             edit: { [weak self] in self?.beginNotesEditing() },

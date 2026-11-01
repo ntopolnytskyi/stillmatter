@@ -36,6 +36,11 @@ public final class MeetingTitleReviewService {
               !cleaned.contains("/"), !cleaned.contains("\\") else {
             throw MeetingTitleReviewError.invalidTitle
         }
+        // Canonical artifact migration may update the doorway as part of this read.
+        // Read the version used for the title transaction only after that migration.
+        let management = MeetingManagementService(vault: vault, jobStore: jobs, inbox: inbox,
+            searchIndex: index, enforceWorkspaceOwner: enforceWorkspaceOwner)
+        _ = try management.detail(for: path)
         let current = try vault.readMarkdown(relativePath: path)
         guard let text = String(data: current.data, encoding: .utf8),
               text.contains("\ntype: meeting\n") else { throw MeetingTitleReviewError.notMeeting }
@@ -75,8 +80,7 @@ public final class MeetingTitleReviewService {
            !directory.contains(".."), !cleaned.contains("/") {
             let candidate = "\(parent)/\(timePrefix)-\(slug)/meeting.md"
             if candidate != path {
-                finalPath = try MeetingManagementService(vault: vault, jobStore: jobs, inbox: inbox,
-                    searchIndex: index, enforceWorkspaceOwner: enforceWorkspaceOwner).rename(meetingID: path, title: cleaned,
+                finalPath = try management.rename(meetingID: path, title: cleaned,
                     expectedVersion: current.version).row.meetingRelativePath
             } else {
                 _ = try vault.writeMarkdown(Data(updated.utf8), relativePath: path, expectedVersion: current.version)
