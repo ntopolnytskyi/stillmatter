@@ -28,18 +28,23 @@ enum MeetingTranscriptCodec {
         }
     }
 
-    static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    static func hash(_ data: Data) -> String {
+        SHA256.hash(data: data).map { byte in
+            let digits = String(byte, radix: 16)
+            return digits.count == 1 ? "0" + digits : digits
+        }.joined()
+    }
 
     static func canonicalJSON(_ data: Data) throws -> Data {
         try encodeJSON(JSONSerialization.jsonObject(with: data))
     }
 
     static func text(_ json: Data) throws -> Data {
-        _ = try document(json, path: "transcript.json")
         guard var object = try JSONSerialization.jsonObject(with: json) as? [String: Any],
               let segments = object.removeValue(forKey: "segments") as? [[String: Any]] else {
             throw MeetingManagementError.malformed("Could not read Transcript JSON structure. Restore valid Transcript data and Reload Latest.")
         }
+        _ = try document(json, path: "transcript.json")
         var lines = [heading, String(decoding: try encodeJSON(object), as: UTF8.self), (columns + ["extra"]).joined(separator: "\t")]
         for segment in segments {
             let extra = segment.filter { !columns.contains($0.key) }
