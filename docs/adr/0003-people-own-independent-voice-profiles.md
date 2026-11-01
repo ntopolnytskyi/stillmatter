@@ -1,0 +1,3 @@
+# People own learned Voice Profiles independently of Meetings
+
+The user works with a mostly stable group of people and wants learned voices to survive Meeting cleanup. People therefore own local Voice Profiles independently of the recordings that helped enroll them: archiving, purging, or deleting a Meeting does not revoke the learned profile. Deleting a Person removes their profile, while Meeting-owned audio is still removed under its own retention/deletion rules. This deliberately differs from meeting-contribution revocation in the reference app and prevents future cleanup work from erasing recognition of established colleagues.

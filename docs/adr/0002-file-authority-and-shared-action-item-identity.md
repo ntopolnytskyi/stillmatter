@@ -1,0 +1,3 @@
+# Files own Meeting content and Action Item identity
+
+Stillmatter treats valid workspace file edits as authoritative rather than maintaining a competing database copy of Meeting content. An approved personal Action Item appears in Todo as the same item, and note-authored items retain their canonical checkbox in My Notes with references from other views. This requires stable identities, file-aware conflict handling, and migration of existing copied tasks, but lets external editing and multiple UI views coexist without divergent work records. SQLite remains appropriate for durable operational Jobs and derived indexes; it does not override a valid newer content file.
