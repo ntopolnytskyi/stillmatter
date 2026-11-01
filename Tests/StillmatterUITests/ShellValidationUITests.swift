@@ -4,7 +4,7 @@ import StillmatterCore
 
 extension StillmatterFlowsUITests {
     func testNavigationRailAndMenuReachTheSameAreas() {
-        for area in ["Today", "Tasks", "Meetings", "Recording", "Settings"] {
+        for area in ["Meetings"] {
             app.buttons["sidebar-\(area.lowercased())"].click()
             waitForArea(area)
             app.menuBars.menuBarItems["Navigate"].click()

@@ -521,17 +521,30 @@ public final class MeetingManagementService {
     }
 
     private func makeDetail(row: MeetingBrowserRow, source: (data: Data, version: WorkspaceFileVersion)) throws -> MeetingBrowserDetail {
-        let usesLegacyArtifacts = try legacyWriterIsActive(for: row)
-        let canonical = try usesLegacyArtifacts
-            ? artifactStore.legacyLoaded(meetingPath: row.meetingRelativePath, meetingID: row.id)
-            : artifactStore.load(meetingPath: row.meetingRelativePath, meetingID: row.id)
-        let source = try vault.readMarkdown(relativePath: row.meetingRelativePath)
-        let text = String(data: source.data, encoding: .utf8) ?? ""
+        var text = String(data: source.data, encoding: .utf8) ?? ""
         let path = row.meetingRelativePath
         let dir = (path as NSString).deletingLastPathComponent
         let session = Self.fields(text).sessionID
         let allOwned = (try? workspaceJobs().filter { Self.owns($0, session: session, path: path) }) ?? []
         let owned = Self.currentJobs(allOwned)
+        let presentedJobs = (owned + allOwned.filter { job in
+            (job.status == .queued || job.status == .running) && !owned.contains(where: { $0.id == job.id })
+        }).map { candidate in
+            let reason: String? = candidate.status != .failed ? nil :
+                (MeetingWorkflowJob.supportedTypes.contains(candidate.manifest.type)
+                 ? retryUnavailableReason(candidate.manifest.type) : "This Job type cannot be retried here.")
+            return Self.presentation(for: candidate, retryReason: reason)!
+        }
+        let primaryJob = presentedJobs.first ?? row.job
+        if let workflow = owned.first(where: { $0.manifest.type == MeetingWorkflowJob.type }), workflow.status != .succeeded {
+            return MeetingBrowserDetail(row: row, doorwayText: "", job: primaryJob, jobs: presentedJobs)
+        }
+        let usesLegacyArtifacts = try legacyWriterIsActive(for: row)
+        let canonical = try usesLegacyArtifacts
+            ? artifactStore.legacyLoaded(meetingPath: row.meetingRelativePath, meetingID: row.id)
+            : artifactStore.load(meetingPath: row.meetingRelativePath, meetingID: row.id)
+        let source = try vault.readMarkdown(relativePath: row.meetingRelativePath)
+        text = String(data: source.data, encoding: .utf8) ?? ""
         let extraction = canonical.extraction
         let playback = resolvePlayback(text: text, path: path, session: session)
         let transcript = makeTranscriptSegments(canonical.transcript, playback: playback)
@@ -569,15 +582,8 @@ public final class MeetingManagementService {
             }
         }
         return MeetingBrowserDetail(row: row, doorwayText: text, doorwayVersion: source.version, humanNotes: canonical.notes, notesVersion: canonical.notesVersion,
-            artifacts: resolvedArtifacts(for: text, path: path, playback: playback), job: Self.presentation(for: owned.first) ?? row.job,
-            jobs: (owned + allOwned.filter { job in
-                (job.status == .queued || job.status == .running) && !owned.contains(where: { $0.id == job.id })
-            }).map { candidate in
-                let reason: String? = candidate.status != .failed ? nil :
-                    (MeetingWorkflowJob.supportedTypes.contains(candidate.manifest.type)
-                     ? retryUnavailableReason(candidate.manifest.type) : "This Job type cannot be retried here.")
-                return Self.presentation(for: candidate, retryReason: reason)!
-            },
+            artifacts: resolvedArtifacts(for: text, path: path, playback: playback), job: primaryJob,
+            jobs: presentedJobs,
             summaryVersion: usesLegacyArtifacts ? canonical.versions["summary"] : canonical.summaryVersion, summary: canonical.sections,
             extraction: validExtraction, myActionItems: mine, otherActionItems: other, staleProposals: stale, transcript: transcript,
             decisions: (validExtraction?.decisions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) },

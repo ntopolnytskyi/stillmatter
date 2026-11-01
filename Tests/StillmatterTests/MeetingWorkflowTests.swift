@@ -184,6 +184,50 @@ final class MeetingWorkflowTests: XCTestCase {
         XCTAssertEqual(failed.job?.retryReason, "Retry unavailable: processing is not configured.")
     }
 
+    func testWorkflowDetailHidesExistingArtifactsUntilAllStagesSucceed() throws {
+        let store = try store(), control = WorkflowStageControl()
+        let definition = try workflow("A")
+        // The stage controller does not generate content; existing files must remain untouched.
+        let manifest = JobManifest(type: definition.type, title: definition.title, executionClass: definition.executionClass,
+            stages: definition.stages, sourceArtifacts: definition.sourceArtifacts, metadata: definition.metadata).owned(by: workspace)
+        _ = try store.enqueue(id: "A", manifest: manifest)
+        let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: root.appendingPathComponent("support"))
+        let meeting = "Meetings/A/meeting.md"
+        _ = try vault.writeMarkdown(Data("---\ntitle: Workflow A\ncapture_session_id: A\n---\n## Notes\nKeep my notes\n".utf8), relativePath: meeting, expectedVersion: nil)
+        let summary = "Meetings/A/summary.md"
+        let summaryData = Data("## Summary\n\nSaved summary\n".utf8)
+        _ = try vault.writeMarkdown(summaryData, relativePath: summary, expectedVersion: nil)
+        let service = MeetingManagementService(vault: vault, jobStore: store)
+        func assertHidden(file: StaticString = #filePath, line: UInt = #line) throws {
+            let detail = try service.detail(for: "A")
+            XCTAssertNil(detail.summary, file: file, line: line)
+            XCTAssertNil(detail.extraction, file: file, line: line)
+            XCTAssertNil(detail.notesVersion, file: file, line: line)
+            XCTAssertTrue(detail.humanNotes.isEmpty, file: file, line: line)
+            XCTAssertTrue(detail.doorwayText.isEmpty, file: file, line: line)
+            XCTAssertTrue(detail.transcript.isEmpty, file: file, line: line)
+            XCTAssertTrue(detail.myActionItems.isEmpty, file: file, line: line)
+            XCTAssertTrue(detail.artifacts.isEmpty, file: file, line: line)
+            XCTAssertEqual(try vault.readMarkdown(relativePath: summary).data, summaryData, file: file, line: line)
+            XCTAssertNil(try vault.versionOfMarkdown(relativePath: "Meetings/A/meeting-artifacts.json"), file: file, line: line)
+        }
+        try assertHidden()
+        let scheduler = JobScheduler(store: store, executor: control, workspaceRootURL: workspace)
+        defer { scheduler.stop() }
+        scheduler.start()
+        wait { control.events == ["A/transcribe"] }
+        try assertHidden()
+        control.complete()
+        wait { control.events.count == 2 }
+        try assertHidden()
+        control.complete()
+        wait { try store.job(id: "A")?.status == .succeeded }
+        let completed = try service.detail(for: "A")
+        XCTAssertTrue(completed.summary?.summary.contains("Saved summary") == true)
+        XCTAssertTrue(completed.humanNotes.contains("Keep my notes"))
+        XCTAssertFalse(completed.doorwayText.isEmpty)
+    }
+
     func testRegistryUnavailableAndUnknownStagesFailWithoutProviderTransfer() throws {
         let store = try store(), registry = JobHandlerRegistry(handlers: [:])
         let job = try store.enqueue(id: "A", manifest: workflow("A"))

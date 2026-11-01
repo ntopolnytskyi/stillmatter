@@ -116,14 +116,7 @@ final class MeetingArtifactStore {
             _ = try validateItems(body, path: path)
 
         }
-        var canonicalIDs: Set<String> = []
-        for kind in ["notes", "actions", "decisions", "open"] {
-            let content = try required(contents[kind], path: statePath, field: "\(kind) content")
-            let path = try required(state.files[kind], path: statePath, field: "\(kind) path")
-            let ids = try validateItems(content, path: path)
-            guard canonicalIDs.isDisjoint(with: ids) else { throw malformed(path, "The same item ID appears in multiple canonical files. Keep one checkbox and use references.") }
-            canonicalIDs.formUnion(ids)
-        }
+        try validateCanonicalItems(contents, paths: state.files, meetingPath: meetingPath)
         let jsonPath = sibling(meetingPath, "transcript.json"), textPath = sibling(meetingPath, "transcript.txt")
         var transcript: TranscriptDocument?
         let textSource = try optional(textPath), jsonSource = try optional(jsonPath)
@@ -248,6 +241,9 @@ final class MeetingArtifactStore {
             throw WorkspaceVaultError.conflict(relativePath: path, expected: expected, actual: loaded.notesVersion)
         }
         let adopted = try adopting(text, path: path, kind: "notes")
+        try validateCanonicalItems(["notes": adopted, "actions": loaded.sections.myActionItems,
+                                    "decisions": loaded.sections.decisions, "open": loaded.sections.openQuestions],
+                                   paths: loaded.paths, meetingPath: meetingPath)
         try MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint).publish([
             .init(relativePath: path, data: Data(try wrapped("notes", adopted).utf8), expectedVersion: expected)
         ])
@@ -263,6 +259,7 @@ final class MeetingArtifactStore {
         }
         let values = ["summary": sections.summary, "decisions": sections.decisions, "actions": sections.myActionItems, "open": sections.openQuestions]
         var replacements: [WorkspaceMarkdownReplacement] = []
+        var proposedContents = ["notes": loaded.notes]
         for (kind, body) in values {
             let path = try required(loaded.paths[kind], path: meetingPath, field: "\(kind) path")
             let old = try vault.readMarkdown(relativePath: path)
@@ -272,9 +269,11 @@ final class MeetingArtifactStore {
                 let existing = try removingMarker(kind, from: decode(old.data, path: path))
                 canonicalBody = try frontmatter(existing) + body
             } else { canonicalBody = try adopting(body, path: path, kind: kind) }
+            proposedContents[kind] = canonicalBody
             let data = Data(try wrapped(kind, canonicalBody).utf8)
             if old.data != data { replacements.append(.init(relativePath: path, data: data, expectedVersion: old.version)) }
         }
+        try validateCanonicalItems(proposedContents, paths: loaded.paths, meetingPath: meetingPath)
         try MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint).publish(replacements)
     }
 
@@ -527,6 +526,19 @@ final class MeetingArtifactStore {
             let carriageReturn = raw.hasSuffix("\r")
             return try adoptLine(carriageReturn ? String(raw.dropLast()) : raw) + (carriageReturn ? "\r" : "")
         }.joined(separator: "\n")
+    }
+
+    private func validateCanonicalItems(_ contents: [String: String], paths: [String: String], meetingPath: String) throws {
+        var canonicalIDs: Set<String> = []
+        for kind in ["notes", "actions", "decisions", "open"] {
+            let content = try required(contents[kind], path: meetingPath, field: "\(kind) content")
+            let path = try required(paths[kind], path: meetingPath, field: "\(kind) path")
+            let ids = try validateItems(content, path: path)
+            guard canonicalIDs.isDisjoint(with: ids) else {
+                throw malformed(path, "The same item ID appears in multiple canonical files. Keep one checkbox and use references.")
+            }
+            canonicalIDs.formUnion(ids)
+        }
     }
 
     private func validateItems(_ text: String, path: String) throws -> Set<String> {

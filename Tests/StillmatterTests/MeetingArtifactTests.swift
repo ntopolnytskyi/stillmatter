@@ -45,6 +45,48 @@ final class MeetingArtifactTests: XCTestCase {
         return try encoder.encode(document)
     }
 
+    func testSummarySaveRejectsCrossFileIdentityCollisionsWithoutChangingFiles() throws {
+        try seed()
+        let initial = try load()
+        let action = try XCTUnwrap(initial.sections.myActionItems.components(separatedBy: "\n").first { $0.contains("<!-- sm-item:") })
+        let paths = Array(initial.paths.values)
+        let before = try paths.map { try vault.readMarkdown(relativePath: $0).data }
+        var edited = initial.sections
+        edited.summary = "Changed summary"
+        edited.decisions += "\n" + action
+        XCTAssertThrowsError(try store.saveSummary(edited, meetingPath: meeting, meetingID: "fixture", expected: initial.summaryVersion)) {
+            XCTAssertTrue($0.localizedDescription.contains("same item ID"))
+        }
+        XCTAssertEqual(try paths.map { try vault.readMarkdown(relativePath: $0).data }, before)
+        XCTAssertEqual(try load().sections.summary, initial.sections.summary)
+    }
+
+    func testNotesSaveRejectsIdentityFromAnotherArtifactWithoutChangingFiles() throws {
+        try seed()
+        let initial = try load()
+        let action = try XCTUnwrap(initial.sections.myActionItems.components(separatedBy: "\n").first { $0.contains("<!-- sm-item:") })
+        let paths = Array(initial.paths.values)
+        let before = try paths.map { try vault.readMarkdown(relativePath: $0).data }
+        XCTAssertThrowsError(try store.saveNotes(initial.notes + "\n" + action, meetingPath: meeting, meetingID: "fixture", expected: initial.notesVersion)) {
+            XCTAssertTrue($0.localizedDescription.contains("same item ID"))
+        }
+        XCTAssertEqual(try paths.map { try vault.readMarkdown(relativePath: $0).data }, before)
+        XCTAssertEqual(try load().notes, initial.notes)
+    }
+
+    func testSummarySaveAllowsMovingAnIdentityBetweenArtifacts() throws {
+        try seed()
+        let initial = try load()
+        let action = try XCTUnwrap(initial.sections.myActionItems.components(separatedBy: "\n").first { $0.contains("<!-- sm-item:") })
+        var edited = initial.sections
+        edited.myActionItems = edited.myActionItems.replacingOccurrences(of: action, with: "")
+        edited.decisions += "\n" + action
+        try store.saveSummary(edited, meetingPath: meeting, meetingID: "fixture", expected: initial.summaryVersion)
+        let saved = try load()
+        XCTAssertTrue(saved.sections.decisions.contains(action))
+        XCTAssertFalse(saved.sections.myActionItems.contains(action))
+    }
+
     func testLegacyMigrationCreatesSeparateCanonicalFilesAndKeepsProseIdentityAndReferencesAcrossReopen() throws {
         try seed()
         try write(path("archive.json"), "{\"archived\":true}")

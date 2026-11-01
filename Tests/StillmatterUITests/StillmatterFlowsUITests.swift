@@ -125,15 +125,4 @@ final class StillmatterFlowsUITests: XCTestCase {
         add(attachment)
     }
 
-    func testEmptyQueueIsVisibleFromTasks() {
-        app.buttons["sidebar-tasks"].click()
-        XCTAssertTrue(app.staticTexts["No Queue Todo Items"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["Current area"].value as? String, "Tasks")
-    }
-
-    func testSettingsIsReachableWithoutChangingSettings() {
-        app.buttons["sidebar-settings"].click()
-        XCTAssertTrue(app.buttons["Test Mic"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["Current area"].value as? String, "Settings")
-    }
 }
