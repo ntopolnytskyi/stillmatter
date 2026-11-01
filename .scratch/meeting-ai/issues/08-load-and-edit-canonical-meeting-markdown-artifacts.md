@@ -4,7 +4,7 @@
 
 **Blocked by:** [01: Measure all shipped source and enforce incremental coverage](01-measure-all-shipped-source-and-enforce-incremental-coverage.md); [04: Prove Markdown item identity and legacy migration](04-prove-markdown-item-identity-and-legacy-migration.md)
 
-**Status:** claimed
+**Status:** resolved
 
 **Type:** task
 
@@ -26,25 +26,40 @@ Relevant accepted decisions: [file authority and shared identity](../../../docs/
 
 ## Acceptance criteria
 
-- [ ] Migrate legacy Meeting content into canonical Markdown artifacts and a separate My Notes file using the contract from 04.
-- [ ] Load valid external edits as authoritative and refresh current views; do not overwrite existing user content during migration.
-- [ ] Preserve an unsaved in-app draft when an external update conflicts, with explicit reload/resolve instead of silent replacement.
-- [ ] Unreadable/malformed files produce a localized actionable error and do not turn into empty successful content.
+- [x] Migrate legacy Meeting content into canonical Markdown artifacts and a separate My Notes file using the contract from 04.
+- [x] Load valid external edits as authoritative and refresh current views; do not overwrite existing user content during migration.
+- [x] Preserve an unsaved in-app draft when an external update conflicts, with explicit reload/resolve instead of silent replacement.
+- [x] Unreadable/malformed files produce a localized actionable error and do not turn into empty successful content.
 
 ## Required tests
 
-- [ ] Load old/new fixtures and verify notes, accepted items, references, archive metadata and Transcript representations survive round trips.
-- [ ] Interrupt each migration/write phase, reopen and assert recoverable old/new content with no duplicated task identities.
-- [ ] Externally edit/rename content while a draft is open; assert updated source remains intact and the draft remains available.
+- [x] Load old/new fixtures and verify notes, accepted items, references, archive metadata and Transcript representations survive round trips.
+- [x] Interrupt each migration/write phase, reopen and assert recoverable old/new content with no duplicated task identities.
+- [x] Externally edit/rename content while a draft is open; assert updated source remains intact and the draft remains available.
 
-- [ ] Native interaction tests cover the changed controls, applicable shortcuts/focus, resulting persisted state, and the relevant empty/disabled/error case. Use semantic test identifiers and observable waits; source-text checks or screenshots without assertions do not substitute for behavior.
+- [x] Native interaction tests cover the changed controls, applicable shortcuts/focus, resulting persisted state, and the relevant empty/disabled/error case. Use semantic test identifiers and observable waits; source-text checks or screenshots without assertions do not substitute for behavior.
 
 ## Completion evidence
 
-- [ ] Record executed tests, results, and any separate hardware/model evaluation evidence; never claim a fake provider proves real model quality or source isolation.
-- [ ] Test all feature behavior introduced here in this slice. Production changes use the 95% new/changed executable-line gate established by ticket 01; report existing debt separately. Final ticket 50 requires at least 95% across all shipped first-party Swift source, including app/UI/platform code.
-- [ ] Verify migration/restart and workspace/media/support isolation where affected; do not use a real user library or secret namespace as a fixture.
+- [x] Record executed tests, results, and any separate hardware/model evaluation evidence; never claim a fake provider proves real model quality or source isolation.
+- [x] Test all feature behavior introduced here in this slice. Production changes use the 95% new/changed executable-line gate established by ticket 01; report existing debt separately. Final ticket 50 requires at least 95% across all shipped first-party Swift source, including app/UI/platform code.
+- [x] Verify migration/restart and workspace/media/support isolation where affected; do not use a real user library or secret namespace as a fixture.
 
 ## Comments
 
 Published from the user-approved 50-ticket breakdown. The ready-for-agent label means specified; execution still waits for every declared blocker to complete. Implementation has not begun.
+
+### 2026-11-02 — implementation and verification complete
+
+Implemented ticket 08 only. Legacy Meeting content now migrates through a recoverable publication plan into canonical Markdown artifacts and a separate `my-notes.md`; Transcript text/JSON edits reconcile against their synchronized base. Current capture/processing writers continue using legacy files until they finish, and generated output updates canonical files while retaining Notes and reviewed user work. External edits remain authoritative, editors retain conflicting drafts with reload feedback, and malformed inputs produce actionable errors. Artifact IDs, CRLF content, unknown Markdown sections, archive state, approved Todos, and Transcript timing/metadata survive the tested round trips.
+
+Executed final-source checks:
+
+- Full package Release coverage lane: **346 tests, 4 skipped, 0 failed**. Focused final-source suites passed **31 artifact/edge tests** and **7 canonical Todo reference tests**.
+- Hosted Release coverage lane: **7 tests, 0 skipped, 0 failed**.
+- Native Release UI coverage lane: **19 tests, 0 skipped, 0 failed**. Tests assert cancel/save shortcuts, focus, empty and archived states, persisted edits after relaunch, valid external refresh, conflict draft retention/reload, rename, and malformed-file repair/reload.
+- Fresh compatible package, hosted, and native reports were combined with `--base 93329d7`. Incremental coverage passed at **1,027/1,058 (97.07%)**: Core 961/985 (97.56%), Presentation 25/30 (83.33%), and app/UI 41/43 (95.35%). The aggregate gate is 95%; the per-module breakdown is reported for diagnosis.
+- The separately enforced whole-source gate remains below target at **15,527/20,072 (77.36%)**: Core 91.00%, Presentation 88.00%, runtime 50.82%, app/UI/platform 65.29%. This is existing coverage debt assigned to later coverage tickets; it is not represented as passing.
+- Review since `93329d7`: Standards **0 remaining findings**; Spec **0 findings**. Final `git diff --check` passed. All workspace, support, and media fixtures were isolated and synthetic.
+
+Capability limits: ticket 08 establishes file migration/edit behavior only. It does not establish real Teams/Zoom/Meet source isolation, OS permission/device behavior, ASR/diarization quality, or model quality; those remain separate research/evaluation lanes. Legacy accepted Todo copies without a proposal ID cannot be matched back to an exact proposal without guessing; migration preserves one canonical approved task and unresolved association evidence for explicit downstream resolution. No real hardware/model evaluation was required or claimed for this storage/UI slice.
