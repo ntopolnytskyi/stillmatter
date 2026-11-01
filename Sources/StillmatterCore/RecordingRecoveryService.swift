@@ -103,12 +103,12 @@ public final class RecordingRecoveryService {
         transcriptionAudio: TranscriptionAudioSidecar?
     ) throws -> JobRecord? {
         guard let jobStore = jobStore else { return nil }
-        let manifest = TranscriptionJob.manifest(
+        let manifest = try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(
             title: "recovered meeting",
             bundle: bundle,
             selection: transcriptionAudio,
             language: .english
-        )
+        ))
         return try jobStore.enqueue(manifest: manifest.owned(by: vault.rootURL))
     }
 }

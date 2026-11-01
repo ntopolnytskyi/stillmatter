@@ -450,6 +450,69 @@ public final class JobStore {
         return try requireRecordUnlocked(id: id)
     }
 
+    /// Atomically adopts a compatible staged manifest and retires its old continuation
+    /// jobs. Retired records/logs remain readable; successful checkpoint declarations,
+    /// attempts and timestamps are retained under the original job's FIFO identity.
+    public func adoptManifest(id: String, manifest: JobManifest,
+                              checkpoints: [String: JobStageCheckpoint], retiringJobIDs: [String] = []) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try validate(manifest)
+        var changed: [JobRecord] = []
+        try database.transaction {
+            let original = try requireRecordUnlocked(id: id)
+            let sourceIDs = Set(checkpoints.values.map(\.jobID)).union(retiringJobIDs).union([id])
+            let records = try Dictionary(uniqueKeysWithValues: sourceIDs.map { ($0, try requireRecordUnlocked(id: $0)) })
+            guard records.values.allSatisfy({ $0.status != .running && $0.manifest.workspaceOwner == original.manifest.workspaceOwner }),
+                  manifest.workspaceOwner == original.manifest.workspaceOwner,
+                  Set(checkpoints.keys).isSubset(of: Set(manifest.stages.map(\.id))),
+                  !retiringJobIDs.contains(id) else {
+                throw JobsError.invalidManifest("Cannot migrate running, cross-workspace or incompatible Jobs")
+            }
+            var retained: [String: JobStageRecord] = [:]
+            for (destination, reference) in checkpoints {
+                guard let source = records[reference.jobID],
+                      let stage = source.stages.first(where: { $0.definition.id == reference.stageID }),
+                      source.manifest.expectedOutputs.filter({ $0.stageID == reference.stageID }).map({
+                          GeneratedArtifactExpectation(stageID: destination, relativePath: $0.relativePath,
+                              validatorID: $0.validatorID, required: $0.required,
+                              requiredFrontmatterFields: $0.requiredFrontmatterFields, requiredHeadings: $0.requiredHeadings)
+                      }) == manifest.expectedOutputs.filter({ $0.stageID == destination }) else {
+                    throw JobsError.invalidManifest("Checkpoint outputs changed during Job migration")
+                }
+                retained[destination] = stage
+            }
+            let status: JobStatus = retained.values.contains(where: { $0.status == .failed }) ? .failed :
+                (retained.count == manifest.stages.count && retained.values.allSatisfy({ $0.status == .succeeded }) ? .succeeded : .queued)
+            let failure = retained.values.first(where: { $0.status == .failed })?.lastError
+            let encoded = String(decoding: try JSONEncoder().encode(manifest), as: UTF8.self)
+            try database.run("UPDATE jobs SET manifest_json = ?, status = ?, failure_details = ?, updated_at = ? WHERE id = ?",
+                bindings: [.text(encoded), .text(status.rawValue), failure.map(JobSQLiteValue.text) ?? .null, .text(now()), .text(id)])
+            try database.run("DELETE FROM job_stages WHERE job_id = ?", bindings: [.text(id)])
+            for (position, definition) in manifest.stages.enumerated() {
+                let previous = retained[definition.id]
+                try database.run("INSERT INTO job_stages (job_id, stage_id, title, position, status, attempt_count, last_error, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    bindings: [.text(id), .text(definition.id), .text(definition.title), .integer(position),
+                        .text(previous?.status.rawValue ?? JobStageStatus.pending.rawValue), .integer(previous?.attemptCount ?? 0),
+                        previous?.lastError.map(JobSQLiteValue.text) ?? .null,
+                        previous?.startedAt.map(JobSQLiteValue.text) ?? .null,
+                        previous?.finishedAt.map(JobSQLiteValue.text) ?? .null])
+            }
+            for retiredID in retiringJobIDs {
+                try database.run("UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
+                    bindings: [.text(JobStatus.dismissed.rawValue), .text(now()), .text(retiredID)])
+                try appendLogUnlocked(jobID: retiredID, level: "info", message: "Checkpoints adopted by Job \(id)")
+                changed.append(try requireRecordUnlocked(id: retiredID))
+            }
+            try appendLogUnlocked(jobID: id, level: "info", message: "Adopted durable staged manifest")
+            changed.append(try requireRecordUnlocked(id: id))
+        }
+        for record in changed {
+            if record.status == .dismissed { try inboxFor(record)?.removeItem(id: inboxID(jobID: record.id)) }
+            notifyChange(record)
+        }
+    }
+
     public func job(id: String) throws -> JobRecord? {
         lock.lock()
         defer { lock.unlock() }
@@ -946,7 +1009,12 @@ public final class JobScheduler {
         guard !isPaused, !isStopped else { return }
         do {
             let queued = try store.jobs(status: .queued)
-            for job in queued where (eligibleJobTypes?.contains(job.manifest.type) ?? true)
+            // A persisted partial heavy Job already owns its whole turn. Preserve
+            // that reservation across scheduler replacement/reopen, even if the
+            // wall clock gave a newly queued Job an earlier creation timestamp.
+            let continuing = queued.filter { $0.manifest.executionClass == .heavy && $0.stages.contains(where: { $0.attemptCount > 0 }) }
+            let ordered = continuing + queued.filter { job in !continuing.contains(where: { $0.id == job.id }) }
+            for job in ordered where (eligibleJobTypes?.contains(job.manifest.type) ?? true)
                 && (workspaceOwner == nil || job.manifest.workspaceOwner == workspaceOwner) {
                 switch job.manifest.executionClass {
                 case .heavy:

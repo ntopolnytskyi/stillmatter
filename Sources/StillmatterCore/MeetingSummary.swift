@@ -100,7 +100,12 @@ public enum MeetingSummaryJob {
     }
 
     public static func manifest(transcript: TranscriptDocument, transcriptJSONRelativePath: String) throws -> JobManifest {
-        let paths = artifactPaths(meetingRelativePath: transcript.meetingRelativePath)
+        try manifest(meetingRelativePath: transcript.meetingRelativePath, captureSessionID: transcript.captureSessionID,
+                     transcriptJSONRelativePath: transcriptJSONRelativePath)
+    }
+
+    public static func manifest(meetingRelativePath: String, captureSessionID: String, transcriptJSONRelativePath: String) throws -> JobManifest {
+        let paths = artifactPaths(meetingRelativePath: meetingRelativePath)
         let workflow = PiWorkflowManifest(
             task: """
             Summarize this meeting transcript. Return an editable Markdown summary and a machine-readable extraction.
@@ -112,7 +117,7 @@ public enum MeetingSummaryJob {
             """,
             primarySources: [
                 JobArtifactReference(relativePath: transcriptJSONRelativePath, role: "timestamped-transcript"),
-                JobArtifactReference(relativePath: transcript.meetingRelativePath, role: "meeting-doorway")
+                JobArtifactReference(relativePath: meetingRelativePath, role: "meeting-doorway")
             ],
             relatedContext: ["Projects/**", "People/**"],
             expectedOutputs: [
@@ -150,7 +155,7 @@ public enum MeetingSummaryJob {
             metadata: [
                 PiWorkflowManifest.metadataKey: contract,
                 transcriptJSONMetadataKey: transcriptJSONRelativePath,
-                captureSessionMetadataKey: transcript.captureSessionID
+                captureSessionMetadataKey: captureSessionID
             ],
             maxAutomaticRetries: 1
         )
@@ -194,7 +199,7 @@ public final class MeetingSummaryJobExecutor: JobExecuting {
     }
 
     private func run(job: JobRecord, stage: JobStageDefinition) throws -> JobStageResult {
-        guard job.manifest.type == MeetingSummaryJob.type, stage.id == MeetingSummaryJob.stageID else {
+        guard (job.manifest.type == MeetingSummaryJob.type || job.manifest.type == MeetingWorkflowJob.type), stage.id == MeetingSummaryJob.stageID else {
             throw MeetingSummaryError.unsupportedJob("\(job.manifest.type)/\(stage.id)")
         }
         let workflow = try decodeWorkflow(from: job)

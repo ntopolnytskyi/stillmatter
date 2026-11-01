@@ -42,7 +42,16 @@ final class MeetingSummaryTests: XCTestCase {
             transcript: fixture.transcript,
             transcriptJSONRelativePath: fixture.transcriptPath
         )
-        let result = try execute(executor, manifest: manifest)
+        let transcription = JobManifest(type: TranscriptionJob.type, title: "Transcribe fixture", executionClass: .heavy,
+            stages: [.init(id: TranscriptionJob.stageID, title: "Transcribe")],
+            sourceArtifacts: [.init(relativePath: fixture.transcript.meetingRelativePath, role: "meeting-doorway")],
+            metadata: ["capture_session_id": fixture.transcript.captureSessionID])
+        let workflow = try MeetingWorkflowJob.manifest(transcription: transcription, summary: manifest)
+        // Drive the real validated summary adapter through its workflow-stage contract.
+        let summaryOnly = JobManifest(type: workflow.type, title: workflow.title, executionClass: .heavy,
+            stages: [workflow.stages[1]], sourceArtifacts: workflow.sourceArtifacts,
+            expectedOutputs: workflow.expectedOutputs.filter { $0.stageID == MeetingSummaryJob.stageID }, metadata: workflow.metadata)
+        let result = try execute(executor, manifest: summaryOnly)
 
         XCTAssertEqual(Set(result.artifacts.map(\.relativePath)), Set([fixture.summaryPath, fixture.extractionPath]))
         XCTAssertTrue(try fixture.contents(fixture.summaryPath).contains("## My action items"))

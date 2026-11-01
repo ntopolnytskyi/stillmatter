@@ -118,19 +118,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var isShuttingDown: Bool { workspaceRuntime.isStopped }
     private lazy var processingRuntime = ProcessingRuntime(
         applicationSupportURL: Self.applicationSupportURL, componentInstaller: transcriptionComponentInstaller,
-        jobStore: { [weak self] in self?.jobStore }, inbox: { [weak self] in self?.tasksInbox },
-        isCurrent: { [weak self] owner in
-            guard let self else { return false }
-            return !self.isShuttingDown && self.effectiveWorkspacePath == owner
-        },
+        jobStore: { [weak self] in self?.jobStore },
         mayResumeTranscription: { [weak self] owner in
             guard let self else { return false }
             return !self.isShuttingDown && self.settingsStore.pendingWorkspace == nil &&
                    self.effectiveWorkspacePath == owner
-        },
-        onSummaryApplied: { [weak self] in
-            self?.stateStore.publish(.tasks)
-            self?.stateStore.publish(.jobStatus)
         },
         isProbe: {
             #if DEBUG
@@ -138,11 +130,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             #else
             return false
             #endif
+        },
+        analysisConfiguration: { PiIntegration().detectedExecutableURL()?.standardizedFileURL.path ?? "missing-pi" },
+        makeAnalysis: { [weak self] root in
+            guard let self, let inbox = self.tasksInbox,
+                  let executable = PiIntegration().detectedExecutableURL() else {
+                return UnavailableJobHandler(guidance: "Pi CLI is unavailable. Install/configure Pi, then Retry this stage. No Meeting text was uploaded.")
+            }
+            let worker = PiCodexWorker(executableURL: executable, vaultRootURL: root)
+            return MeetingSummaryJobExecutor(worker: worker, workspaceRootURL: root,
+                vault: WorkspaceVault(workspaceRootURL: root, appSupportRootURL: Self.applicationSupportURL), inbox: inbox,
+                onApplied: { [weak self] in
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, !self.isShuttingDown,
+                              self.effectiveWorkspacePath == root.standardizedFileURL.resolvingSymlinksInPath().path else { return }
+                        self.stateStore.publish(.tasks)
+                        self.stateStore.publish(.jobStatus)
+                    }
+                })
         }
     )
     var heavyExecutionGate: JobHeavyExecutionGate { processingRuntime.heavyExecutionGate }
     private var transcriptionScheduler: JobScheduler? { processingRuntime.transcriptionScheduler }
-    private var meetingSummaryScheduler: JobScheduler? { processingRuntime.meetingSummaryScheduler }
     private func schedulerForMeetingRetry(_ type: String) -> JobScheduler? { processingRuntime.scheduler(for: type) }
     private var transcriptionComponentInstaller: TranscriptionComponentInstaller { composition.transcriptionComponentInstaller }
     private var transcriptionComponentObserver: UUID?
@@ -228,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     indexGeneration: self.indexGeneration)
                 self.configureCaptureService(settings: settings)
                 self.workspaceRuntime.resumeAfterCancellation(settingsStore: self.settingsStore,
-                    schedulers: [self.transcriptionScheduler, self.meetingSummaryScheduler].compactMap { $0 })
+                    schedulers: self.processingRuntime.schedulers)
                 self.teamsAutomation.reconcileCurrent()
             }
         }
@@ -669,7 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func retryPendingWorkspace() {
         _ = workspaceRuntime.retryPendingSelection(settingsStore: settingsStore, jobStore: jobStore,
-            schedulers: [transcriptionScheduler, meetingSummaryScheduler].compactMap { $0 })
+            schedulers: processingRuntime.schedulers)
     }
 
     private func configureCaptureService(settings: AppSettings) {
@@ -851,23 +860,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func currentJobRecords() -> [JobRecord]? {
         guard let jobStore = jobStore else { return nil }
-        let supportedTypes = Set([TranscriptionJob.type, MeetingSummaryJob.type])
+        let supportedTypes = MeetingWorkflowJob.supportedTypes
         let owner = settingsStore.settings.stillmatterRootURL?.standardizedFileURL.resolvingSymlinksInPath().path
         guard let owner else { return [] }
         return try? jobStore.jobs().filter { supportedTypes.contains($0.manifest.type) && $0.manifest.workspaceOwner == owner }
     }
 
     private func currentJobStatus() -> String {
+        if let error = processingRuntime.configurationError { return error }
         guard let jobs = currentJobRecords() else { return "Jobs unavailable" }
         if let unowned = try? jobStore?.jobs().filter({ $0.manifest.workspaceOwner == nil &&
-            ( $0.manifest.type == TranscriptionJob.type || $0.manifest.type == MeetingSummaryJob.type ) }).count,
+            MeetingWorkflowJob.supportedTypes.contains($0.manifest.type) }).count,
            unowned > 0 {
             return "\(unowned) legacy Job(s) need workspace review; processing paused for these Jobs"
         }
         let failed = jobs.filter { $0.status == .failed }.count
         if failed > 0 { return "\(failed) Job\(failed == 1 ? "" : "s") failed" }
-        let running = jobs.filter { $0.status == .running }.count
-        if running > 0 { return "\(running) Job\(running == 1 ? "" : "s") running" }
+        if let running = jobs.first(where: { $0.status == .running }) {
+            return running.stages.first(where: { $0.status == .running })?.definition.title ?? "Processing Meeting"
+        }
         let queued = jobs.filter { $0.status == .queued }.count
         if queued > 0 { return "\(queued) Job\(queued == 1 ? "" : "s") queued" }
         return "Jobs idle"
