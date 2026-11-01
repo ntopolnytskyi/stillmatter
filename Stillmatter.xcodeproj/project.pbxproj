@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C01A00000000000000000001 /* libStillmatterCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */; };
 		102F68042F7F828D776C46F1 /* libStillmatterCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */; };
 		3E66B09A87675880F6BD4B47 /* libStillmatterCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */; };
 		522943574508D7922ED65B76 /* libStillmatterTranscriptionRuntime.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4F24933E0122826E42B0BB07 /* libStillmatterTranscriptionRuntime.a */; };
@@ -134,6 +135,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C01A00000000000000000001 /* libStillmatterCore.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -274,6 +276,7 @@
 			);
 			dependencies = (
 				21E5B0FD9504FD077B965029 /* PBXTargetDependency */,
+				C01A00000000000000000002 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				14273D81805E19B1A23F46F7 /* Tests/StillmatterUITests */,
@@ -382,6 +385,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		C01A00000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CB7EBEE2135D447804CDB62C /* StillmatterCore */;
+			targetProxy = 46521D277FBB58EE2899D8B5 /* PBXContainerItemProxy */;
+		};
 		21C2F3FD894E2C66245DBE25 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = CB7EBEE2135D447804CDB62C /* StillmatterCore */;
@@ -425,6 +433,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Stillmatter;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_LDFLAGS = "$(inherited) -lsqlite3";
 				PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE";
@@ -491,6 +500,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Stillmatter;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_LDFLAGS = "$(inherited) -lsqlite3";
 				PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE DEBUG";
