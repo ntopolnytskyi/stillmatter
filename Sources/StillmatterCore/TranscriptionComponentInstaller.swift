@@ -288,12 +288,7 @@ public final class TranscriptionComponentInstaller {
 
     private func performInstall(model: TranscriptionModelChoice, cancellation token: TranscriptionInstallCancellation) {
         let stagingURL = paths.stagingRootURL.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer {
-            try? fileManager.removeItem(at: stagingURL)
-            lock.lock()
-            cancellation = nil
-            lock.unlock()
-        }
+        let terminalState: TranscriptionComponentState
         do {
             try fileManager.createDirectory(at: paths.rootURL, withIntermediateDirectories: true)
             try removeAbandonedStaging(except: stagingURL)
@@ -310,10 +305,7 @@ public final class TranscriptionComponentInstaller {
             try validateModel(at: modelURL)
             try throwIfCancelled(token)
             try promote(modelURL: modelURL, model: model, cancellation: token)
-            lock.lock()
-            cancellation = nil
-            lock.unlock()
-            publish(.ready(paths.modelURL(for: model)))
+            terminalState = .ready(paths.modelURL(for: model))
         } catch {
             let message: String
             if token.isCancelled || (error as? TranscriptionComponentInstallError) == .cancelled {
@@ -321,8 +313,16 @@ public final class TranscriptionComponentInstaller {
             } else {
                 message = error.localizedDescription
             }
-            publish(.failed(message))
+            terminalState = .failed(message)
         }
+
+        // Keep the installer busy until partial staging data is gone. In particular,
+        // a terminal observer may immediately request a retry.
+        try? fileManager.removeItem(at: stagingURL)
+        lock.lock()
+        cancellation = nil
+        lock.unlock()
+        publish(terminalState)
     }
 
     private func promote(modelURL: URL, model: TranscriptionModelChoice, cancellation token: TranscriptionInstallCancellation) throws {

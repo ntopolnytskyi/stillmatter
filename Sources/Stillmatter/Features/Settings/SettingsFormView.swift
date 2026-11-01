@@ -19,6 +19,7 @@ final class DiagnosticRowViews {
 }
 
 final class SettingsFormView: NSView {
+    private let controls: GraphiteFocusControls
     private let settingsStore: SettingsStore
     private let diagnosticsProvider: PermissionDiagnosticsProvider
     let transcriptionComponentInstaller: TranscriptionComponentInstaller
@@ -31,14 +32,14 @@ final class SettingsFormView: NSView {
     private let rootPathLabel = NSTextField(labelWithString: "Not selected")
     private let mediaPathLabel = NSTextField(labelWithString: "Not selected")
     private let pendingWorkspaceLabel = NSTextField(wrappingLabelWithString: "")
-    private let cancelPendingButton = NSButton(title: "Cancel pending change", target: nil, action: nil)
-    private let retryPendingButton = NSButton(title: "Retry workspace change", target: nil, action: nil)
-    private let calendarSourcesButton = NSButton(title: "All readable calendars", target: nil, action: nil)
+    private let cancelPendingButton: NSButton
+    private let retryPendingButton: NSButton
+    private let calendarSourcesButton: NSButton
     private let calendarEventStore = EKEventStore()
-    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch Stillmatter at login", target: nil, action: nil)
-    private let searchExcludesField = NSTextField(string: "")
-    private let transcriptionModelPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let teamsRecordingPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let launchAtLoginCheckbox: NSButton
+    private let searchExcludesField: NSTextField
+    private let transcriptionModelPopup: NSPopUpButton
+    private let teamsRecordingPopup: NSPopUpButton
     private let validationLabel = NSTextField(wrappingLabelWithString: "")
     private let searchFeedbackLabel = NSTextField(wrappingLabelWithString: "")
     private let diagnosticsSummaryLabel = NSTextField(wrappingLabelWithString: "Checking diagnostics…")
@@ -63,11 +64,20 @@ final class SettingsFormView: NSView {
     }
 
     init(
+        controls: GraphiteFocusControls = GraphiteFocusControls(),
         settingsStore: SettingsStore,
         transcriptionComponentInstaller: TranscriptionComponentInstaller,
         onRebuildIndex: ((@escaping (Result<Void, Error>) -> Void) -> Void)? = nil,
         onRetryPendingWorkspace: (() -> Void)? = nil
     ) {
+        self.controls = controls
+        cancelPendingButton = controls.button("Cancel pending change", identifier: "settings-cancel-workspace")
+        retryPendingButton = controls.button("Retry workspace change", identifier: "settings-retry-workspace")
+        calendarSourcesButton = controls.button("All readable calendars", identifier: "settings-calendar-sources")
+        launchAtLoginCheckbox = controls.checkbox("Launch Stillmatter at login", identifier: "settings-launch-at-login")
+        searchExcludesField = controls.textField(identifier: "settings-search-exclusions")
+        transcriptionModelPopup = controls.popup(identifier: "settings-transcription-model")
+        teamsRecordingPopup = controls.popup(identifier: "settings-teams-recording")
         self.settingsStore = settingsStore
         self.transcriptionComponentInstaller = transcriptionComponentInstaller
         self.hardwareModel = FasterWhisperRuntimeSupport.deviceName()
@@ -143,8 +153,8 @@ final class SettingsFormView: NSView {
         teamsRecordingPopup.action = #selector(teamsRecordingChanged(_:))
 
         stack.addArrangedSubview(sectionHeader("Workspace"))
-        stack.addArrangedSubview(pathRow(title: "Stillmatter root", pathLabel: rootPathLabel, buttonTitle: "Choose…", action: #selector(chooseStillmatterRoot(_:))))
-        stack.addArrangedSubview(pathRow(title: "Recording media location", pathLabel: mediaPathLabel, buttonTitle: "Choose…", action: #selector(chooseRecordingMediaLocation(_:))))
+        stack.addArrangedSubview(pathRow(title: "Stillmatter root", identifier: "settings-workspace-root", pathLabel: rootPathLabel, buttonTitle: "Choose…", action: #selector(chooseStillmatterRoot(_:))))
+        stack.addArrangedSubview(pathRow(title: "Recording media location", identifier: "settings-media-location", pathLabel: mediaPathLabel, buttonTitle: "Choose…", action: #selector(chooseRecordingMediaLocation(_:))))
         cancelPendingButton.target = self
         cancelPendingButton.action = #selector(cancelPendingWorkspace(_:))
         retryPendingButton.target = self
@@ -212,14 +222,14 @@ final class SettingsFormView: NSView {
         return label
     }
 
-    private func pathRow(title: String, pathLabel: NSTextField, buttonTitle: String, action: Selector) -> NSView {
+    private func pathRow(title: String, identifier: String, pathLabel: NSTextField, buttonTitle: String, action: Selector) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.widthAnchor.constraint(equalToConstant: 180).isActive = true
         pathLabel.textColor = .secondaryLabelColor
         pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let button = NSButton(title: buttonTitle, target: self, action: action)
+        let button = controls.button(buttonTitle, identifier: identifier, target: self, action: action)
 
         button.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -248,7 +258,7 @@ final class SettingsFormView: NSView {
         var views: [NSView] = [titleLabel, statusLabel, detailLabel]
         var button: NSButton?
         if let buttonTitle = buttonTitle {
-            let actionButton = NSButton(title: buttonTitle, target: self, action: #selector(runDiagnosticAction(_:)))
+            let actionButton = controls.button(buttonTitle, identifier: "settings-diagnostic-\(id)", target: self, action: #selector(runDiagnosticAction(_:)))
             actionButton.identifier = NSUserInterfaceItemIdentifier(id)
             actionButton.setContentHuggingPriority(.required, for: .horizontal)
             views.append(actionButton)
@@ -312,7 +322,7 @@ final class SettingsFormView: NSView {
         let titleLabel = NSTextField(labelWithString: "Excluded paths")
         titleLabel.widthAnchor.constraint(equalToConstant: 180).isActive = true
         searchExcludesField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let rebuildButton = NSButton(title: "Rebuild Index", target: self, action: #selector(rebuildIndex(_:)))
+        let rebuildButton = controls.button("Rebuild Index", identifier: "settings-rebuild-index", target: self, action: #selector(rebuildIndex(_:)))
         rebuildButton.isEnabled = onRebuildIndex != nil
         let row = NSStackView(views: [titleLabel, searchExcludesField, rebuildButton])
         row.orientation = .horizontal

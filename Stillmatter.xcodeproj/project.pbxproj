@@ -62,6 +62,7 @@
 			remoteGlobalIDString = CB7EBEE2135D447804CDB62C;
 			remoteInfo = StillmatterCore;
 		};
+		19CC0006307CC49F7A87206A = { isa = PBXContainerItemProxy; containerPortal = 98F54143AB4E86B28C3AFEE0; proxyType = 1; remoteGlobalIDString = 115DE530AC8508AC6A0498E2; remoteInfo = StillmatterHostedTestHost; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -74,6 +75,7 @@
 		F8995BA5891B07E328C60D6B /* Resources/AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIcon.icns; sourceTree = "<group>"; };
 		F2F43757AD605B7E4D4D6568 /* StillmatterHostedTestHost.app */ = { isa = PBXFileReference; explicitFileType = wrapper.application; path = StillmatterHostedTestHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FB1C9378FAF549ACC7292525 /* StillmatterHostedTests.xctest */ = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = StillmatterHostedTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E4210E23605D7E056A25695C /* StillmatterControlsUITests.xctest */ = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = StillmatterControlsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -95,6 +97,7 @@
 		EB67CFA6FB9ECB743FBA01FB /* Sources/StillmatterPresentation */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/StillmatterPresentation; sourceTree = "<group>"; };
 		74164F0E5171EAE04EFCCDD1 /* Hosted entry */ = { isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Tests/StillmatterHostedTestHost; sourceTree = "<group>"; };
 		F3EBAEF2B951BB1B59E46BE0 /* Hosted tests */ = { isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Tests/StillmatterHostedTests; sourceTree = "<group>"; };
+		508D78E5EB0F6DAF35D32250 /* Controls UI tests */ = { isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Tests/StillmatterControlsUITests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -141,6 +144,7 @@
 		};
 		997DE0736BE385786575348D /* StillmatterHostedTestHost frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (E90A5057BE95F86933908609,061E067CD9DC2B2CD1254051,6E59FCD51B789BEB644DB0D0); runOnlyForDeploymentPostprocessing = 0; };
 		EE359D79C332DD6A0366CEEE /* StillmatterHostedTests frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		DB39ED5931A9A417B71AAD78 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -155,6 +159,7 @@
 			isa = PBXGroup;
 			children = (
 				F8995BA5891B07E328C60D6B /* Resources/AppIcon.icns */,
+				508D78E5EB0F6DAF35D32250 /* Controls UI tests */,
 				F3EBAEF2B951BB1B59E46BE0,
 				74164F0E5171EAE04EFCCDD1,
 				4F8F75A51593280354C074D6 /* Sources/StillmatterCore */,
@@ -174,6 +179,7 @@
 				0F9613B8243990A341953999 /* libStillmatterPresentation.a */,
 				0044809AF2EBA49EAB232D48 /* Stillmatter.app */,
 				56271DDF22B89902C89083F5 /* StillmatterUITests.xctest */,
+				E4210E23605D7E056A25695C /* Controls UI tests product */,
 				FB1C9378FAF549ACC7292525,
 				F2F43757AD605B7E4D4D6568,
 			);
@@ -288,6 +294,7 @@
 		};
 		115DE530AC8508AC6A0498E2 /* StillmatterHostedTestHost */ = { isa = PBXNativeTarget; buildConfigurationList = B0EB7FDB3B5199F93D20E6AF; buildPhases = (19EB2AD871F76365FA4F55C2,997DE0736BE385786575348D,); buildRules = (); dependencies = (8FF23222871D5DDBD1A8FF63,E9C23FDEE41B29AE718E934D,EC9969B9FE6D31E1241E6F32,); fileSystemSynchronizedGroups = (48CF6D49836945D74032E4FF,74164F0E5171EAE04EFCCDD1,); name = StillmatterHostedTestHost; productName = StillmatterHostedTestHost; productReference = F2F43757AD605B7E4D4D6568; productType = "com.apple.product-type.application"; };
 		3966936DA7A4E722B11F988F /* StillmatterHostedTests */ = { isa = PBXNativeTarget; buildConfigurationList = 8736097380C588336FED3B36; buildPhases = (19124A38051034DBE30C0F00,EE359D79C332DD6A0366CEEE,); buildRules = (); dependencies = (C528282FA2B8FFCA718BDA83,); fileSystemSynchronizedGroups = (F3EBAEF2B951BB1B59E46BE0,); name = StillmatterHostedTests; productName = StillmatterHostedTests; productReference = FB1C9378FAF549ACC7292525; productType = "com.apple.product-type.bundle.unit-test"; };
+		5DF689F60AED8E273DBC57F1 /* StillmatterControlsUITests */ = { isa = PBXNativeTarget; buildConfigurationList = 046FD9643FBF050B5C921B9F; buildPhases = (8AF59EA03DE45613E98647C1,DB39ED5931A9A417B71AAD78,); buildRules = (); dependencies = (5BB62170ABD48DAA34077CB5,); fileSystemSynchronizedGroups = (508D78E5EB0F6DAF35D32250,); name = StillmatterControlsUITests; productName = StillmatterControlsUITests; productReference = E4210E23605D7E056A25695C; productType = "com.apple.product-type.bundle.ui-testing"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -327,6 +334,7 @@
 				02401CEE9D45CB9DD6CD4CF8 /* StillmatterPresentation */,
 				278AA308C31087626BC46111 /* Stillmatter */,
 				FC28A0F2D0F9B44F8D8B9ACD /* StillmatterUITests */,
+				5DF689F60AED8E273DBC57F1 /* Controls UI tests target */,
 				3966936DA7A4E722B11F988F,
 				115DE530AC8508AC6A0498E2,
 			);
@@ -382,6 +390,7 @@
 		};
 		19EB2AD871F76365FA4F55C2 /* StillmatterHostedTestHost sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		19124A38051034DBE30C0F00 /* StillmatterHostedTests sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		8AF59EA03DE45613E98647C1 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -421,6 +430,7 @@
 			targetProxy = 9B6F8F0C5CAEC97A85958D67 /* PBXContainerItemProxy */;
 		};
 		C528282FA2B8FFCA718BDA83 /* Hosted dependency */ = { isa = PBXTargetDependency; target = 115DE530AC8508AC6A0498E2; };
+		5BB62170ABD48DAA34077CB5 = { isa = PBXTargetDependency; target = 115DE530AC8508AC6A0498E2; targetProxy = 19CC0006307CC49F7A87206A; };
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -660,6 +670,8 @@
 		7A23EC374E4A25054F024F6B /* StillmatterHostedTestHost Release */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterHostedTestHost; SWIFT_VERSION = 5.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE"; SWIFT_OPTIMIZATION_LEVEL = "-O"; ENABLE_TESTABILITY = YES; SKIP_INSTALL = YES; OTHER_LDFLAGS = ("$(inherited)", "-lsqlite3",); INFOPLIST_KEY_NSPrincipalClass = NSApplication; }; name = Release; };
 		0AEB2F313D108C0FCA7A7F0F /* StillmatterHostedTests Debug */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterHostedTests; SWIFT_VERSION = 5.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE DEBUG"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; ENABLE_TESTABILITY = YES; SKIP_INSTALL = YES; BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StillmatterHostedTestHost.app/Contents/MacOS/StillmatterHostedTestHost"; }; name = Debug; };
 		2648E2436EEF24FB62245356 /* StillmatterHostedTests Release */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterHostedTests; SWIFT_VERSION = 5.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE"; SWIFT_OPTIMIZATION_LEVEL = "-O"; ENABLE_TESTABILITY = YES; SKIP_INSTALL = YES; BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StillmatterHostedTestHost.app/Contents/MacOS/StillmatterHostedTestHost"; }; name = Release; };
+		AE36629A7219ADD77F95490C = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Automatic; ENABLE_APP_SANDBOX = NO; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterControlsUITests; SWIFT_VERSION = 5.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE DEBUG"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; TEST_TARGET_NAME = StillmatterHostedTestHost; }; name = Debug; };
+		D307561EA6CC2285812CD19A = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Automatic; ENABLE_APP_SANDBOX = NO; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = works.stillmatter.StillmatterControlsUITests; SWIFT_VERSION = 5.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) SWIFT_PACKAGE"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; TEST_TARGET_NAME = StillmatterHostedTestHost; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -719,6 +731,7 @@
 		};
 		B0EB7FDB3B5199F93D20E6AF /* StillmatterHostedTestHost configs */ = { isa = XCConfigurationList; buildConfigurations = (E351F820320F71A77CD1BF7B,7A23EC374E4A25054F024F6B,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 		8736097380C588336FED3B36 /* StillmatterHostedTests configs */ = { isa = XCConfigurationList; buildConfigurations = (0AEB2F313D108C0FCA7A7F0F,2648E2436EEF24FB62245356,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		046FD9643FBF050B5C921B9F = { isa = XCConfigurationList; buildConfigurations = (AE36629A7219ADD77F95490C,D307561EA6CC2285812CD19A,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = 98F54143AB4E86B28C3AFEE0 /* Project object */;
