@@ -1,0 +1,102 @@
+{
+  "kind": "synthetic-smoke-only",
+  "wordTokenization": "Unicode word runs; punctuation including apostrophes splits tokens; casefolded",
+  "modelLoadSeconds": 5.845493158034515,
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2",
+    "av": "18.1.0",
+    "onnxruntime": "1.23.2"
+  },
+  "device": "cpu",
+  "computeType": "int8",
+  "cpuThreads": 4,
+  "vadFilter": true,
+  "language": "Auto (None)",
+  "fixtures": [
+    {
+      "id": "english",
+      "sha256": "1d408919676af1e7197f83f2d34020b10829b07ad3aa6c4f9aef9754967a7307",
+      "durationSeconds": 3.680875,
+      "elapsedSeconds": 19.60801052104216,
+      "realTimeFactor": 5.326997119174696,
+      "detectedLanguage": "en",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 3.54,
+          "text": " The launch review is on Friday. Anna will send the project notes."
+        }
+      ],
+      "reference": "The launch review is on Friday. Anna will send the project notes.",
+      "wordErrorRate": 0.0,
+      "peakRSSBytes": 3245256704
+    },
+    {
+      "id": "ukrainian",
+      "sha256": "23c3b7fdf4b8ea7fc0c238086cf788579dccf1462769f437e2cf35adab3165d8",
+      "durationSeconds": 5.1279375,
+      "elapsedSeconds": 18.1296136410092,
+      "realTimeFactor": 3.53545916677206,
+      "detectedLanguage": "uk",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 5.06,
+          "text": " Наша зустріч відбудеться у Татницю. Олена підготує звіт для команди."
+        }
+      ],
+      "reference": "Наша зустріч відбудеться у п’ятницю. Олена підготує звіт для команди.",
+      "wordErrorRate": 0.18181818181818182,
+      "peakRSSBytes": 3245256704
+    },
+    {
+      "id": "mixed",
+      "sha256": "1f7e3999a57995f2ffdd53fced7461ca56319f7269bb413d871dce81b4d69b14",
+      "durationSeconds": 8.8088125,
+      "elapsedSeconds": 18.869242164015304,
+      "realTimeFactor": 2.1420869344211044,
+      "detectedLanguage": "uk",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 8.74,
+          "text": " Наша зустріч відбудеться у Татницю. Олена підготує звіт для команди."
+        }
+      ],
+      "reference": "The launch review is on Friday. Anna will send the project notes. Наша зустріч відбудеться у п’ятницю. Олена підготує звіт для команди.",
+      "wordErrorRate": 0.6086956521739131,
+      "peakRSSBytes": 3245256704
+    },
+    {
+      "id": "silence",
+      "sha256": "262d1f34f300560a4c82ba8127ddea9e1d72946f187fdbd3e8f70ee096077aec",
+      "durationSeconds": 5.0,
+      "elapsedSeconds": 8.186957825964782,
+      "realTimeFactor": 1.6373915651929565,
+      "detectedLanguage": "en",
+      "segments": [],
+      "reference": "",
+      "wordErrorRate": null,
+      "peakRSSBytes": 3245256704
+    },
+    {
+      "id": "overlap",
+      "sha256": "c54e4c4ed39500b40109b83d434da7960ab64d32252463575fe752ceaeda57d6",
+      "durationSeconds": 5.1279375,
+      "elapsedSeconds": 17.56804695003666,
+      "realTimeFactor": 3.4259479469156284,
+      "detectedLanguage": "uk",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 5.06,
+          "text": " Наша зустріч відбудеться у датницю. Олена підготує звіт для команди."
+        }
+      ],
+      "reference": null,
+      "wordErrorRate": null,
+      "peakRSSBytes": 3245256704
+    }
+  ]
+}

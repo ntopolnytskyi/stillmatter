@@ -1,0 +1,21 @@
+{
+  "description": "Synthetic retrieval smoke set, no Meeting or private voice material. Single relevant passage per answerable query; no threshold calibrated by this set.",
+  "passages": [
+    {"id": "release", "text": "Olena will deploy the mobile release on Friday after the final security review."},
+    {"id": "budget", "text": "Команда погодила бюджет на нові ноутбуки. Марко перевірить вартість обладнання."},
+    {"id": "retention", "text": "Archived meeting recordings are deleted after six calendar months; summaries remain available."},
+    {"id": "garden", "text": "The office garden needs watering twice a week during summer."},
+    {"id": "privacy", "text": "Voice profiles stay on the device and are never sent to the text search index."},
+    {"id": "calendar", "text": "Заплановану зустріч перенесли на вівторок о десятій ранку."}
+  ],
+  "queries": [
+    {"text": "Who is shipping the phone app and when?", "relevant": "release"},
+    {"text": "Хто випустить мобільний застосунок?", "relevant": "release"},
+    {"text": "Who will check the price of the new computers?", "relevant": "budget"},
+    {"text": "Що вирішили щодо коштів на ноутбуки?", "relevant": "budget"},
+    {"text": "How long is the audio kept after archiving?", "relevant": "retention"},
+    {"text": "Чи передають голосові дані у пошук?", "relevant": "privacy"},
+    {"text": "When is the rescheduled appointment?", "relevant": "calendar"},
+    {"text": "What was the agreed ocean freight contract price?", "relevant": null}
+  ]
+}

@@ -1,0 +1,287 @@
+{
+  "answerableQueries": 7,
+  "unanswerableQueries": 1,
+  "recallAt1": 0.7142857142857143,
+  "recallAt3": 1.0,
+  "meanReciprocalRank": 0.8095238095238095,
+  "results": [
+    {
+      "query": "Who is shipping the phone app and when?",
+      "relevant": "release",
+      "rank": 1,
+      "ranking": [
+        {
+          "id": "release",
+          "cosine": 0.8036435621503207
+        },
+        {
+          "id": "privacy",
+          "cosine": 0.7778275909737729
+        },
+        {
+          "id": "budget",
+          "cosine": 0.7622548592074839
+        },
+        {
+          "id": "calendar",
+          "cosine": 0.7569732085622691
+        },
+        {
+          "id": "retention",
+          "cosine": 0.7266803041945802
+        },
+        {
+          "id": "garden",
+          "cosine": 0.7263309787547421
+        }
+      ]
+    },
+    {
+      "query": "Хто випустить мобільний застосунок?",
+      "relevant": "release",
+      "rank": 3,
+      "ranking": [
+        {
+          "id": "budget",
+          "cosine": 0.8059045662085096
+        },
+        {
+          "id": "calendar",
+          "cosine": 0.7645544706587734
+        },
+        {
+          "id": "release",
+          "cosine": 0.7449146283350598
+        },
+        {
+          "id": "privacy",
+          "cosine": 0.7092213011820552
+        },
+        {
+          "id": "retention",
+          "cosine": 0.6643104993787752
+        },
+        {
+          "id": "garden",
+          "cosine": 0.6544602797322233
+        }
+      ]
+    },
+    {
+      "query": "Who will check the price of the new computers?",
+      "relevant": "budget",
+      "rank": 1,
+      "ranking": [
+        {
+          "id": "budget",
+          "cosine": 0.830113336491206
+        },
+        {
+          "id": "release",
+          "cosine": 0.7614181829505017
+        },
+        {
+          "id": "calendar",
+          "cosine": 0.7605907359992677
+        },
+        {
+          "id": "retention",
+          "cosine": 0.732393850536513
+        },
+        {
+          "id": "privacy",
+          "cosine": 0.732013599429374
+        },
+        {
+          "id": "garden",
+          "cosine": 0.7002000389673788
+        }
+      ]
+    },
+    {
+      "query": "Що вирішили щодо коштів на ноутбуки?",
+      "relevant": "budget",
+      "rank": 1,
+      "ranking": [
+        {
+          "id": "budget",
+          "cosine": 0.862068639645613
+        },
+        {
+          "id": "calendar",
+          "cosine": 0.7780197749494722
+        },
+        {
+          "id": "release",
+          "cosine": 0.6797577760393745
+        },
+        {
+          "id": "retention",
+          "cosine": 0.6695275225128479
+        },
+        {
+          "id": "privacy",
+          "cosine": 0.6560625699184301
+        },
+        {
+          "id": "garden",
+          "cosine": 0.6416922921032224
+        }
+      ]
+    },
+    {
+      "query": "How long is the audio kept after archiving?",
+      "relevant": "retention",
+      "rank": 1,
+      "ranking": [
+        {
+          "id": "retention",
+          "cosine": 0.8439988592708482
+        },
+        {
+          "id": "privacy",
+          "cosine": 0.7657757811648138
+        },
+        {
+          "id": "release",
+          "cosine": 0.7516893715245794
+        },
+        {
+          "id": "budget",
+          "cosine": 0.7273112431896227
+        },
+        {
+          "id": "calendar",
+          "cosine": 0.7269749814794695
+        },
+        {
+          "id": "garden",
+          "cosine": 0.7157235061635188
+        }
+      ]
+    },
+    {
+      "query": "Чи передають голосові дані у пошук?",
+      "relevant": "privacy",
+      "rank": 3,
+      "ranking": [
+        {
+          "id": "budget",
+          "cosine": 0.7903963708023876
+        },
+        {
+          "id": "calendar",
+          "cosine": 0.7636618251306682
+        },
+        {
+          "id": "privacy",
+          "cosine": 0.7529245499789269
+        },
+        {
+          "id": "retention",
+          "cosine": 0.7206249397636005
+        },
+        {
+          "id": "release",
+          "cosine": 0.6951831138518834
+        },
+        {
+          "id": "garden",
+          "cosine": 0.6542404717264113
+        }
+      ]
+    },
+    {
+      "query": "When is the rescheduled appointment?",
+      "relevant": "calendar",
+      "rank": 1,
+      "ranking": [
+        {
+          "id": "calendar",
+          "cosine": 0.79583560187919
+        },
+        {
+          "id": "retention",
+          "cosine": 0.7805536825671802
+        },
+        {
+          "id": "release",
+          "cosine": 0.7559435301804099
+        },
+        {
+          "id": "budget",
+          "cosine": 0.7421490483022686
+        },
+        {
+          "id": "privacy",
+          "cosine": 0.7336939695155332
+        },
+        {
+          "id": "garden",
+          "cosine": 0.7303764642240064
+        }
+      ]
+    },
+    {
+      "query": "What was the agreed ocean freight contract price?",
+      "relevant": null,
+      "rank": null,
+      "ranking": [
+        {
+          "id": "calendar",
+          "cosine": 0.7360015987092052
+        },
+        {
+          "id": "budget",
+          "cosine": 0.7174400554001771
+        },
+        {
+          "id": "release",
+          "cosine": 0.700157548055932
+        },
+        {
+          "id": "retention",
+          "cosine": 0.6904735406222762
+        },
+        {
+          "id": "garden",
+          "cosine": 0.6840418372217911
+        },
+        {
+          "id": "privacy",
+          "cosine": 0.6740811877127548
+        }
+      ]
+    }
+  ],
+  "abstention": "Not calibrated; a nearest result for the unanswerable query is not evidence.",
+  "kind": "actual-local-inference-synthetic-smoke-only",
+  "model": "intfloat/multilingual-e5-small FP32 ONNX",
+  "modelRevision": "ffdcc22a9a5c973ef0470385cef91e1ecb461d9f",
+  "hashes": {
+    "model": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665",
+    "tokenizer": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+    "fixtures": "097d10a647ed7a8e1f32ebf38e443dd52b3e348cb3485d22d4982ffb0875e6ce"
+  },
+  "runtime": {
+    "onnxruntime": "1.23.2",
+    "tokenizers": "0.23.3",
+    "numpy": "2.5.4"
+  },
+  "environment": {
+    "platform": "macOS-15.8.1-x86_64-i386-64bit",
+    "python": "3.12.7"
+  },
+  "settings": {
+    "provider": "CPUExecutionProvider",
+    "threads": 4,
+    "dimensions": 384,
+    "pooling": "attention-masked mean then L2",
+    "maxFixtureTokens": 22
+  },
+  "modelLoadSeconds": 1.8108566789887846,
+  "inferenceSeconds": 0.08194199699210003,
+  "processCPUSeconds": 2.14065,
+  "peakRSSBytes": 1734410240,
+  "limitations": "No archive/edit/purge/delete product integration tested. No long-document chunker or relevance threshold validated. No vectors retained."
+}
