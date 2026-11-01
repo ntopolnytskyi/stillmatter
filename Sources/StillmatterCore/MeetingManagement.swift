@@ -409,7 +409,7 @@ public final class MeetingManagementService {
         guard records.contains(where: { $0.id == jobID }) else { throw MeetingManagementError.retryRejected("This Job does not belong to the selected Meeting.") }
         guard Self.currentJobs(records).contains(where: { $0.id == jobID }) else { throw MeetingManagementError.retryRejected("This Job was superseded by a newer run.") }
         guard let job = records.first(where: { $0.id == jobID }), job.status == .failed else { throw MeetingManagementError.retryRejected("Only a failed Job can be retried.") }
-        guard job.manifest.type == TranscriptionJob.type || job.manifest.type == MeetingSummaryJob.type else { throw MeetingManagementError.retryRejected("This Job type cannot be retried here.") }
+        guard MeetingWorkflowJob.supportedTypes.contains(job.manifest.type) else { throw MeetingManagementError.retryRejected("This Job type cannot be retried here.") }
         guard !records.contains(where: { $0.id != jobID && ($0.status == .queued || $0.status == .running) }) else { throw MeetingManagementError.retryRejected("This Meeting already has processing work in progress.") }
         if let reason = retryUnavailableReason(job.manifest.type) { throw MeetingManagementError.retryRejected(reason) }
         try retryDispatcher(job.manifest.type, jobID, detail.row.meetingRelativePath, session)
@@ -437,7 +437,7 @@ public final class MeetingManagementService {
             throw MeetingManagementError.retryRejected("Recording Bundle does not match this Meeting.")
         }
         try RecordingBundleFinalizer().validate(bundle)
-        let job = try store.enqueueUnlessActive(manifest: TranscriptionJob.manifest(title: selected.row.title, bundle: bundle, selection: nil, language: language).owned(by: vault.rootURL)) {
+        let job = try store.enqueueUnlessActive(manifest: try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(title: selected.row.title, bundle: bundle, selection: nil, language: language)).owned(by: vault.rootURL)) {
             Self.owns($0, session: session, path: path)
         }
         onReprocessQueued()
@@ -476,6 +476,12 @@ public final class MeetingManagementService {
         let session = Self.fields(text).sessionID
         let allOwned = (try? workspaceJobs().filter { Self.owns($0, session: session, path: path) }) ?? []
         let owned = Self.currentJobs(allOwned)
+        if let workflow = owned.first(where: { $0.manifest.type == MeetingWorkflowJob.type && $0.status != .succeeded && $0.status != .dismissed }) {
+            let presentation = Self.presentation(for: workflow,
+                retryReason: workflow.status == .failed ? retryUnavailableReason(workflow.manifest.type) : nil)
+            return MeetingBrowserDetail(row: row, doorwayText: "", job: presentation,
+                jobs: presentation.map { [$0] } ?? [])
+        }
         let sum = try? vault.readMarkdown(relativePath: dir + "/summary.md")
         let ext = try? vault.readMarkdown(relativePath: dir + "/summary-extraction.json")
         let extraction = ext.flatMap { try? JSONDecoder().decode(MeetingSummaryExtraction.self, from: $0.data) }
@@ -522,7 +528,7 @@ public final class MeetingManagementService {
                 (job.status == .queued || job.status == .running) && !owned.contains(where: { $0.id == job.id })
             }).map { candidate in
                 let reason: String? = candidate.status != .failed ? nil :
-                    (candidate.manifest.type == TranscriptionJob.type || candidate.manifest.type == MeetingSummaryJob.type
+                    (MeetingWorkflowJob.supportedTypes.contains(candidate.manifest.type)
                      ? retryUnavailableReason(candidate.manifest.type) : "This Job type cannot be retried here.")
                 return Self.presentation(for: candidate, retryReason: reason)!
             },

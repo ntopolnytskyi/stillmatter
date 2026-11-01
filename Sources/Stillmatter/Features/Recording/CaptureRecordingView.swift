@@ -206,6 +206,7 @@ final class CaptureRecordingView: NSView {
     private func captureJobs(for snapshot: CaptureSnapshot) -> [JobRecord] {
         guard let captureSessionID = snapshot.recordingBundle?.captureSessionID else { return [] }
         let records = jobRecordsProvider()
+        if let workflow = records.last(where: { $0.manifest.type == MeetingWorkflowJob.type && $0.manifest.metadata["capture_session_id"] == captureSessionID }) { return [workflow] }
         let transcriptionJobs = records.filter {
             $0.manifest.type == TranscriptionJob.type &&
                 $0.manifest.metadata["capture_session_id"] == captureSessionID
@@ -218,6 +219,7 @@ final class CaptureRecordingView: NSView {
     }
 
     private func processingRows(for jobs: [JobRecord]) -> [(String, String, GraphiteFocusStatusMeaning)] {
+        if let workflow = jobs.first(where: { $0.manifest.type == MeetingWorkflowJob.type }) { return [jobRow(title: "Meeting", job: workflow)] }
         let transcription = jobs.first { $0.manifest.type == TranscriptionJob.type }
         let summary = jobs.first { $0.manifest.type == MeetingSummaryJob.type }
         var rows: [(String, String, GraphiteFocusStatusMeaning)] = []
