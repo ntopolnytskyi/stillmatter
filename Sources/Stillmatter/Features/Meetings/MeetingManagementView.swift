@@ -1291,10 +1291,14 @@ final class MeetingManagementView: NSView {
             self.meetingsModel.detail.discardDrafts()
             self.modalBaseVersion = nil
             self.modalField = nil
-            self.textEditPanel.finish()
+            self.finishTextEditing()
         }, onReload: { [weak self] in
             self?.reloadModalText(field, meetingID: meetingID)
         })
+    }
+
+    private func finishTextEditing() {
+        textEditPanel.finish()
     }
 
     /// Refresh a clean editor immediately; a dirty editor keeps its original base and draft.
@@ -1326,7 +1330,7 @@ final class MeetingManagementView: NSView {
             meetingsModel.detail.discardDrafts()
             modalBaseVersion = nil
             modalField = nil
-            textEditPanel.finish()
+            finishTextEditing()
             return
         }
         textEditPanel.setSaving(true)
@@ -1336,7 +1340,7 @@ final class MeetingManagementView: NSView {
             case .success:
                 self.modalBaseVersion = nil
                 self.modalField = nil
-                self.textEditPanel.finish()
+                self.finishTextEditing()
                 self.status.stringValue = field == .summary ? "Summary saved." : "Notes saved."
             case let .failure(error):
                 let conflict: Bool
