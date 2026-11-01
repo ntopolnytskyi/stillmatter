@@ -14,30 +14,42 @@ class ProbeFailure(RuntimeError):
     pass
 
 
-def run_child(command, cwd, env=None, timeout=15):
+def run_child(command, cwd, env=None, timeout=15, max_record_bytes=1024 * 1024,
+              max_output_bytes=4 * 1024 * 1024):
+    """Observe one isolated prompt; bounds apply to stdout and stderr together."""
     records, buffer = [], b''
-    with tempfile.TemporaryFile() as errors:
-        child = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE,
-                                 stdout=subprocess.PIPE, stderr=errors)
-        try:
-            selector = selectors.DefaultSelector()
-            selector.register(child.stdout, selectors.EVENT_READ)
-            child.stdin.write(json.dumps({'id': 'probe-1', 'type': 'prompt',
-                                          'message': 'Return only JSON: {"probe":"synthetic"}.'}).encode() + b'\n')
-            child.stdin.flush()
-            deadline = time.monotonic() + timeout
-            settled = False
-            while time.monotonic() < deadline and not settled:
-                if not selector.select(max(0, deadline - time.monotonic())):
-                    break
-                chunk = os.read(child.stdout.fileno(), 65536)
+    output_bytes = 0
+    settled = handled = False
+    child = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    selector = selectors.DefaultSelector()
+    try:
+        selector.register(child.stdout, selectors.EVENT_READ)
+        selector.register(child.stderr, selectors.EVENT_READ)
+        child.stdin.write(json.dumps({'id': 'probe-1', 'type': 'prompt',
+                                      'message': 'Return only JSON: {"probe":"synthetic"}.'}).encode() + b'\n')
+        child.stdin.flush()
+        deadline = time.monotonic() + timeout
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ProbeFailure('Child exceeded process deadline')
+            ready = selector.select(remaining)
+            for key, _ in ready:
+                chunk = os.read(key.fd, 65536)
                 if not chunk:
-                    break
+                    selector.unregister(key.fileobj)
+                    continue
+                output_bytes += len(chunk)
+                if output_bytes > max_output_bytes:
+                    raise ProbeFailure('Child exceeded output byte limit')
+                if key.fileobj is child.stderr:
+                    continue  # Drain separately; diagnostics are never protocol or artifact text.
                 buffer += chunk
-                if len(buffer) > 1024 * 1024:
-                    raise ProbeFailure('Oversized protocol record')
                 while b'\n' in buffer:
                     line, buffer = buffer.split(b'\n', 1)
+                    if len(line) > max_record_bytes:
+                        raise ProbeFailure('Oversized protocol record')
                     try:
                         record = json.loads(line.rstrip(b'\r'))
                     except (ValueError, UnicodeDecodeError) as error:
@@ -47,43 +59,59 @@ def run_child(command, cwd, env=None, timeout=15):
                     records.append(record)
                     if record.get('type') == 'agent_settled':
                         settled = True
+                    if (record.get('type') == 'response' and record.get('id') == 'probe-1'
+                            and record.get('command') == 'prompt' and record.get('success') is True
+                            and isinstance(record.get('data'), dict)
+                            and record['data'].get('disposition') == 'handled'):
+                        handled = True
+                    if (settled or handled) and not child.stdin.closed:
+                        child.stdin.close()
+                if len(buffer) > max_record_bytes:
+                    raise ProbeFailure('Oversized protocol record')
+        if buffer:
+            raise ProbeFailure('Truncated JSONL record at EOF')
+        if not child.stdin.closed:
             child.stdin.close()
-            try:
-                status = child.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait()
-                raise ProbeFailure('Child did not stop after stdin closed')
-            if status:
-                raise ProbeFailure(f'Child exited with status {status}')
-            if not settled:
-                raise ProbeFailure('No agent_settled before deadline/EOF; acknowledgement is not completion')
-            acknowledgement = next((r for r in records if r.get('type') == 'response'
-                                    and r.get('id') == 'probe-1' and r.get('command') == 'prompt'), None)
-            if not acknowledgement or not acknowledgement.get('success'):
-                raise ProbeFailure('Prompt not acknowledged successfully')
-            messages = [r['message'] for r in records if r.get('type') == 'message_end'
-                        and r.get('message', {}).get('role') == 'assistant']
-            final = messages[-1] if messages else {}
-            if final.get('stopReason') in ('error', 'aborted'):
-                return {'accepted': True, 'settled': True, 'validArtifact': False,
-                        'providerFailed': True, 'events': [r.get('type') for r in records]}
-            content = ''.join(c.get('text', '') for c in final.get('content', []) if c.get('type') == 'text')
-            try:
-                artifact = json.loads(content)
-            except ValueError:
-                artifact = None
-            return {'accepted': True, 'settled': True,
-                    'validArtifact': artifact == {'probe': 'synthetic'},
-                    'providerFailed': False, 'events': [r.get('type') for r in records]}
-        finally:
-            selector.close()
-            if child.poll() is None:
-                child.kill()
-                child.wait()
-            if not child.stdin.closed:
-                child.stdin.close()
-            child.stdout.close()
+        try:
+            status = child.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as error:
+            raise ProbeFailure('Child exceeded process deadline') from error
+        if status:
+            raise ProbeFailure(f'Child exited with status {status}')
+        acknowledgement = next((r for r in records if r.get('type') == 'response'
+                                and r.get('id') == 'probe-1' and r.get('command') == 'prompt'), None)
+        if not acknowledgement or acknowledgement.get('success') is not True:
+            raise ProbeFailure('Prompt not acknowledged successfully')
+        if not settled and not handled:
+            raise ProbeFailure('No agent_settled before deadline/EOF; acknowledgement is not completion')
+        messages = [r['message'] for r in records if r.get('type') == 'message_end'
+                    and isinstance(r.get('message'), dict) and r['message'].get('role') == 'assistant']
+        final = messages[-1] if messages else {}
+        aborted = any(r.get('aborted') is True for r in records if r.get('type') == 'agent_settled')
+        provider_failed = final.get('stopReason') in ('error', 'aborted')
+        content = final.get('content', [])
+        if not isinstance(content, list) or any(not isinstance(c, dict) for c in content):
+            raise ProbeFailure('Malformed assistant content')
+        texts = [c.get('text', '') for c in content if c.get('type') == 'text']
+        if any(not isinstance(value, str) for value in texts):
+            raise ProbeFailure('Malformed assistant text')
+        try:
+            artifact = json.loads(''.join(texts))
+        except ValueError:
+            artifact = None
+        return {'accepted': True, 'settled': settled, 'handled': handled, 'aborted': aborted,
+                'validArtifact': (settled and not handled and not aborted and not provider_failed
+                                  and artifact == {'probe': 'synthetic'}),
+                'providerFailed': provider_failed, 'events': [r.get('type') for r in records]}
+    finally:
+        selector.close()
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        if not child.stdin.closed:
+            child.stdin.close()
+        child.stdout.close()
+        child.stderr.close()
 
 
 def actual_pi_unavailable_probe(pi):
