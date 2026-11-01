@@ -543,9 +543,10 @@ final class MeetingFeatureStateTests: XCTestCase {
         mutations.completeNext(.failure(WorkspaceVaultError.conflict(relativePath: "Meetings/canonical/my-notes.md",
             expected: version("notes-1"), actual: version("notes-2"))))
         await settleMainActor()
-        model.detail.reloadDraftsAfterConfirmation()
+        model.detail.discardDrafts()
         XCTAssertEqual(model.detail.notesDraft?.editedText, "External notes")
         XCTAssertEqual(model.detail.notesDraft?.baseVersion, version("notes-2"))
+        XCTAssertFalse(model.detail.notesDraft?.isEditing ?? true)
         XCTAssertEqual(model.detail.summaryDraft?.baseVersion, version("summary"))
         model.detail.updateNotesDraft("Saved notes")
         model.detail.saveNotes()

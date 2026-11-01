@@ -271,8 +271,9 @@ public final class MeetingDetailModel: ObservableObject {
     public func updateSummaryDraft(_ text: String) { summaryDraft?.update(text) }
 
     public func discardDrafts() {
-        notesDraft?.discard()
-        summaryDraft?.discard()
+        // Explicit discard adopts the current canonical content, including an external
+        // version that arrived while the old local draft was dirty.
+        reloadDraftsAfterConfirmation()
     }
 
     public func reloadDraftsAfterConfirmation() {

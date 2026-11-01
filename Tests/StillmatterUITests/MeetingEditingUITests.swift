@@ -73,6 +73,28 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(try notesText(), external)
     }
 
+    func testCancelConflictingDraftReopensLatestNotesAndSavesWithoutAFalseConflict() throws {
+        try seedMeeting()
+        openFixtureMeeting()
+        openEditor("notes")
+        replaceEditorText("Discard this local draft")
+        let external = try notesText().replacingOccurrences(of: "Original notes.", with: "Latest external notes.")
+        try external.write(to: notesURL, atomically: true, encoding: .utf8)
+        app.buttons["meeting-text-save"].click()
+        XCTAssertTrue(app.buttons["meeting-text-reload"].waitForExistence(timeout: 10))
+        XCTAssertEqual(editor.value as? String, "Discard this local draft")
+        XCTAssertTrue(app.staticTexts["Latest external notes."].waitForExistence(timeout: 10), "The refreshed canonical detail must be available before discarding the old draft")
+        editor.typeKey(.escape, modifierFlags: [])
+        waitForEditorToClose()
+        XCTAssertEqual(try notesText(), external)
+        openEditor("notes")
+        XCTAssertEqual(editor.value as? String, "Latest external notes.")
+        replaceEditorText("Fresh edit after cancel")
+        editor.typeKey(.return, modifierFlags: .command)
+        waitForEditorToClose()
+        XCTAssertTrue(try notesText().contains("Fresh edit after cancel"))
+    }
+
     func testCleanOpenNotesEditorFollowsExternalChangesWithoutAConflict() throws {
         try seedMeeting()
         openFixtureMeeting()
