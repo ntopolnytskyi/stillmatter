@@ -1,11 +1,13 @@
 import array
+import hashlib
 import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import wave
 
-from speaker_probe import cosine, load_pcm, run, score, synthetic_reference
+from speaker_probe import cosine, load_pcm, prepare_held_out, run, score, synthetic_reference
 
 
 class SpeakerMetricTests(unittest.TestCase):
@@ -71,6 +73,50 @@ class SpeakerMetricTests(unittest.TestCase):
             missing = Path(temporary) / 'missing.onnx'
             with self.assertRaisesRegex(ValueError, 'Local model file unavailable'):
                 run(Path(temporary), missing, missing, Path(temporary))
+
+    def test_retained_held_out_bytes_and_metadata_are_used_without_tts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / 'output'
+            output.mkdir()
+            original = b'exact fixture bytes'
+            (root / 'voice.wav').write_bytes(original)
+            specification = {'id': 'voice', 'voice': 'Test', 'text': 'Independent utterance',
+                             'sha256': hashlib.sha256(original).hexdigest()}
+            with patch('speaker_probe.HELD_OUT', [specification]), patch('speaker_probe.subprocess.run') as child:
+                self.assertEqual(prepare_held_out(root, output), [specification])
+                child.assert_not_called()
+            self.assertEqual((output / 'voice.wav').read_bytes(), original)
+
+    def test_missing_or_corrupted_held_out_bytes_fail_without_regeneration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / 'output'
+            output.mkdir()
+            specification = {'id': 'voice', 'voice': 'Test', 'text': 'Independent utterance',
+                             'sha256': hashlib.sha256(b'expected bytes').hexdigest()}
+            with patch('speaker_probe.HELD_OUT', [specification]), patch('speaker_probe.subprocess.run') as child:
+                with self.assertRaisesRegex(ValueError, 'Missing retained'):
+                    prepare_held_out(root, output)
+                (root / 'voice.wav').write_bytes(b'corrupted bytes')
+                with self.assertRaisesRegex(ValueError, 'SHA-256 mismatch'):
+                    prepare_held_out(root, output)
+                child.assert_not_called()
+            self.assertFalse((output / 'voice.wav').exists())
+
+    def test_explicit_generation_records_fresh_bytes_without_claiming_retained_hash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            specification = {'id': 'voice', 'voice': 'Test', 'text': 'Independent utterance',
+                             'sha256': 'retained-hash'}
+            def generate(command, **kwargs):
+                if command[0] == 'ffmpeg':
+                    Path(command[-1]).write_bytes(b'fresh TTS bytes')
+            with patch('speaker_probe.HELD_OUT', [specification]), patch('speaker_probe.subprocess.run', side_effect=generate) as child:
+                generated = prepare_held_out(root / 'absent-retained-directory', root, generate=True)
+                self.assertEqual(child.call_count, 2)
+                self.assertEqual(generated[0]['sha256'], hashlib.sha256(b'fresh TTS bytes').hexdigest())
+                self.assertEqual(generated[0]['text'], specification['text'])
 
 
 if __name__ == '__main__':

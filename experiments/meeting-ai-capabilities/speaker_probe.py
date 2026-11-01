@@ -13,6 +13,7 @@ import math
 from pathlib import Path
 import platform
 import resource
+import shutil
 import subprocess
 import sys
 import time
@@ -20,6 +21,17 @@ import wave
 
 RATE = 16000
 FRAME = 160
+HELD_OUT = [
+    {'id': 'same-samantha', 'voice': 'Samantha',
+     'text': 'Please check the calendar. The budget discussion begins tomorrow morning.',
+     'sha256': 'bd33b37d9f7d60c54663f9a2f9a88615accb2f0af11ef9cb1c93719128500705'},
+    {'id': 'same-lesya', 'voice': 'Lesya',
+     'text': 'Сьогодні ми перевіримо план. Наступна розмова відбудеться завтра вранці.',
+     'sha256': 'd4aa112cb193be7b106a827b69adfe13c1737e8ac1d67cde86439c24da092fcc'},
+    {'id': 'unknown-daniel', 'voice': 'Daniel',
+     'text': 'We need another review before the release. Please bring the latest report.',
+     'sha256': '4b329ebacf0a2ded4b6d060d7bba8cab641dde62ccb160a886e0823cbb990092'},
+]
 
 
 def load_pcm(path):
@@ -103,16 +115,24 @@ def cosine(first, second):
     return sum(a * b for a, b in zip(first, second)) / norm
 
 
-def generate_held_out(output):
-    fixtures = [('same-samantha', 'Samantha', 'Please check the calendar. The budget discussion begins tomorrow morning.'),
-                ('same-lesya', 'Lesya', 'Сьогодні ми перевіримо план. Наступна розмова відбудеться завтра вранці.'),
-                ('unknown-daniel', 'Daniel', 'We need another review before the release. Please bring the latest report.')]
+def prepare_held_out(fixtures, output, generate=False):
+    """Retained exact bytes by default; fresh system TTS requires an explicit opt-in."""
     records = []
-    for name, voice, text in fixtures:
+    for specification in HELD_OUT:
+        name, voice, text = (specification[key] for key in ('id', 'voice', 'text'))
         aiff, wav = output / (name + '.aiff'), output / (name + '.wav')
-        subprocess.run(['/usr/bin/say', '-v', voice, '-o', str(aiff), text], check=True, timeout=30)
-        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(aiff), '-ar', str(RATE), '-ac', '1', str(wav)],
-                       check=True, timeout=15)
+        if generate:
+            subprocess.run(['/usr/bin/say', '-v', voice, '-o', str(aiff), text], check=True, timeout=30)
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(aiff), '-ar', str(RATE), '-ac', '1', str(wav)],
+                           check=True, timeout=15)
+        else:
+            retained = fixtures / (name + '.wav')
+            if not retained.is_file():
+                raise ValueError('Missing retained held-out fixture: ' + str(retained))
+            if sha(retained) != specification['sha256']:
+                raise ValueError('Retained held-out fixture SHA-256 mismatch: ' + name)
+            if retained.resolve() != wav.resolve():
+                shutil.copyfile(retained, wav)
         records.append({'id': name, 'voice': voice, 'text': text, 'sha256': sha(wav)})
     return records
 
@@ -121,7 +141,7 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(fixtures, segmentation, embedding, output):
+def run(fixtures, segmentation, embedding, output, generate_held_out=False):
     # Model paths must exist before importing a runtime; no downloader/fallback.
     for path in (segmentation, embedding):
         if not path.is_file():
@@ -129,6 +149,7 @@ def run(fixtures, segmentation, embedding, output):
     import numpy as np
     import sherpa_onnx as sherpa
     output.mkdir(parents=True, exist_ok=True)
+    held_out = prepare_held_out(fixtures, output, generate=generate_held_out)
     pcm = {name: load_pcm(fixtures / (name + '.wav'))
            for name in ('english', 'ukrainian', 'mixed', 'silence', 'overlap')}
     if pcm['mixed'] != pcm['english'] + pcm['ukrainian']:
@@ -185,7 +206,6 @@ def run(fixtures, segmentation, embedding, output):
             report['diarization'].append(result)
             print(json.dumps({'fixture': name, 'mode': mode, 'score': result['score']}), flush=True)
             del model
-    held_out = generate_held_out(output)
     extractor = sherpa.SpeakerEmbeddingExtractor(sherpa.SpeakerEmbeddingExtractorConfig(
         model=str(embedding), num_threads=2, provider='cpu'))
     vectors, voice_runs = {}, []
@@ -218,6 +238,7 @@ def run(fixtures, segmentation, embedding, output):
         comparisons.append({'first': first, 'second': second, 'relation': relation,
                             'cosine': cosine(vectors[first], vectors[second]) if first in vectors and second in vectors else None})
     report['voiceMatching'] = {'heldOutGeneration': held_out, 'runs': voice_runs, 'comparisons': comparisons,
+                               'heldOutSource': 'fresh-system-tts' if generate_held_out else 'retained-exact-bytes',
                                'thresholdSelected': None,
                                'limitations': 'No vectors persisted. Synthetic voices and languages confound identity; not a held-out human-speaker precision evaluation. Runtime readiness alone is not a clean-speech quality gate.'}
     report['peakRSSBytes'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -231,5 +252,7 @@ if __name__ == '__main__':
     parser.add_argument('--segmentation', type=Path, required=True)
     parser.add_argument('--embedding', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--generate-held-out', action='store_true',
+                        help='Generate fresh macOS TTS instead of using hash-checked retained held-out WAVs')
     args = parser.parse_args()
-    run(args.fixtures, args.segmentation, args.embedding, args.output)
+    run(args.fixtures, args.segmentation, args.embedding, args.output, args.generate_held_out)
