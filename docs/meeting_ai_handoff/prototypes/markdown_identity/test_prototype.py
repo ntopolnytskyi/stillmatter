@@ -191,6 +191,56 @@ class CanonicalIdentityTests(WorkspaceCase):
         self.assertIn('Unsaved local task #local', record['draft'])
         self.assertIn('External prose', reopened.catalog()[item_id][0].read_text())
 
+    def test_markdown_unicode_separators_and_crlf_survive_adoption_and_edit(self):
+        raw = 'Проза\u2028рядок\u2029\r\n- [ ] Task\u2028continued\u2029 #робота\r\n'
+        adopted = adopt(raw)
+        self.assertTrue(adopted.startswith('Проза\u2028рядок\u2029\r\n'))
+        self.assertEqual(adopted.count('\r\n'), 2)
+        self.assertEqual(adopt(adopted), adopted)
+        item = parse_items(adopted)[0]
+        self.assertEqual(item['text'], 'Task\u2028continued\u2029 #робота')
+        path = self.write('Meetings/one/my-notes.md', adopted)
+        self.workspace.edit(item['meta']['id'], adopted, marker='x')
+        actual = path.read_bytes().decode('utf-8')
+        self.assertEqual(actual.count('\r\n'), 2)
+        self.assertEqual(parse_items(actual)[0]['text'], item['text'])
+        self.assertEqual(parse_items(actual)[0]['meta']['id'], item['meta']['id'])
+
+    def test_conflict_draft_keeps_base_text_owner_and_state_without_external_merge(self):
+        path = self.write('Meetings/one/my-notes.md', adopt('- [ ] Local base #work\n'))
+        base = path.read_text()
+        item_id = parse_items(base)[0]['meta']['id']
+        self.workspace.edit(item_id, base, text='External task #external', marker='x', owner='person-external')
+        external = path.read_text()
+        with self.assertRaises(Conflict) as raised:
+            self.workspace.edit(item_id, base, text='Unsaved local task #local')
+        record = json.loads(Path(str(raised.exception)).read_text())
+        local = parse_items(record['draft'])[0]
+        self.assertEqual(local['text'], 'Unsaved local task #local')
+        self.assertEqual(local['marker'], ' ')
+        self.assertEqual(local['meta']['owner'], 'me')
+        self.assertEqual(record['external'], external)
+        self.assertEqual(path.read_text(), external)
+
+    def test_external_checkbox_or_file_deletion_preserves_unsaved_draft(self):
+        for delete_file in (False, True):
+            with self.subTest(delete_file=delete_file):
+                relative = 'Meetings/one/my-notes.md'
+                path = self.write(relative, adopt('- [ ] Local base\n'))
+                base = path.read_text()
+                item_id = parse_items(base)[0]['meta']['id']
+                if delete_file:
+                    path.unlink()
+                else:
+                    path.write_text('External removal of checkbox.\n')
+                with self.assertRaises(Conflict) as raised:
+                    self.workspace.edit(item_id, base, text='Unsaved draft', relative_path=relative)
+                record = json.loads(Path(str(raised.exception)).read_text())
+                self.assertEqual(parse_items(record['draft'])[0]['text'], 'Unsaved draft')
+                self.assertEqual(record['base'], base)
+                self.assertEqual(record['external'], None if delete_file else 'External removal of checkbox.\n')
+                self.assertEqual(path.exists(), not delete_file)
+
     def test_read_does_not_invent_ids_or_write_files_and_adoption_keeps_prose(self):
         raw = '  Prose  \n\n* [B] Task\n'
         path = self.write('Meetings/one/my-notes.md', raw)
@@ -286,6 +336,64 @@ class MigrationTests(WorkspaceCase):
         self.assertFalse(journal.visible_new())
         with self.assertRaises(ValueError):
             journal.commit()
+
+    def test_external_source_edits_or_created_output_invalidate_plan_before_prepare(self):
+        self.seed_legacy()
+        for relative in ('Todos/todo.md', 'Meetings/ready/meeting.md',
+                         'Meetings/ready/archive.json', 'Meetings/ready/my-notes.md'):
+            with self.subTest(relative=relative):
+                outputs = plan_legacy(self.root, 'Meetings/ready/meeting.md', [], EXTRACTION)
+                planned = dict(outputs)
+                path = self.root / relative
+                original = path.read_bytes() if path.exists() else b''
+                external = original + b'\nExternal edit after planning\n'
+                path.write_bytes(external)
+                journal = Journal(self.root, self.support)
+                before = {str(file.relative_to(self.root)): file.read_bytes()
+                          for file in self.root.rglob('*') if file.is_file()}
+                with self.assertRaisesRegex(Conflict, 'plan is stale'):
+                    journal.prepare(outputs)
+                self.assertFalse(journal.path.exists())
+                self.assertFalse(journal.visible_new())
+                self.assertEqual(dict(outputs), planned)  # Caller retains complete intended draft.
+                self.assertEqual(before, {str(file.relative_to(self.root)): file.read_bytes()
+                                         for file in self.root.rglob('*') if file.is_file()})
+                if relative == 'Meetings/ready/my-notes.md':
+                    path.unlink()
+                else:
+                    path.write_bytes(original)
+
+    def test_non_output_archive_dependency_change_after_prepare_blocks_commit(self):
+        outputs = self.plan()
+        journal = Journal(self.root, self.support)
+        journal.prepare(outputs)
+        archive = self.root / 'Meetings/ready/archive.json'
+        archive.write_text('{"archived":false}')
+        with self.assertRaisesRegex(Conflict, 'dependency changed'):
+            journal.commit()
+        self.assertFalse(journal.visible_new())
+        self.assertEqual(archive.read_text(), '{"archived":false}')
+        self.assertEqual((self.root / 'Todos/todo.md').read_text(), TODO)
+        self.assertEqual((self.root / 'Meetings/ready/meeting.md').read_text(), DOORWAY)
+
+    def test_crlf_legacy_files_rollback_byte_exact_after_reopen(self):
+        self.seed_legacy()
+        originals = {}
+        for relative in ('Meetings/ready/meeting.md', 'Todos/todo.md'):
+            path = self.root / relative
+            original = path.read_text().replace('\n', '\r\n').encode('utf-8')
+            path.write_bytes(original)
+            originals[relative] = original
+        outputs = plan_legacy(self.root, 'Meetings/ready/meeting.md', [], EXTRACTION)
+        self.assertIn('Залишити мої слова.', outputs['Meetings/ready/my-notes.md'])
+        self.assertEqual(len(parse_items(outputs['Meetings/ready/my-notes.md'])), 2)
+        journal = Journal(self.root, self.support)
+        journal.prepare(outputs)
+        with self.assertRaises(Interrupted):
+            journal.commit(interrupt_after=3)
+        Journal(self.root, self.support).rollback()
+        for relative, original in originals.items():
+            self.assertEqual((self.root / relative).read_bytes(), original)
 
     def test_external_edit_during_partial_migration_blocks_retry_preserving_all_versions(self):
         outputs = self.plan()
