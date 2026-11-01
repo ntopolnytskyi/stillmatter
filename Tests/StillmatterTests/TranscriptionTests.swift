@@ -193,12 +193,13 @@ final class TranscriptionTests: XCTestCase {
                 handedOff.fulfill()
             }
         )
-        let manifest = TranscriptionJob.manifest(
+        let manifest = try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(
             title: "Roadmap",
             bundle: fixture.bundle,
             selection: fixture.selection,
             language: .english
-        )
+        ))
+
         let job = JobRecord(
             id: "transcription-handoff",
             manifest: manifest,

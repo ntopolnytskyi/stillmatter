@@ -354,14 +354,14 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertEqual(bundle.state, .ready)
         XCTAssertEqual(bundle.captureSessionID, session.id)
         XCTAssertTrue(FileManager.default.fileExists(atPath: bundle.bundleFilePath))
-        XCTAssertEqual(job?.manifest.type, "meeting.transcription")
+        XCTAssertEqual(job?.manifest.type, MeetingWorkflowJob.type)
         XCTAssertEqual(job?.manifest.executionClass, .heavy)
-        XCTAssertEqual(job?.manifest.stages.map(\.id), ["transcribe"])
+        XCTAssertEqual(job?.manifest.stages.map(\.id), ["transcribe", MeetingSummaryJob.stageID])
         XCTAssertEqual(
             job?.manifest.sourceArtifacts.first(where: { $0.role == "recording-bundle" })?.relativePath,
             bundle.bundleFilePath
         )
-        XCTAssertEqual(job?.manifest.sourceArtifacts.last?.role, "transcription-system-audio")
+        XCTAssertTrue(job?.manifest.sourceArtifacts.contains(where: { $0.role == "transcription-system-audio" }) == true)
         XCTAssertEqual(job?.manifest.metadata["recording_bundle_path"], bundle.bundleFilePath)
         XCTAssertEqual(job?.manifest.metadata["language"], "uk")
         XCTAssertEqual(Set(job?.manifest.expectedOutputs.map(\.validatorID) ?? []), ["markdown", "json", "webvtt"])

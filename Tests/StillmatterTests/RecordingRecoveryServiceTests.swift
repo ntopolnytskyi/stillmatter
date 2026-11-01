@@ -14,8 +14,8 @@ final class RecordingRecoveryServiceTests: XCTestCase {
 
         XCTAssertEqual(result.bundle.reason, .recovery)
         XCTAssertEqual(result.bundle.state, .ready)
-        XCTAssertEqual(result.job?.manifest.type, "meeting.transcription")
-        XCTAssertEqual(result.job?.manifest.stages.map(\.id), ["transcribe"])
+        XCTAssertEqual(result.job?.manifest.type, MeetingWorkflowJob.type)
+        XCTAssertEqual(result.job?.manifest.stages.map(\.id), [TranscriptionJob.stageID, MeetingSummaryJob.stageID])
         XCTAssertEqual(
             result.job?.manifest.sourceArtifacts.first(where: { $0.role == "recording-bundle" })?.relativePath,
             result.bundle.bundleFilePath

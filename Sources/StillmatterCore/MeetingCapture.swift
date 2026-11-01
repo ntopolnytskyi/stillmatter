@@ -364,12 +364,12 @@ public final class MeetingCaptureService {
             throw TranscriptionError.unsupportedJob("no finalized Recording Bundle is available")
         }
         transcriptionLanguage = language
-        let job = try jobStore.enqueue(manifest: TranscriptionJob.manifest(
+        let job = try jobStore.enqueue(manifest: try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(
             title: session?.title ?? "meeting",
             bundle: bundle,
             selection: transcriptionAudio,
             language: language
-        ).owned(by: vault.rootURL))
+        )).owned(by: vault.rootURL))
         processingStatus.append("Transcript regeneration queued in \(language.displayName)")
         notifyObservers()
         return job
@@ -492,12 +492,12 @@ public final class MeetingCaptureService {
     private func enqueueProcessingJob(for session: MeetingCaptureSession) throws -> JobRecord? {
         guard let jobStore = jobStore else { return nil }
         if let bundle = recordingBundle {
-            let manifest = TranscriptionJob.manifest(
+            let manifest = try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(
                 title: session.title,
                 bundle: bundle,
                 selection: transcriptionAudio,
                 language: transcriptionLanguage
-            )
+            ))
             return try jobStore.enqueue(manifest: manifest.owned(by: vault.rootURL))
         }
         let manifest = JobManifest(

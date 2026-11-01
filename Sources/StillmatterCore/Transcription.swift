@@ -482,7 +482,7 @@ public final class TranscriptionJobExecutor: JobExecuting {
     ) {
         queue.async { [pipeline, decoder, onTranscriptGenerated] in
             do {
-                guard job.manifest.type == TranscriptionJob.type, stage.id == TranscriptionJob.stageID else {
+                guard (job.manifest.type == TranscriptionJob.type || job.manifest.type == MeetingWorkflowJob.type), stage.id == TranscriptionJob.stageID else {
                     throw TranscriptionError.unsupportedJob("\(job.manifest.type)/\(stage.id)")
                 }
                 guard let bundlePath = job.manifest.metadata["recording_bundle_path"], !bundlePath.isEmpty else {
