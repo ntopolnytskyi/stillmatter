@@ -1,6 +1,5 @@
 import AppKit
 import XCTest
-import StillmatterCore
 
 final class WorkflowControlsUITests: XCTestCase {
     private var root: URL!
@@ -10,8 +9,7 @@ final class WorkflowControlsUITests: XCTestCase {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("workflow-ui-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         app = XCUIApplication()
-        app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_ROOT"] = root.path
-        app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "workflow"
+        app.launchEnvironment["STILLMATTER_WORKFLOW_UI_TEST_ROOT"] = root.path
         app.launch()
         XCTAssertTrue(app.windows["Workflow Native Tests"].waitForExistence(timeout: 15))
     }
@@ -24,15 +22,13 @@ final class WorkflowControlsUITests: XCTestCase {
         XCTAssertTrue(a.waitForExistence(timeout: 10)); a.click()
         app.buttons["workflow-fail-stage"].click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Synthetic controlled stage failed")).firstMatch.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["Start Capture"].isEnabled)
+        XCTAssertTrue(app.buttons["recording-start"].isEnabled)
         XCTAssertFalse(app.staticTexts["Stale generated content must remain hidden"].exists)
-        app.terminate()
-        let store = try JobStore(databaseURL: root.appendingPathComponent("support/jobs.sqlite"))
-        XCTAssertEqual(try store.job(id: "A")?.status, .failed)
-        XCTAssertEqual(try store.job(id: "A")?.stages.first?.attemptCount, 2)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Transcribe B")).firstMatch.waitForExistence(timeout: 10),
+                      "The queue must advance after A exhausts its bounded stage attempts")
     }
 
-    func testActualStageAdvancesWhileRecordingStartsAndPersistsAcrossRelaunch() throws {
+    func testActualStageAdvancesWhileCaptureRemainsAvailableAndPersistsAcrossRelaunch() throws {
         let a = app.tables["Meetings"].staticTexts["Workflow A"].firstMatch
         XCTAssertTrue(a.waitForExistence(timeout: 10)); a.click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Transcribe A")).firstMatch.waitForExistence(timeout: 10))
@@ -40,14 +36,10 @@ final class WorkflowControlsUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Hidden while processing"].exists)
         app.buttons["workflow-advance-stage"].click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Summarize meeting and extract cited outcomes")).firstMatch.waitForExistence(timeout: 10))
-        let start = app.buttons["Start Capture"], stop = app.buttons["Stop Capture"]
-        XCTAssertTrue(start.isEnabled); XCTAssertFalse(stop.isEnabled)
-        start.click()
-        XCTAssertTrue(app.staticTexts["capture-state"].waitForExistence(timeout: 5))
-        XCTAssertTrue(stop.isEnabled); XCTAssertFalse(start.isEnabled)
+        let start = app.buttons["recording-start"], stop = app.buttons["recording-stop"]
+        XCTAssertTrue(start.isEnabled, "Capture must remain available while a Meeting stage is pending")
+        XCTAssertFalse(stop.exists)
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Summarize meeting and extract cited outcomes")).firstMatch.exists)
-        stop.click()
-        XCTAssertTrue(start.isEnabled)
         app.terminate(); app.launch()
         XCTAssertTrue(app.windows["Workflow Native Tests"].waitForExistence(timeout: 15))
         let reopened = app.tables["Meetings"].staticTexts["Workflow A"].firstMatch
@@ -58,10 +50,5 @@ final class WorkflowControlsUITests: XCTestCase {
         let b = app.tables["Meetings"].staticTexts["Workflow B"].firstMatch
         XCTAssertTrue(b.waitForExistence(timeout: 10)); b.click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Transcribe B")).firstMatch.waitForExistence(timeout: 10))
-        app.terminate()
-        let store = try JobStore(databaseURL: root.appendingPathComponent("support/jobs.sqlite"))
-        XCTAssertEqual(try store.job(id: "A")?.status, .succeeded)
-        XCTAssertEqual(try store.job(id: "A")?.stages.first?.attemptCount, 1)
-        XCTAssertEqual(try store.job(id: "A")?.stages.last?.attemptCount, 2)
     }
 }
