@@ -34,6 +34,12 @@ HELD_OUT = [
 ]
 
 
+def peak_rss_bytes():
+    """Normalize getrusage's Darwin bytes and Linux KiB to bytes."""
+    measured = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return measured if platform.system() == 'Darwin' else measured * 1024
+
+
 def load_pcm(path):
     with wave.open(str(path), 'rb') as source:
         if (source.getnchannels(), source.getsampwidth(), source.getframerate()) != (1, 2, RATE):
@@ -202,7 +208,7 @@ def run(fixtures, segmentation, embedding, output, generate_held_out=False):
                       'realTimeFactor': elapsed / duration, 'segments': segments,
                       'maxEndBeyondInputSeconds': max([0] + [row['end'] - duration for row in segments]),
                       'score': score(reference, segments, duration),
-                      'peakRSSBytes': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}
+                      'peakRSSBytes': peak_rss_bytes()}
             report['diarization'].append(result)
             print(json.dumps({'fixture': name, 'mode': mode, 'score': result['score']}), flush=True)
             del model
@@ -241,7 +247,7 @@ def run(fixtures, segmentation, embedding, output, generate_held_out=False):
                                'heldOutSource': 'fresh-system-tts' if generate_held_out else 'retained-exact-bytes',
                                'thresholdSelected': None,
                                'limitations': 'No vectors persisted. Synthetic voices and languages confound identity; not a held-out human-speaker precision evaluation. Runtime readiness alone is not a clean-speech quality gate.'}
-    report['peakRSSBytes'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    report['peakRSSBytes'] = peak_rss_bytes()
     (output / 'speaker-results.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     return report
 

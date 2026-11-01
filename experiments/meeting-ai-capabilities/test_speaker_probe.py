@@ -2,15 +2,23 @@ import array
 import hashlib
 import math
 from pathlib import Path
+import resource
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import wave
 
-from speaker_probe import cosine, load_pcm, prepare_held_out, run, score, synthetic_reference
+from speaker_probe import cosine, load_pcm, peak_rss_bytes, prepare_held_out, run, score, synthetic_reference
 
 
 class SpeakerMetricTests(unittest.TestCase):
+    def test_peak_rss_normalizes_darwin_bytes_and_linux_kib(self):
+        for system, expected in (('Darwin', 1234), ('Linux', 1234 * 1024)):
+            with self.subTest(system=system), patch('speaker_probe.platform.system', return_value=system), \
+                    patch('speaker_probe.resource.getrusage', return_value=Mock(ru_maxrss=1234)) as measured:
+                self.assertEqual(peak_rss_bytes(), expected)
+                measured.assert_called_once_with(resource.RUSAGE_SELF)
+
     def test_anonymous_mapping_does_not_count_label_permutation_as_error(self):
         ref = [{'a'}] * 100 + [{'b'}] * 100
         measured = score(ref, [{'start': 0, 'end': 1, 'speaker': 12},
