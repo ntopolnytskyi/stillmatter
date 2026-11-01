@@ -83,6 +83,7 @@ def evaluate(model, tokenizer_path, fixtures):
     count = len(dataset['passages'])
     scores = vectors[count:] @ vectors[:count].T
     elapsed = time.monotonic() - start
+    cpu_elapsed = time.process_time() - cpu_start
     report = score_rankings(dataset['passages'], dataset['queries'], scores.tolist())
     report.update({'kind': 'actual-local-inference-synthetic-smoke-only',
                    'model': 'intfloat/multilingual-e5-small FP32 ONNX',
@@ -94,7 +95,7 @@ def evaluate(model, tokenizer_path, fixtures):
                    'settings': {'provider': 'CPUExecutionProvider', 'threads': 4, 'dimensions': int(vectors.shape[1]),
                                 'pooling': 'attention-masked mean then L2', 'maxFixtureTokens': max(len(e.ids) for e in encoded)},
                    'modelLoadSeconds': loaded, 'inferenceSeconds': elapsed,
-                   'processCPUSeconds': time.process_time() - cpu_start,
+                   'processCPUSeconds': cpu_elapsed,
                    'peakRSSBytes': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if platform.system() == 'Darwin' else 1024),
                    'limitations': 'No archive/edit/purge/delete product integration tested. No long-document chunker or relevance threshold validated. No vectors retained.'})
     return report

@@ -114,3 +114,29 @@ regenerating audio. Add `--generate-held-out` to explicitly create fresh Samanth
 Lesya and Daniel utterances using installed macOS voices and `ffmpeg`; record the
 new hashes because voice synthesis can vary by OS version. No voice download is
 performed. The retained source texts/voice names are recorded in the speaker JSON.
+
+Actual Pi RPC analysis through an offline CPU llama.cpp server bound to loopback:
+
+```sh
+python3 experiments/meeting-ai-capabilities/analysis_probe.py \
+  --model /private/tmp/stillmatter-meeting-ai-03-models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  --output /private/tmp/stillmatter-meeting-ai-03-analysis-repeat
+```
+
+Run where local loopback binding is permitted; a sandbox bind denial is not a
+model-quality result. The runner launches/stops its own server and uses isolated
+Pi configuration for each synthetic prompt. It records a protocol sentinel,
+grounded mixed-language outcomes, an empty Transcript and quoted instructions.
+The final report preserves raw outputs, exact prompts, settings, model hashes,
+installed Pi/source identities, completion events, wall time and child high-water
+RSS. It cannot establish general English fluency or grounding from substring
+checks. The evaluated tiny model failed the grounded and quoted-instruction
+fixtures; do not use it as a supported production-analysis configuration.
+
+The corrected run declares an 8,192-token context. An initial 4,096-token run
+was limited to one output token by installed Pi's 4,096-token context-safety
+reserve; its failed report is retained separately. Compaction is disabled in the
+bounded research run. Product adapters must budget the entire system/context/output
+and process full Meeting evidence; these settings do not authorize truncation.
+See the [current capability contract](../../docs/meeting_ai_handoff/local-capability-contract.md)
+for measured failures, downstream constraints, and unexecuted hardware/human lanes.

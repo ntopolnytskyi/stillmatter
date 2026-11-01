@@ -279,9 +279,9 @@
     "pooling": "attention-masked mean then L2",
     "maxFixtureTokens": 22
   },
-  "modelLoadSeconds": 1.8108566789887846,
-  "inferenceSeconds": 0.08194199699210003,
-  "processCPUSeconds": 2.14065,
-  "peakRSSBytes": 1734410240,
+  "modelLoadSeconds": 1.0910831110086292,
+  "inferenceSeconds": 0.050592496001627296,
+  "processCPUSeconds": 0.1982269999999997,
+  "peakRSSBytes": 1743192064,
   "limitations": "No archive/edit/purge/delete product integration tested. No long-document chunker or relevance threshold validated. No vectors retained."
 }
