@@ -47,8 +47,8 @@ public struct MeetingCitation: Equatable {
 public struct MeetingCitedOutcome: Equatable { public let text: String; public let citations: [MeetingCitation]
     public init(text: String, citations: [MeetingCitation]) { self.text = text; self.citations = citations }
 }
-public struct MeetingActionItem: Equatable { public let id: String; public let text: String; public let citations: [MeetingCitation]; public let reviewState: ProposalReviewState; public let referenceOnly: Bool
-    public init(id: String, text: String, citations: [MeetingCitation], reviewState: ProposalReviewState = .referenceOnly, referenceOnly: Bool = false) { self.id=id; self.text=text; self.citations=citations; self.reviewState=reviewState; self.referenceOnly=referenceOnly }
+public struct MeetingActionItem: Equatable { public let id: String; public let text: String; public let citations: [MeetingCitation]; public let reviewState: ProposalReviewState; public let referenceOnly: Bool; public let completionStatus: TodoStatus?
+    public init(id: String, text: String, citations: [MeetingCitation], reviewState: ProposalReviewState = .referenceOnly, referenceOnly: Bool = false, completionStatus: TodoStatus? = nil) { self.completionStatus=completionStatus; self.id=id; self.text=text; self.citations=citations; self.reviewState=reviewState; self.referenceOnly=referenceOnly }
 }
 public struct MeetingSummarySections: Equatable { public var summary: String; public var decisions: String; public var myActionItems: String; public var otherActionItems: String; public var openQuestions: String
     public init(summary: String = "", decisions: String = "", myActionItems: String = "", otherActionItems: String = "", openQuestions: String = "") { self.summary=summary; self.decisions=decisions; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.openQuestions=openQuestions }
@@ -84,14 +84,15 @@ public struct MeetingPlayback: Equatable {
 }
 public struct MeetingTranscriptSegment: Equatable, Identifiable { public let id: String; public let startSeconds: Double; public let endSeconds: Double; public let track: String; public let speaker: String; public let text: String; public let seekSeconds: Double? }
 public struct MeetingActionDraft: Equatable { public let title: String; public let comment: String; public init(title: String, comment: String) { self.title = title; self.comment = comment } }
-public struct MeetingBrowserDetail: Equatable { public let actionDrafts: [String: MeetingActionDraft]; public let decisions: [MeetingCitedOutcome]; public let openQuestions: [MeetingCitedOutcome]; public let transcript: [MeetingTranscriptSegment]; public let row: MeetingBrowserRow; public let doorwayText: String; public let doorwayVersion: WorkspaceFileVersion?; public let humanNotes: String; public let artifacts: [MeetingArtifact]; public let job: MeetingJobPresentation?; public let jobs: [MeetingJobPresentation]; public let summaryVersion: WorkspaceFileVersion?; public let summary: MeetingSummarySections?; public let extraction: MeetingSummaryExtraction?; public let myActionItems: [MeetingActionItem]; public let otherActionItems: [MeetingActionItem]; public let staleProposals: [ActionItemProposal]; public let playback: MeetingPlayback
-    public init(row: MeetingBrowserRow, doorwayText: String, doorwayVersion: WorkspaceFileVersion? = nil, humanNotes: String = "", artifacts: [MeetingArtifact] = [], job: MeetingJobPresentation? = nil, jobs: [MeetingJobPresentation] = [], summaryVersion: WorkspaceFileVersion? = nil, summary: MeetingSummarySections? = nil, extraction: MeetingSummaryExtraction? = nil, myActionItems: [MeetingActionItem] = [], otherActionItems: [MeetingActionItem] = [], staleProposals: [ActionItemProposal] = [], transcript: [MeetingTranscriptSegment] = [], decisions: [MeetingCitedOutcome] = [], openQuestions: [MeetingCitedOutcome] = [], playback: MeetingPlayback = MeetingPlayback(capability: .unavailable, message: "Recording Bundle unavailable"), actionDrafts: [String: MeetingActionDraft] = [:]) { self.actionDrafts=actionDrafts; self.decisions=decisions; self.openQuestions=openQuestions; self.transcript=transcript; self.playback=playback; self.row=row; self.doorwayText=doorwayText; self.doorwayVersion=doorwayVersion; self.humanNotes=humanNotes; self.artifacts=artifacts; self.job=job; self.jobs=jobs; self.summaryVersion=summaryVersion; self.summary=summary; self.extraction=extraction; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.staleProposals=staleProposals }
+public struct MeetingBrowserDetail: Equatable { public let actionDrafts: [String: MeetingActionDraft]; public let decisions: [MeetingCitedOutcome]; public let openQuestions: [MeetingCitedOutcome]; public let transcript: [MeetingTranscriptSegment]; public let row: MeetingBrowserRow; public let doorwayText: String; public let doorwayVersion: WorkspaceFileVersion?; public let humanNotes: String; public let notesVersion: WorkspaceFileVersion?; public let artifacts: [MeetingArtifact]; public let job: MeetingJobPresentation?; public let jobs: [MeetingJobPresentation]; public let summaryVersion: WorkspaceFileVersion?; public let summary: MeetingSummarySections?; public let extraction: MeetingSummaryExtraction?; public let myActionItems: [MeetingActionItem]; public let otherActionItems: [MeetingActionItem]; public let staleProposals: [ActionItemProposal]; public let playback: MeetingPlayback
+    public init(row: MeetingBrowserRow, doorwayText: String, doorwayVersion: WorkspaceFileVersion? = nil, humanNotes: String = "", notesVersion: WorkspaceFileVersion? = nil, artifacts: [MeetingArtifact] = [], job: MeetingJobPresentation? = nil, jobs: [MeetingJobPresentation] = [], summaryVersion: WorkspaceFileVersion? = nil, summary: MeetingSummarySections? = nil, extraction: MeetingSummaryExtraction? = nil, myActionItems: [MeetingActionItem] = [], otherActionItems: [MeetingActionItem] = [], staleProposals: [ActionItemProposal] = [], transcript: [MeetingTranscriptSegment] = [], decisions: [MeetingCitedOutcome] = [], openQuestions: [MeetingCitedOutcome] = [], playback: MeetingPlayback = MeetingPlayback(capability: .unavailable, message: "Recording Bundle unavailable"), actionDrafts: [String: MeetingActionDraft] = [:]) { self.actionDrafts=actionDrafts; self.decisions=decisions; self.openQuestions=openQuestions; self.transcript=transcript; self.playback=playback; self.row=row; self.doorwayText=doorwayText; self.doorwayVersion=doorwayVersion; self.humanNotes=humanNotes; self.notesVersion=notesVersion ?? doorwayVersion; self.artifacts=artifacts; self.job=job; self.jobs=jobs; self.summaryVersion=summaryVersion; self.summary=summary; self.extraction=extraction; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.staleProposals=staleProposals }
 }
 public enum MeetingManagementError: Error, Equatable, LocalizedError { case unavailable; case malformed(String); case notFound(String); case retryRejected(String)
-    public var errorDescription: String? { if case let .retryRejected(reason) = self { return reason }; return "Meeting processing is unavailable." }
+    public var errorDescription: String? { switch self { case let .retryRejected(reason), let .malformed(reason): return reason; case let .notFound(id): return "Meeting \(id) could not be found. Reload the Meeting list."; case .unavailable: return "Meeting processing is unavailable." } }
 }
 
 public final class MeetingManagementService {
+    private var artifactStore: MeetingArtifactStore { MeetingArtifactStore(vault: vault, inbox: inbox) }
     private let vault: WorkspaceVault; private let jobs: JobStore?; private let inbox: TasksInbox?; private let index: SearchIndex?; private let captureSnapshot: () -> CaptureSnapshot?
     private let enforceWorkspaceOwner: Bool
     private func workspaceJobs() throws -> [JobRecord] {
@@ -116,18 +117,12 @@ public final class MeetingManagementService {
     }
 
     public func reviewAction(id: String, accept: Bool) throws {
-        guard let inbox else { throw MeetingManagementError.unavailable }
+        guard inbox != nil else { throw MeetingManagementError.unavailable }
         let meetingPath = proposalMeetingPath(id: id)
-        let reviewer = ActionItemProposalReviewer(inbox: inbox, todoMutator: TodoItemMutator(vault: vault), workspaceRootURL: enforceWorkspaceOwner ? vault.rootURL : nil)
-        if accept {
-            guard let version = try vault.versionOfMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath) else {
-                throw MeetingManagementError.unavailable
-            }
-            _ = try reviewer.accept(proposalID: id, expectedTodoVersion: version)
-        } else {
-            try reviewer.dismiss(proposalID: id)
-        }
-        if let meetingPath { onMeetingChanged([meetingPath]) }
+        guard let meetingPath else { throw MeetingManagementError.notFound(id) }
+        let detail = try self.detail(for: meetingPath)
+        try artifactStore.review(proposalID: id, accept: accept, meetingPath: meetingPath, meetingID: detail.row.id)
+        onMeetingChanged([meetingPath])
     }
 
     public func list() throws -> [MeetingBrowserRow] { try list(filters: MeetingBrowserFilters()) }
@@ -202,11 +197,60 @@ public final class MeetingManagementService {
     }
     /// Reuses a row from the current browser scan rather than enumerating every Meeting again.
     public func detail(for row: MeetingBrowserRow) throws -> MeetingBrowserDetail {
-        do { let source=try vault.readMarkdown(relativePath: row.meetingRelativePath); return makeDetail(row: row, source: source) } catch let e as MeetingManagementError { throw e } catch { throw MeetingManagementError.unavailable }
+        do { let source=try vault.readMarkdown(relativePath: row.meetingRelativePath); return try makeDetail(row: row, source: source) } catch let e as MeetingManagementError { throw e } catch { throw MeetingManagementError.malformed("Could not load \(row.meetingRelativePath): \(error.localizedDescription). Restore the affected file and Reload Latest.") }
     }
-    public func saveHumanNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { let d=try detail(for:id); let text=Self.replaceNotes(in:d.doorwayText, notes:notes); _=try vault.writeMarkdown(Data(text.utf8), relativePath:d.row.meetingRelativePath, expectedVersion:expectedVersion); try? index?.update(relativePath:d.row.meetingRelativePath); onMeetingChanged([d.row.meetingRelativePath]); return try detail(for:id) }
+    public func saveHumanNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
+        do {
+            let detail = try self.detail(for: id)
+            guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting content is read-only.") }
+            if try legacyWriterIsActive(for: detail.row) {
+                // Capture still appends to the doorway until the live-notes writer is
+                // migrated. Keep this representation authoritative for that session.
+                let updated = Self.replaceNotes(in: detail.doorwayText, notes: notes)
+                do {
+                    _ = try vault.writeMarkdown(Data(updated.utf8), relativePath: detail.row.meetingRelativePath, expectedVersion: expectedVersion)
+                } catch {
+                    try artifactStore.keepConflict(notes, external: Self.notes(from: String(decoding: try vault.readMarkdown(relativePath: detail.row.meetingRelativePath).data, as: UTF8.self)),
+                        meetingID: detail.row.id, path: detail.row.meetingRelativePath)
+                    throw error
+                }
+                try? index?.update(relativePath: detail.row.meetingRelativePath)
+            } else {
+                try artifactStore.saveNotes(notes, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
+                try? index?.update(relativePath: Self.sibling(detail.row.meetingRelativePath, "my-notes.md"))
+            }
+            onMeetingChanged([detail.row.meetingRelativePath])
+            return try self.detail(for: id)
+        } catch {
+            // Preserve a draft even when the newer external source cannot be parsed.
+            if !(error is WorkspaceVaultError) { try artifactStore.keepConflict(notes, external: error.localizedDescription, meetingID: id, path: "My Notes") }
+            throw error
+        }
+    }
     public func saveNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { try saveHumanNotes(notes, for:id, expectedVersion:expectedVersion) }
-    public func saveSummary(_ sections: MeetingSummarySections, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { let d=try detail(for:id); let path=Self.sibling(d.row.meetingRelativePath, "summary.md"); let old=try vault.readMarkdown(relativePath:path); guard old.version == expectedVersion else { throw WorkspaceVaultError.conflict(relativePath:path, expected:expectedVersion, actual:old.version) }; let front=Self.frontmatter(String(data:old.data,encoding:.utf8) ?? ""); let body=Self.renderSummary(sections); _=try vault.writeMarkdown(Data((front+body).utf8), relativePath:path, expectedVersion:expectedVersion); try? index?.update(relativePath:path); onMeetingChanged([path]); return try detail(for:id) }
+    public func saveSummary(_ sections: MeetingSummarySections, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
+        do {
+            let detail = try self.detail(for: id)
+            guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting content is read-only.") }
+            let summaryPath = Self.sibling(detail.row.meetingRelativePath, "summary.md")
+            if try legacyWriterIsActive(for: detail.row) {
+                do {
+                    _ = try vault.writeMarkdown(Data(sections.summary.utf8), relativePath: summaryPath, expectedVersion: expectedVersion)
+                } catch {
+                    try artifactStore.keepConflict(sections.summary, external: detail.summary?.summary ?? "", meetingID: detail.row.id, path: summaryPath)
+                    throw error
+                }
+            } else {
+                try artifactStore.saveSummary(sections, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
+            }
+            try? index?.update(relativePath: summaryPath)
+            onMeetingChanged([detail.row.meetingRelativePath])
+            return try self.detail(for: id)
+        } catch {
+            if !(error is WorkspaceVaultError) { try artifactStore.keepConflict(sections.summary, external: error.localizedDescription, meetingID: id, path: "Summary") }
+            throw error
+        }
+    }
     public func sourceArtifacts(for id: String) throws -> [MeetingArtifact] { try detail(for:id).artifacts }
 
     private struct ArchiveMarker: Codable { let archived: Bool }
@@ -448,7 +492,9 @@ public final class MeetingManagementService {
         guard let inbox else { return nil }
         let proposal: ActionItemProposal?
         do { proposal = try inbox.pendingProposal(id: id) } catch { return nil }
-        guard let sourceRef = proposal?.sourceRef, sourceRef.hasPrefix("[[") else { return nil }
+        guard let sourceRef = proposal?.sourceRef, sourceRef.hasPrefix("[[") else {
+            return (try? allRows().first { id.hasPrefix("meeting-action:\($0.id):") })?.meetingRelativePath
+        }
         let path = String(sourceRef.dropFirst(2)).components(separatedBy: "#").first ?? ""
         guard path.hasPrefix("Meetings/"), !path.isEmpty else { return nil }
         return (path as NSString).deletingLastPathComponent + "/meeting.md"
@@ -465,11 +511,21 @@ public final class MeetingManagementService {
             let duration = bundle.map { max($0.mic.durationSeconds, $0.system?.durationSeconds ?? 0) }
             let actionIDs = extraction?.myActionItems.map { "meeting-action:\(session ?? path):\($0.id)" } ?? []
             let needsReview = actionIDs.contains { (try? inbox?.proposalReviewState(id:$0)) == .pending }
-            rows.append(MeetingBrowserRow(id:session ?? path,title:f.title ?? Self.fallbackTitle(path),startedAt:f.startedAt ?? source?.version.modificationDate,meetingRelativePath:path,captureState:live ? .live : (text == nil ? .unavailable : .stopped),processingState:state,project:f.project,job:Self.presentation(for: owned.first),isArchived:try archived(at:path),durationSeconds:duration,hasRecording:f.bundlePath != nil,hasMyActions:!actionIDs.isEmpty,hasOthersActions:extraction?.otherActionItems.isEmpty == false,needsActionReview:needsReview)) }
+            rows.append(MeetingBrowserRow(id:try artifactStore.identity(at: path) ?? session ?? path,title:f.title ?? Self.fallbackTitle(path),startedAt:f.startedAt ?? source?.version.modificationDate,meetingRelativePath:path,captureState:live ? .live : (text == nil ? .unavailable : .stopped),processingState:state,project:f.project,job:Self.presentation(for: owned.first),isArchived:try archived(at:path),durationSeconds:duration,hasRecording:f.bundlePath != nil,hasMyActions:!actionIDs.isEmpty,hasOthersActions:extraction?.otherActionItems.isEmpty == false,needsActionReview:needsReview)) }
         if let s=captureSnapshot(), let p=s.meetingRelativePath, s.state != .idle && s.state != .failed, !rows.contains(where:{$0.meetingRelativePath==p}) { rows.append(MeetingBrowserRow(id:p,title:s.meetingTitle ?? Self.fallbackTitle(p),startedAt:nil,meetingRelativePath:p,captureState:.live,processingState:.live)) }
         return rows.sorted { if let a=$0.startedAt, let b=$1.startedAt, a != b { return a>b }; if $0.startedAt != nil { return true }; if $1.startedAt != nil { return false }; return $0.meetingRelativePath < $1.meetingRelativePath }
     }
-    private func makeDetail(row: MeetingBrowserRow, source: (data: Data, version: WorkspaceFileVersion)) -> MeetingBrowserDetail {
+    private func legacyWriterIsActive(for row: MeetingBrowserRow) throws -> Bool {
+        guard row.captureState == .live || row.processingState == .processing else { return false }
+        return try artifactStore.identity(at: row.meetingRelativePath) == nil
+    }
+
+    private func makeDetail(row: MeetingBrowserRow, source: (data: Data, version: WorkspaceFileVersion)) throws -> MeetingBrowserDetail {
+        let usesLegacyArtifacts = try legacyWriterIsActive(for: row)
+        let canonical = try usesLegacyArtifacts
+            ? artifactStore.legacyLoaded(meetingPath: row.meetingRelativePath, meetingID: row.id)
+            : artifactStore.load(meetingPath: row.meetingRelativePath, meetingID: row.id)
+        let source = try vault.readMarkdown(relativePath: row.meetingRelativePath)
         let text = String(data: source.data, encoding: .utf8) ?? ""
         let path = row.meetingRelativePath
         let dir = (path as NSString).deletingLastPathComponent
@@ -486,10 +542,8 @@ public final class MeetingManagementService {
         let ext = try? vault.readMarkdown(relativePath: dir + "/summary-extraction.json")
         let extraction = ext.flatMap { try? JSONDecoder().decode(MeetingSummaryExtraction.self, from: $0.data) }
         let playback = resolvePlayback(text: text, path: path, session: session)
-        let transcript = makeTranscriptSegments(readTranscript(path: dir + "/transcript.json", meetingPath: path, session: session), playback: playback)
-        let validExtraction = extraction.flatMap { value in
-            value.schemaVersion == MeetingSummaryExtraction.currentSchemaVersion && value.meeting == path && value.transcript == dir + "/transcript.json" ? value : nil
-        }
+        let transcript = makeTranscriptSegments(canonical.transcript, playback: playback)
+        let validExtraction: MeetingSummaryExtraction? = extraction
         func citations(_ source: [MeetingOutcomeCitation]) -> [MeetingCitation] {
             source.map { citation in
                 let matching = transcript.filter {
@@ -502,7 +556,7 @@ public final class MeetingManagementService {
         }
         let mine = (validExtraction?.myActionItems ?? []).map { item in
             MeetingActionItem(id: item.id, text: item.text, citations: citations(item.citations),
-                              reviewState: (try? inbox?.proposalReviewState(id: "meeting-action:\(row.id):\(item.id)")) ?? nil ?? .referenceOnly)
+                              reviewState: canonical.reviewStates[item.id] ?? .referenceOnly, completionStatus: canonical.completionStates[item.id])
         }
         let other = (validExtraction?.otherActionItems ?? []).map {
             MeetingActionItem(id: $0.id, text: $0.text, citations: citations($0.citations), referenceOnly: true)
@@ -522,7 +576,7 @@ public final class MeetingManagementService {
                 }
             }
         }
-        return MeetingBrowserDetail(row: row, doorwayText: text, doorwayVersion: source.version, humanNotes: Self.notes(from: text),
+        return MeetingBrowserDetail(row: row, doorwayText: text, doorwayVersion: source.version, humanNotes: canonical.notes, notesVersion: canonical.notesVersion,
             artifacts: resolvedArtifacts(for: text, path: path, playback: playback), job: Self.presentation(for: owned.first) ?? row.job,
             jobs: (owned + allOwned.filter { job in
                 (job.status == .queued || job.status == .running) && !owned.contains(where: { $0.id == job.id })
@@ -532,7 +586,7 @@ public final class MeetingManagementService {
                      ? retryUnavailableReason(candidate.manifest.type) : "This Job type cannot be retried here.")
                 return Self.presentation(for: candidate, retryReason: reason)!
             },
-            summaryVersion: sum?.version, summary: sum.flatMap { Self.parseSummary(String(data: $0.data, encoding: .utf8) ?? "") },
+            summaryVersion: usesLegacyArtifacts ? canonical.versions["summary"] : canonical.summaryVersion, summary: canonical.sections,
             extraction: validExtraction, myActionItems: mine, otherActionItems: other, staleProposals: stale, transcript: transcript,
             decisions: (validExtraction?.decisions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) },
             openQuestions: (validExtraction?.openQuestions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) }, playback: playback, actionDrafts: actionDrafts)

@@ -156,6 +156,38 @@ final class MeetingSummaryTests: XCTestCase {
         XCTAssertTrue(try fixture.inbox.items(category: .review).isEmpty)
     }
 
+    func testProducerAfterMigrationPublishesCanonicalOutcomesAndRetainsApprovedTaskAndNotes() throws {
+        let fixture = try MeetingSummaryFixture()
+        let initial = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [fixture.outcome(id: "approved", text: "Original commitment", segment: 0)], otherActionItems: [], openQuestions: [])
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        _ = try execute(fixture.executor(extraction: initial), manifest: manifest)
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        let management = MeetingManagementService(vault: vault, inbox: fixture.inbox)
+        let migrated = try management.detail(for: fixture.transcript.meetingRelativePath)
+        _ = try management.saveHumanNotes("My words remain authoritative", for: migrated.row.id, expectedVersion: XCTUnwrap(migrated.notesVersion))
+        let proposal = "meeting-action:" + migrated.row.id + ":approved"
+        // A legacy doorway without capture_session_id keeps its persisted Meeting identity;
+        // use the existing scoped review item to bind this fixture's canonical action.
+        if migrated.row.id != fixture.transcript.captureSessionID {
+            try fixture.inbox.queueProposal(id: proposal, title: "Original commitment", sourceRef: "[[Meetings/2026/09/kickoff/summary#My action items|ref]]")
+        }
+        try management.reviewAction(id: proposal, accept: true)
+        let approved = try XCTUnwrap(management.detail(for: migrated.row.id).myActionItems.first)
+        let next = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [fixture.outcome(id: "new-decision", text: "New decision", segment: 1)],
+            myActionItems: [fixture.outcome(id: "approved", text: "Must not rewrite approved work", segment: 0), fixture.outcome(id: "new-task", text: "New pending task", segment: 0)],
+            otherActionItems: [], openQuestions: [])
+        _ = try execute(fixture.executor(extraction: next), manifest: manifest)
+        let reopened = try management.detail(for: migrated.row.id)
+        XCTAssertEqual(reopened.humanNotes, "My words remain authoritative")
+        XCTAssertEqual(reopened.myActionItems.first(where: { $0.id == approved.id })?.text, approved.text)
+        XCTAssertEqual(reopened.myActionItems.first(where: { $0.id == approved.id })?.reviewState, .accepted)
+        XCTAssertEqual(reopened.myActionItems.first(where: { $0.id == "new-task" })?.reviewState, .pending)
+        XCTAssertEqual(reopened.decisions.first?.text, "New decision")
+        XCTAssertEqual(try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadTaskViews(today: "2026-01-01").queue.count, 1)
+    }
+
     private func execute(_ executor: MeetingSummaryJobExecutor, manifest: JobManifest) throws -> JobStageResult {
         let job = JobRecord(
             id: "summary-job",

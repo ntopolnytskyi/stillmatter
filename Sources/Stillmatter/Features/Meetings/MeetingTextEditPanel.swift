@@ -51,6 +51,7 @@ final class MeetingTextEditPanel: NSObject {
         scroll.borderType = .bezelBorder
         scroll.documentView = editor
         scroll.setAccessibilityIdentifier("meeting-text-modal-editor")
+        errorLabel.setAccessibilityIdentifier("meeting-text-error")
         errorLabel.textColor = .systemRed
         errorLabel.isHidden = true
         saveButton.target = self

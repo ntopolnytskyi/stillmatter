@@ -50,6 +50,7 @@ public enum WorkspaceVaultError: Error, Equatable {
 public final class WorkspaceVault {
     private let workspaceRootURL: URL
     public var rootURL: URL { workspaceRootURL }
+    var meetingArtifactStateURL: URL { appSupportRootURL.appendingPathComponent("MeetingArtifacts", isDirectory: true) }
     private let appSupportRootURL: URL
     private let snapshotsURL: URL
     private let retentionPolicy: WorkspaceSnapshotRetentionPolicy
@@ -102,7 +103,7 @@ public final class WorkspaceVault {
               let enumerator = fileManager.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
         let prefix = workspaceRootURL.path + "/"
         return try enumerator.compactMap { value -> String? in
-            guard let url = value as? URL, ["md", "json", "vtt"].contains(url.pathExtension.lowercased()),
+            guard let url = value as? URL, ["md", "json", "vtt", "txt"].contains(url.pathExtension.lowercased()),
                   !url.path.hasPrefix(appSupportRootURL.path + "/"),
                   try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { return nil }
             return String(url.standardizedFileURL.path.dropFirst(prefix.count))

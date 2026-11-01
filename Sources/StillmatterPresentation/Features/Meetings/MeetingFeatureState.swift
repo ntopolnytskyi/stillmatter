@@ -254,6 +254,7 @@ public final class MeetingDetailModel: ObservableObject {
                 guard let self, self.requestRevision == revision, self.selectedReference == reference else { return }
                 switch result {
                 case let .success(detail): self.apply(detail); completion?(.success(detail))
+                case .failure(.superseded): self.refreshSelectedDetail(completion: completion)
                 case let .failure(error):
                     let message = Self.message(for: error)
                     self.loadState = message.hasPrefix("Choose a workspace") ? .unavailable(message) : .failed(message)
@@ -271,13 +272,14 @@ public final class MeetingDetailModel: ObservableObject {
     public func updateSummaryDraft(_ text: String) { summaryDraft?.update(text) }
 
     public func discardDrafts() {
-        notesDraft?.discard()
-        summaryDraft?.discard()
+        // Explicit discard adopts the current canonical content, including an external
+        // version that arrived while the old local draft was dirty.
+        reloadDraftsAfterConfirmation()
     }
 
     public func reloadDraftsAfterConfirmation() {
         guard let detail else { return }
-        notesDraft?.reload(originalText: detail.humanNotes, baseVersion: detail.doorwayVersion)
+        notesDraft?.reload(originalText: detail.humanNotes, baseVersion: detail.notesVersion)
         summaryDraft?.reload(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion)
     }
 
@@ -291,7 +293,7 @@ public final class MeetingDetailModel: ObservableObject {
                 progress: "Saving notes…", completion: completion) { [weak self] output in
             guard case let .detail(saved) = output else { throw MeetingManagementError.unavailable }
             self?.apply(saved)
-            self?.notesDraft?.saved(text: saved.humanNotes, baseVersion: saved.doorwayVersion)
+            self?.notesDraft?.saved(text: saved.humanNotes, baseVersion: saved.notesVersion)
         }
     }
 
@@ -443,8 +445,8 @@ public final class MeetingDetailModel: ObservableObject {
         guard selectedReference?.id == detail.row.id,
               selectedReference?.meetingRelativePath == detail.row.meetingRelativePath else { return }
         self.detail = detail
-        if notesDraft == nil { notesDraft = MeetingTextDraft(originalText: detail.humanNotes, baseVersion: detail.doorwayVersion) }
-        else { notesDraft?.refresh(originalText: detail.humanNotes, baseVersion: detail.doorwayVersion) }
+        if notesDraft == nil { notesDraft = MeetingTextDraft(originalText: detail.humanNotes, baseVersion: detail.notesVersion) }
+        else { notesDraft?.refresh(originalText: detail.humanNotes, baseVersion: detail.notesVersion) }
         if summaryDraft == nil { summaryDraft = MeetingTextDraft(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion) }
         else { summaryDraft?.refresh(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion) }
         loadState = .loaded
@@ -505,6 +507,7 @@ public final class MeetingDetailModel: ObservableObject {
         switch error {
         case .workspaceUnavailable: return "Meeting workspace is unavailable."
         case .stopped: return "Meeting reads have stopped."
+        case .superseded: return "Meeting changed while it was refreshing. Reload the Meeting."
         case let .meetingNotInBrowser(reference): return "Meeting is no longer available: \(reference.meetingRelativePath)"
         case let .sourceFailure(sourceError):
             if (sourceError as? MeetingManagementError) == .some(.unavailable) {
@@ -859,6 +862,7 @@ public final class MeetingsModel: ObservableObject {
         switch error {
         case .workspaceUnavailable: return "Meeting workspace is unavailable."
         case .stopped: return "Meeting reads have stopped."
+        case .superseded: return "Meeting changed while it was refreshing. Reload the Meeting."
         case let .meetingNotInBrowser(reference): return "Meeting is no longer available: \(reference.meetingRelativePath)"
         case let .sourceFailure(sourceError):
             if (sourceError as? MeetingManagementError) == .some(.unavailable) {

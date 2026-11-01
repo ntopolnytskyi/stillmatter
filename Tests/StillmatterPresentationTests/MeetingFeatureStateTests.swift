@@ -510,6 +510,53 @@ final class MeetingFeatureStateTests: XCTestCase {
     }
 
     @MainActor
+    func testNotesDraftUsesCanonicalVersionIndependentlyOfDoorwayAndSummary() async {
+        let row = browserRow("canonical", state: .ready)
+        func canonical(_ notes: String, version hash: String) -> MeetingBrowserDetail {
+            MeetingBrowserDetail(row: row, doorwayText: "doorway", doorwayVersion: version("doorway"),
+                humanNotes: notes, notesVersion: version(hash), summaryVersion: version("summary"),
+                summary: MeetingSummarySections(summary: "Summary"))
+        }
+        let source = FeatureReadSource(rows: [row], details: [row.id: canonical("Initial notes", version: "notes-1")])
+        let executor = ControlledFeatureReadExecutor()
+        let readModel = makeReadModel("canonical-workspace", source: source, executor: executor)
+        let mutations = ControlledMutationExecutor()
+        let model = MeetingsModel(readModelProvider: { readModel }, mutationExecutorProvider: { mutations })
+        defer { model.stop(); readModel.stop() }
+        model.activate()
+        await drain(executor)
+        XCTAssertEqual(model.detail.notesDraft?.baseVersion, version("notes-1"))
+        model.detail.beginEditingNotes()
+        model.detail.updateNotesDraft("Local draft")
+        source.details[row.id] = canonical("External notes", version: "notes-2")
+        model.detail.refreshSelectedDetail()
+        await drain(executor)
+        XCTAssertEqual(model.detail.notesDraft?.editedText, "Local draft")
+        XCTAssertEqual(model.detail.notesDraft?.baseVersion, version("notes-1"))
+        model.detail.saveNotes()
+        guard case let .saveNotes(id, text, base) = mutations.mutations[0] else {
+            return XCTFail("Expected canonical notes mutation")
+        }
+        XCTAssertEqual(id, row.id)
+        XCTAssertEqual(text, "Local draft")
+        XCTAssertEqual(base, version("notes-1"))
+        mutations.completeNext(.failure(WorkspaceVaultError.conflict(relativePath: "Meetings/canonical/my-notes.md",
+            expected: version("notes-1"), actual: version("notes-2"))))
+        await settleMainActor()
+        model.detail.discardDrafts()
+        XCTAssertEqual(model.detail.notesDraft?.editedText, "External notes")
+        XCTAssertEqual(model.detail.notesDraft?.baseVersion, version("notes-2"))
+        XCTAssertFalse(model.detail.notesDraft?.isEditing ?? true)
+        XCTAssertEqual(model.detail.summaryDraft?.baseVersion, version("summary"))
+        model.detail.updateNotesDraft("Saved notes")
+        model.detail.saveNotes()
+        mutations.completeNext(.success(.detail(canonical("Saved notes", version: "notes-3"))))
+        await settleMainActor()
+        XCTAssertEqual(model.detail.notesDraft?.baseVersion, version("notes-3"))
+        XCTAssertFalse(model.detail.notesDraft?.isDirty ?? true)
+    }
+
+    @MainActor
     func testFailedAcceptPreservesProposalSelectionAndBusyStatePreventsDuplicateMutation() async {
         let mutations = ControlledMutationExecutor()
         let detailModel = MeetingDetailModel()

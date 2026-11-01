@@ -140,7 +140,7 @@ final class MeetingReadModelTests: XCTestCase {
         model.readDetail(for: MeetingReference(id: "ready", meetingRelativePath: notesPath)) { refreshedDetail = $0 }
         executor.runAll()
         XCTAssertEqual(try? refreshedDetail?.get().humanNotes, "External notes.")
-        XCTAssertEqual(try? refreshedDetail?.get().summary?.summary, "Externally updated summary.\n")
+        XCTAssertEqual(try? refreshedDetail?.get().summary?.summary, "## Summary\n\nExternally updated summary.\n")
 
         var refreshed: Result<MeetingBrowserSnapshot, MeetingReadError>?
         model.readBrowser(filters: MeetingBrowserFilters()) { refreshed = $0 }

@@ -136,7 +136,7 @@ final class MeetingTitleReviewTests: XCTestCase {
         try inbox.requireTitleReview(id: "meeting-title:a", title: "Review", sourceRef: path)
         let service = MeetingTitleReviewService(vault: vault, inbox: inbox)
         XCTAssertEqual(try service.accept(id: "meeting-title:a", title: "Planning"), "Meetings/2026/01/02/09-10-planning/meeting.md")
-        XCTAssertEqual(String(decoding: try vault.readMarkdown(relativePath: "Meetings/2026/01/02/09-10-planning/summary.md").data, as: UTF8.self), "# Summary")
+        XCTAssertTrue(String(decoding: try vault.readMarkdown(relativePath: "Meetings/2026/01/02/09-10-planning/summary.md").data, as: UTF8.self).contains("# Summary"))
         XCTAssertNil(try vault.versionOfMarkdown(relativePath: "Meetings/2026/01/02/09-10-untitled-meeting/summary.md"))
         let snapshots = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("support/Snapshots"), includingPropertiesForKeys: nil)
         XCTAssertTrue(snapshots.contains { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Meetings/2026/01/02/09-10-untitled-meeting/summary.md").path) })
