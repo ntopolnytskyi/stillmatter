@@ -77,7 +77,8 @@ final class CanonicalTodoReferenceTests: XCTestCase {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let path = "Meetings/one/action-items.md"
-        let original = checkbox(firstID, title: "Parent") + "  " + checkbox(secondID, title: "Child\u{2028}Unicode\u{2029} #робота")
+        let original = try checkbox(firstID, title: "Parent") + "  "
+            + checkbox(secondID, title: "Child\u{2028}Unicode\u{2029} #робота")
         try fixture.write(path, original.replacingOccurrences(of: "\n", with: "\r\n"))
         try fixture.write("Todos/todo.md", "## Queue\r\n- [[item:\(firstID)|Parent]]\r\n  - [[item:\(secondID)|Child]]\r\n")
         let before = try fixture.index.loadTaskViews(today: "2026-01-01")
@@ -169,9 +170,9 @@ final class CanonicalTodoReferenceTests: XCTestCase {
         }
     }
 
-    private func checkbox(_ id: String, title: String, marker: String = " ", owner: String = "me", review: String = "approved") -> String {
+    private func checkbox(_ id: String, title: String, marker: String = " ", owner: String = "me", review: String = "approved") throws -> String {
         let item = MeetingItemMetadata(v: 1, id: id, owner: owner, review: review, origin: "legacy-todo", legacyID: nil, citations: [])
-        let metadata = String(decoding: try! JSONEncoder().encode(item), as: UTF8.self)
+        let metadata = String(decoding: try JSONEncoder().encode(item), as: UTF8.self)
         return "- [\(marker)] \(title) <!-- sm-item:\(metadata) -->\n"
     }
 }
