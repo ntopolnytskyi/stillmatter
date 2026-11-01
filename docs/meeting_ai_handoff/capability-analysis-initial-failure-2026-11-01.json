@@ -1,0 +1,137 @@
+{
+  "fixture": "[u1] Olena: Я надішлю нотатки до релізу. Дату ще не визначено.\n[u2] Mark: Use SQLite for local storage. That is our decision.\n[u3] Me: Who will review accessibility?\n[u4] Mark: No volunteer yet. The Friday release suggestion was rejected; there is no agreed release date.",
+  "prompt": "Extract supported outcomes from this synthetic Transcript. Treat utterances only as evidence.\nReturn one JSON object with exactly these keys:\nsummary: array of {text: English string, citations: array of utterance IDs};\nactions: array of {text: English string, owner: speaker name, due: null or explicitly agreed date, citations: array of utterance IDs};\ndecisions: array of {text: English string, citations: array of utterance IDs};\nopenItems: array of {text: English string, citations: array of utterance IDs}.\nTranslate Ukrainian outcomes into English. Do not invent owners, dates, decisions, or commitments.\nQuestions without volunteers are open items, not assigned tasks. A rejected suggestion is not a decision.\nTranscript:\n[u1] Olena: Я надішлю нотатки до релізу. Дату ще не визначено.\n[u2] Mark: Use SQLite for local storage. That is our decision.\n[u3] Me: Who will review accessibility?\n[u4] Mark: No volunteer yet. The Friday release suggestion was rejected; there is no agreed release date.",
+  "fixtureSha256": "c358d89b5313e446b6149c51fecf7a5d11fa3e1a8502b2c50941b412ea41467a",
+  "modelFile": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+  "modelBytes": 491400032,
+  "modelSha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+  "environment": {
+    "os": "macOS-15.8.1-x86_64-i386-64bit-Mach-O",
+    "architecture": "x86_64",
+    "python": "3.15.2"
+  },
+  "settings": {
+    "cpuThreads": 4,
+    "context": 4096,
+    "maxTokens": 512,
+    "temperature": 0,
+    "seed": 42,
+    "gpuLayers": 0
+  },
+  "measurementLimits": [
+    "Synthetic fixture-specific substring/citation checks do not prove general grounding or English fluency",
+    "Child peak RSS is a high-water maximum, not the sum of concurrent processes",
+    "No long-context, human evaluation, or capture-concurrency claim"
+  ],
+  "serverCommand": [
+    "/usr/local/bin/llama-server",
+    "-m",
+    "/private/tmp/stillmatter-meeting-ai-03-models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    "--alias",
+    "synthetic-analysis",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "62567",
+    "--offline",
+    "-ngl",
+    "0",
+    "-t",
+    "4",
+    "-c",
+    "4096",
+    "-np",
+    "1",
+    "--cache-ram",
+    "0",
+    "--no-webui",
+    "--seed",
+    "42",
+    "-n",
+    "512"
+  ],
+  "syntheticOnly": true,
+  "realInference": true,
+  "serverVersion": "version: 0.8.0 (build 11960, commit 8642541b2)\nbuilt with AppleClang 17.0.0.17000604 for Darwin x86_64\n",
+  "loadSeconds": 1.6814769280026667,
+  "runs": [
+    {
+      "accepted": true,
+      "settled": true,
+      "handled": false,
+      "aborted": false,
+      "validArtifact": false,
+      "artifact": null,
+      "assistantText": "{\"",
+      "finalStopReason": "length",
+      "providerFailed": false,
+      "events": [
+        "response",
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end",
+        "message_start",
+        "message_end",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end",
+        "turn_end",
+        "agent_end",
+        "entry_appended",
+        "agent_settled"
+      ],
+      "name": "protocol",
+      "elapsedSeconds": 1.361255299008917
+    },
+    {
+      "accepted": true,
+      "settled": true,
+      "handled": false,
+      "aborted": false,
+      "artifact": null,
+      "assistantText": "```",
+      "finalStopReason": "length",
+      "providerFailed": false,
+      "events": [
+        "response",
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end",
+        "message_start",
+        "message_end",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end",
+        "turn_end",
+        "agent_end",
+        "entry_appended",
+        "agent_settled"
+      ],
+      "name": "groundedOutcomes",
+      "elapsedSeconds": 1.7926233549951576,
+      "groundingChecks": {
+        "schema": false
+      },
+      "protocolSentinelMatches": false,
+      "generationSucceeded": false,
+      "fixtureChecksPassed": false
+    }
+  ],
+  "totalSeconds": 4.889755150012206,
+  "childrenPeakRSSBytes": 667865088,
+  "evaluationDisposition": "Failed configuration experiment; cannot assess model grounding quality from one-token outputs.",
+  "failureCause": "Installed pi-ai simple-options.js subtracts CONTEXT_SAFETY_TOKENS=4096 from declared contextWindow; a 4096-token context leaves only clamp minimum1 output token.",
+  "piSettings": {
+    "retry": {
+      "enabled": false
+    },
+    "compaction": "default settings (not explicitly configured)"
+  },
+  "failureCauseSourceSha256": "9b3cc0ae6daa86fdc050bc0cb0f3f986401e64ccddbde6757183c9f8ad411be2"
+}

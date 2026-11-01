@@ -1,0 +1,90 @@
+{
+  "scope": "ticket03 research only; no shipped Swift/UI changes",
+  "selfTests": {
+    "command": "python3 -m unittest discover -s experiments/meeting-ai-capabilities -v",
+    "executed": 53,
+    "failures": 0,
+    "skipped": 0,
+    "reviewFix": "4b1545e normalizes speaker RSS units; full 53-test probe suite passed in implementer worktree. No model re-execution required for unchanged Darwin conversion."
+  },
+  "actualPiUnavailableLoopback": {
+    "accepted": true,
+    "settled": true,
+    "handled": false,
+    "aborted": false,
+    "validArtifact": false,
+    "artifact": null,
+    "assistantText": "",
+    "finalStopReason": "error",
+    "providerFailed": true,
+    "events": [
+      "response",
+      "agent_start",
+      "turn_start",
+      "message_start",
+      "message_end",
+      "message_start",
+      "message_end",
+      "message_start",
+      "message_end",
+      "turn_end",
+      "agent_end",
+      "agent_settled"
+    ]
+  },
+  "coverage": {
+    "base": "b206d08",
+    "reports": [
+      "/private/tmp/stillmatter-meeting-ai-01-exported/package/report.json",
+      "/private/tmp/stillmatter-meeting-ai-01-exported/hosted/report.json",
+      "/private/tmp/stillmatter-meeting-ai-01-exported/native/report.json"
+    ],
+    "incrementalExit": 0,
+    "incremental": {
+      "aggregate": {
+        "covered": 0,
+        "percent": null,
+        "total": 0
+      },
+      "modules": {}
+    },
+    "wholeExit": 1,
+    "whole": {
+      "aggregate": {
+        "covered": 14355,
+        "percent": 75.3345578588297,
+        "total": 19055
+      },
+      "modules": {
+        "Stillmatter": {
+          "covered": 6445,
+          "percent": 63.522570471121625,
+          "total": 10146
+        },
+        "StillmatterCore": {
+          "covered": 6704,
+          "percent": 89.95035556151885,
+          "total": 7453
+        },
+        "StillmatterPresentation": {
+          "covered": 1113,
+          "percent": 87.43126472898665,
+          "total": 1273
+        },
+        "StillmatterTranscriptionRuntime": {
+          "covered": 93,
+          "percent": 50.81967213114754,
+          "total": 183
+        }
+      }
+    },
+    "interpretation": "Compatible pre-existing source-hash-validated reports reused. No shipped executable Swift changed: incremental is N/A (0/0), not 100%. Existing whole-source debt remains 75.33%; final 95% gate fails. No new native test execution claimed."
+  },
+  "review": {
+    "base": "b206d08",
+    "standardsFindings": 1,
+    "standardsRemaining": 0,
+    "specFindings": 0,
+    "fixCommit": "4b1545e"
+  }
+}

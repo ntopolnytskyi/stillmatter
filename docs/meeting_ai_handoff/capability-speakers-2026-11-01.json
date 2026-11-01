@@ -1,0 +1,474 @@
+{
+  "kind": "actual-local-inference-on-synthetic-tts-only",
+  "environment": {
+    "platform": "macOS-15.8.1-x86_64-i386-64bit",
+    "python": "3.12.7",
+    "sherpa-onnx": "2.0.1",
+    "numpy": "2.5.4"
+  },
+  "models": {
+    "segmentation": {
+      "name": "sherpa-onnx pyannote segmentation 3.0 FP32",
+      "sha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"
+    },
+    "speakerEmbedding": {
+      "name": "sherpa-onnx NVIDIA NeMo TitaNet small",
+      "sha256": "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e"
+    }
+  },
+  "settings": {
+    "provider": "cpu",
+    "threads": 2,
+    "clusterThreshold": 0.5,
+    "minDurationOn": 0.3,
+    "minDurationOff": 0.5
+  },
+  "metric": {
+    "reference": "Clean source PCM RMS >0.005 per 10ms frame, fixture-only oracle activity",
+    "identityMapping": "Optimal one-to-one anonymous cluster mapping; no collar; overlap included",
+    "limitations": "Not human DER, voice identity, or validated enrollment thresholds"
+  },
+  "diarization": [
+    {
+      "fixture": "english",
+      "sha256": "1d408919676af1e7197f83f2d34020b10829b07ad3aa6c4f9aef9754967a7307",
+      "mode": "unknown-count",
+      "requestedClusters": -1,
+      "durationSeconds": 3.680875,
+      "loadSeconds": 0.2934469520114362,
+      "elapsedSeconds": 0.048665523005183786,
+      "processCPUSeconds": 0.090638,
+      "realTimeFactor": 0.013221183279840742,
+      "segments": [
+        {
+          "start": 0.03096874989569187,
+          "end": 3.743468761444092,
+          "speaker": 1
+        }
+      ],
+      "maxEndBeyondInputSeconds": 0.0625937614440919,
+      "score": {
+        "referenceSpeakerSeconds": 3.2800000000000002,
+        "missedSpeakerSeconds": 0.03,
+        "falseAlarmSpeakerSeconds": 0.41000000000000003,
+        "confusedSpeakerSeconds": 0.0,
+        "syntheticFrameErrorRate": 0.13414634146341464,
+        "referenceSpeakerCount": 1,
+        "observedSpeakerCount": 1,
+        "referenceOverlapSeconds": 0.0,
+        "observedOverlapSeconds": 0.0
+      },
+      "peakRSSBytes": 237359104
+    },
+    {
+      "fixture": "english",
+      "sha256": "1d408919676af1e7197f83f2d34020b10829b07ad3aa6c4f9aef9754967a7307",
+      "mode": "oracle-count",
+      "requestedClusters": 1,
+      "durationSeconds": 3.680875,
+      "loadSeconds": 0.21847977000288665,
+      "elapsedSeconds": 0.04871424997691065,
+      "processCPUSeconds": 0.090055,
+      "realTimeFactor": 0.013234421157173404,
+      "segments": [
+        {
+          "start": 0.03096874989569187,
+          "end": 3.743468761444092,
+          "speaker": 1
+        }
+      ],
+      "maxEndBeyondInputSeconds": 0.0625937614440919,
+      "score": {
+        "referenceSpeakerSeconds": 3.2800000000000002,
+        "missedSpeakerSeconds": 0.03,
+        "falseAlarmSpeakerSeconds": 0.41000000000000003,
+        "confusedSpeakerSeconds": 0.0,
+        "syntheticFrameErrorRate": 0.13414634146341464,
+        "referenceSpeakerCount": 1,
+        "observedSpeakerCount": 1,
+        "referenceOverlapSeconds": 0.0,
+        "observedOverlapSeconds": 0.0
+      },
+      "peakRSSBytes": 263774208
+    },
+    {
+      "fixture": "ukrainian",
+      "sha256": "23c3b7fdf4b8ea7fc0c238086cf788579dccf1462769f437e2cf35adab3165d8",
+      "mode": "unknown-count",
+      "requestedClusters": -1,
+      "durationSeconds": 5.1279375,
+      "loadSeconds": 0.21505562704987824,
+      "elapsedSeconds": 0.04937434196472168,
+      "processCPUSeconds": 0.08978200000000003,
+      "realTimeFactor": 0.009628499170421185,
+      "segments": [
+        {
+          "start": 0.03096874989569187,
+          "end": 5.160968780517578,
+          "speaker": 1
+        }
+      ],
+      "maxEndBeyondInputSeconds": 0.03303128051757831,
+      "score": {
+        "referenceSpeakerSeconds": 4.25,
+        "missedSpeakerSeconds": 0.03,
+        "falseAlarmSpeakerSeconds": 0.88,
+        "confusedSpeakerSeconds": 0.0,
+        "syntheticFrameErrorRate": 0.21411764705882352,
+        "referenceSpeakerCount": 1,
+        "observedSpeakerCount": 1,
+        "referenceOverlapSeconds": 0.0,
+        "observedOverlapSeconds": 0.0
+      },
+      "peakRSSBytes": 301793280
+    },
+    {
+      "fixture": "ukrainian",
+      "sha256": "23c3b7fdf4b8ea7fc0c238086cf788579dccf1462769f437e2cf35adab3165d8",
+      "mode": "oracle-count",
+      "requestedClusters": 1,
+      "durationSeconds": 5.1279375,
+      "loadSeconds": 0.19878226600121707,
+      "elapsedSeconds": 0.048159653961192816,
+      "processCPUSeconds": 0.08451600000000004,
+      "realTimeFactor": 0.00939162264773953,
+      "segments": [
+        {
+          "start": 0.03096874989569187,
+          "end": 5.160968780517578,
+          "speaker": 1
+        }
+      ],
+      "maxEndBeyondInputSeconds": 0.03303128051757831,
+      "score": {
+        "referenceSpeakerSeconds": 4.25,
+        "missedSpeakerSeconds": 0.03,
+        "falseAlarmSpeakerSeconds": 0.88,
+        "confusedSpeakerSeconds": 0.0,
+        "syntheticFrameErrorRate": 0.21411764705882352,
+        "referenceSpeakerCount": 1,
+        "observedSpeakerCount": 1,
+        "referenceOverlapSeconds": 0.0,
+        "observedOverlapSeconds": 0.0
+      },
+      "peakRSSBytes": 308682752
+    },
+    {
+      "fixture": "mixed",
+      "sha256": "1f7e3999a57995f2ffdd53fced7461ca56319f7269bb413d871dce81b4d69b14",
+      "mode": "unknown-count",
+      "requestedClusters": -1,
+      "durationSeconds": 8.8088125,
+      "loadSeconds": 0.1923467199667357,
+      "elapsedSeconds": 0.05457622301764786,
+      "processCPUSeconds": 0.09448799999999968,
+      "realTimeFactor": 0.006195639085023987,
+      "segments": [
+        {
+          "start": 0.03096874989569187,
+          "end": 3.6928439140319824,
+          "speaker": 1
+        },
+        {
+          "start": 3.6928439140319824,
+          "end": 8.85659408569336,
+          "speaker": 2
+        }
+      ],
+      "maxEndBeyondInputSeconds": 0.04778158569335922,
+      "score": {
+        "referenceSpeakerSeconds": 7.65,
+        "missedSpeakerSeconds": 0.03,
+        "falseAlarmSpeakerSeconds": 1.16,
+        "confusedSpeakerSeconds": 0.01,
+        "syntheticFrameErrorRate": 0.1568627450980392,
+        "referenceSpeakerCount": 2,
+        "observedSpeakerCount": 2,
+        "referenceOverlapSeconds": 0.0,
+        "observedOverlapSeconds": 0.0
+      },
+      "peakRSSBytes": 314998784
+    },
+    {
+      "fixture": "mixed",
+      "sha256": "1f7e3999a57995f2ffdd53fced7461ca56319f7269bb413d871dce81b4d69b14",
+      "mode": "oracle-count",
+      "requestedClusters": 2,
+      "durationSeconds": 8.8088125,
+      "loadSeconds": 0.20449292100965977,
+      "elapsedSeconds": 0.05377031600801274,
+      "processCPUSeconds": 0.09352999999999989,
+      "realTimeFactor": 0.006104150361698894,
+      "segments": [
+        {
+          "start": 0.03096874989569187,
+          "end": 3.6928439140319824,
+          "speaker": 1
+        },
+        {
+          "start": 3.6928439140319824,
+          "end": 8.85659408569336,
+          "speaker": 2
+        }
+      ],
+      "maxEndBeyondInputSeconds": 0.04778158569335922,
+      "score": {
+        "referenceSpeakerSeconds": 7.65,
+        "missedSpeakerSeconds": 0.03,
+        "falseAlarmSpeakerSeconds": 1.16,
+        "confusedSpeakerSeconds": 0.01,
+        "syntheticFrameErrorRate": 0.1568627450980392,
+        "referenceSpeakerCount": 2,
+        "observedSpeakerCount": 2,
+        "referenceOverlapSeconds": 0.0,
+        "observedOverlapSeconds": 0.0
+      },
+      "peakRSSBytes": 319672320
+    },
+    {
+      "fixture": "silence",
+      "sha256": "262d1f34f300560a4c82ba8127ddea9e1d72946f187fdbd3e8f70ee096077aec",
+      "mode": "unknown-count",
+      "requestedClusters": -1,
+      "durationSeconds": 5.0,
+      "loadSeconds": 0.21691766096046194,
+      "elapsedSeconds": 0.048134199052583426,
+      "processCPUSeconds": 0.08703200000000022,
+      "realTimeFactor": 0.009626839810516685,
+      "segments": [],
+      "maxEndBeyondInputSeconds": 0,
+      "score": {
+        "referenceSpeakerSeconds": 0.0,
+        "missedSpeakerSeconds": 0.0,
+        "falseAlarmSpeakerSeconds": 0.0,
+        "confusedSpeakerSeconds": 0.0,
+        "syntheticFrameErrorRate": null,
+        "referenceSpeakerCount": 0,
+        "observedSpeakerCount": 0,
+        "referenceOverlapSeconds": 0.0,
+        "observedOverlapSeconds": 0.0
+      },
+      "peakRSSBytes": 326381568
+    },
+    {
+      "fixture": "overlap",
+      "sha256": "c54e4c4ed39500b40109b83d434da7960ab64d32252463575fe752ceaeda57d6",
+      "mode": "unknown-count",
+      "requestedClusters": -1,
+      "durationSeconds": 5.1279375,
+      "loadSeconds": 0.20307535800384358,
+      "elapsedSeconds": 0.04644363897386938,
+      "processCPUSeconds": 0.08519600000000027,
+      "realTimeFactor": 0.009056982261166285,
+      "segments": [
+        {
+          "start": 0.03096874989569187,
+          "end": 3.743468761444092,
+          "speaker": 1
+        },
+        {
+          "start": 0.03096874989569187,
+          "end": 5.127218723297119,
+          "speaker": 2
+        }
+      ],
+      "maxEndBeyondInputSeconds": 0,
+      "score": {
+        "referenceSpeakerSeconds": 7.53,
+        "missedSpeakerSeconds": 0.06,
+        "falseAlarmSpeakerSeconds": 1.34,
+        "confusedSpeakerSeconds": 0.0,
+        "syntheticFrameErrorRate": 0.18592297476759628,
+        "referenceSpeakerCount": 2,
+        "observedSpeakerCount": 2,
+        "referenceOverlapSeconds": 2.64,
+        "observedOverlapSeconds": 3.71
+      },
+      "peakRSSBytes": 331354112
+    },
+    {
+      "fixture": "overlap",
+      "sha256": "c54e4c4ed39500b40109b83d434da7960ab64d32252463575fe752ceaeda57d6",
+      "mode": "oracle-count",
+      "requestedClusters": 2,
+      "durationSeconds": 5.1279375,
+      "loadSeconds": 0.20961810799781233,
+      "elapsedSeconds": 0.04914546600775793,
+      "processCPUSeconds": 0.08372000000000002,
+      "realTimeFactor": 0.009583866029521214,
+      "segments": [
+        {
+          "start": 0.03096874989569187,
+          "end": 3.743468761444092,
+          "speaker": 1
+        },
+        {
+          "start": 0.03096874989569187,
+          "end": 5.127218723297119,
+          "speaker": 2
+        }
+      ],
+      "maxEndBeyondInputSeconds": 0,
+      "score": {
+        "referenceSpeakerSeconds": 7.53,
+        "missedSpeakerSeconds": 0.06,
+        "falseAlarmSpeakerSeconds": 1.34,
+        "confusedSpeakerSeconds": 0.0,
+        "syntheticFrameErrorRate": 0.18592297476759628,
+        "referenceSpeakerCount": 2,
+        "observedSpeakerCount": 2,
+        "referenceOverlapSeconds": 2.64,
+        "observedOverlapSeconds": 3.71
+      },
+      "peakRSSBytes": 336875520
+    }
+  ],
+  "voiceMatching": {
+    "heldOutGeneration": [
+      {
+        "id": "same-samantha",
+        "voice": "Samantha",
+        "text": "Please check the calendar. The budget discussion begins tomorrow morning.",
+        "sha256": "bd33b37d9f7d60c54663f9a2f9a88615accb2f0af11ef9cb1c93719128500705"
+      },
+      {
+        "id": "same-lesya",
+        "voice": "Lesya",
+        "text": "Сьогодні ми перевіримо план. Наступна розмова відбудеться завтра вранці.",
+        "sha256": "d4aa112cb193be7b106a827b69adfe13c1737e8ac1d67cde86439c24da092fcc"
+      },
+      {
+        "id": "unknown-daniel",
+        "voice": "Daniel",
+        "text": "We need another review before the release. Please bring the latest report.",
+        "sha256": "4b329ebacf0a2ded4b6d060d7bba8cab641dde62ccb160a886e0823cbb990092"
+      }
+    ],
+    "runs": [
+      {
+        "fixture": "english",
+        "sha256": "1d408919676af1e7197f83f2d34020b10829b07ad3aa6c4f9aef9754967a7307",
+        "durationSeconds": 3.680875,
+        "elapsedSeconds": 0.10117369802901521,
+        "runtimeReady": true,
+        "processCPUSeconds": 0.12187799999999971,
+        "finiteNonzeroEmbedding": true,
+        "dimensions": 192,
+        "cleanEnrollmentCandidate": true
+      },
+      {
+        "fixture": "ukrainian",
+        "sha256": "23c3b7fdf4b8ea7fc0c238086cf788579dccf1462769f437e2cf35adab3165d8",
+        "durationSeconds": 5.1279375,
+        "elapsedSeconds": 0.0842651859857142,
+        "runtimeReady": true,
+        "processCPUSeconds": 0.1641249999999994,
+        "finiteNonzeroEmbedding": true,
+        "dimensions": 192,
+        "cleanEnrollmentCandidate": true
+      },
+      {
+        "fixture": "silence",
+        "sha256": "262d1f34f300560a4c82ba8127ddea9e1d72946f187fdbd3e8f70ee096077aec",
+        "durationSeconds": 5.0,
+        "elapsedSeconds": 0.07718457299051806,
+        "runtimeReady": true,
+        "processCPUSeconds": 0.15202199999999966,
+        "finiteNonzeroEmbedding": true,
+        "dimensions": 192,
+        "cleanEnrollmentCandidate": false
+      },
+      {
+        "fixture": "overlap",
+        "sha256": "c54e4c4ed39500b40109b83d434da7960ab64d32252463575fe752ceaeda57d6",
+        "durationSeconds": 5.1279375,
+        "elapsedSeconds": 0.09229668299667537,
+        "runtimeReady": true,
+        "processCPUSeconds": 0.1794229999999999,
+        "finiteNonzeroEmbedding": true,
+        "dimensions": 192,
+        "cleanEnrollmentCandidate": false
+      },
+      {
+        "fixture": "same-samantha",
+        "sha256": "bd33b37d9f7d60c54663f9a2f9a88615accb2f0af11ef9cb1c93719128500705",
+        "durationSeconds": 3.8641875,
+        "elapsedSeconds": 0.05755401402711868,
+        "runtimeReady": true,
+        "processCPUSeconds": 0.11439100000000035,
+        "finiteNonzeroEmbedding": true,
+        "dimensions": 192,
+        "cleanEnrollmentCandidate": true
+      },
+      {
+        "fixture": "same-lesya",
+        "sha256": "d4aa112cb193be7b106a827b69adfe13c1737e8ac1d67cde86439c24da092fcc",
+        "durationSeconds": 5.048125,
+        "elapsedSeconds": 0.07307182700606063,
+        "runtimeReady": true,
+        "processCPUSeconds": 0.14327999999999985,
+        "finiteNonzeroEmbedding": true,
+        "dimensions": 192,
+        "cleanEnrollmentCandidate": true
+      },
+      {
+        "fixture": "unknown-daniel",
+        "sha256": "4b329ebacf0a2ded4b6d060d7bba8cab641dde62ccb160a886e0823cbb990092",
+        "durationSeconds": 4.06575,
+        "elapsedSeconds": 0.05959191103465855,
+        "runtimeReady": true,
+        "processCPUSeconds": 0.1205759999999998,
+        "finiteNonzeroEmbedding": true,
+        "dimensions": 192,
+        "cleanEnrollmentCandidate": true
+      }
+    ],
+    "comparisons": [
+      {
+        "first": "english",
+        "second": "same-samantha",
+        "relation": "same-synthetic-voice-independent-text",
+        "cosine": 0.9300765958846546
+      },
+      {
+        "first": "ukrainian",
+        "second": "same-lesya",
+        "relation": "same-synthetic-voice-independent-text",
+        "cosine": 0.9436229283633595
+      },
+      {
+        "first": "english",
+        "second": "ukrainian",
+        "relation": "different-synthetic-voices-and-languages",
+        "cosine": 0.4379826811095822
+      },
+      {
+        "first": "english",
+        "second": "unknown-daniel",
+        "relation": "unenrolled-synthetic-voice",
+        "cosine": 0.2217571777688825
+      },
+      {
+        "first": "ukrainian",
+        "second": "unknown-daniel",
+        "relation": "unenrolled-synthetic-voice",
+        "cosine": 0.2618148423490843
+      },
+      {
+        "first": "english",
+        "second": "silence",
+        "relation": "silence-invalid-for-enrollment",
+        "cosine": -0.03997712168362712
+      },
+      {
+        "first": "english",
+        "second": "overlap",
+        "relation": "overlap-invalid-for-enrollment",
+        "cosine": 0.727855205873379
+      }
+    ],
+    "thresholdSelected": null,
+    "limitations": "No vectors persisted. Synthetic voices and languages confound identity; not a held-out human-speaker precision evaluation. Runtime readiness alone is not a clean-speech quality gate."
+  },
+  "peakRSSBytes": 398229504
+}

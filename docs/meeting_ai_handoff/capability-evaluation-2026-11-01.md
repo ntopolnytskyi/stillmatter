@@ -1,6 +1,6 @@
 # Meeting AI frontier capability evaluation
 
-Investigated 2026-11-01 for tickets 02 and 03. **Ticket 02 is resolved as a capability investigation; ticket 03 remains incomplete.** This note distinguishes observed behavior, installed-source contracts, and unexecuted evaluation. No product requirement or deployment target was changed. The accompanying probes are disposable, non-shipped validation code in [`experiments/meeting-ai-capabilities`](../../experiments/meeting-ai-capabilities/).
+Initial investigation on 2026-11-01 for tickets 02 and 03. **Ticket 02 is resolved as a capability investigation; ticket 03 was incomplete at this stage.** The subsequent user-authorized downloaded-model experiments and current ticket 03 disposition are in the [local capability contract](local-capability-contract.md). Statements below about unexecuted model lanes describe this initial investigation; the follow-up preserves failed evidence and adds actual inference results. This note distinguishes observed behavior, installed-source contracts, and unexecuted evaluation. No product requirement or deployment target was changed. The accompanying probes are disposable, non-shipped validation code in [`experiments/meeting-ai-capabilities`](../../experiments/meeting-ai-capabilities/).
 
 ## Environment and privacy
 
