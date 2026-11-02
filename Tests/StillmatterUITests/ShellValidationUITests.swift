@@ -44,6 +44,37 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(search.value as? String, "KeyboardSearchMarker")
     }
 
+    func testMeetingListingFiltersRemainSeparateFromGlobalSearchAndSurviveNavigation() throws {
+        try seedMeeting()
+        let before = try meetingText()
+        app.buttons["sidebar-meetings"].click()
+        XCTAssertTrue(app.tables["Meetings"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["meeting-detail"].exists)
+        XCTAssertTrue(app.buttons["sidebar-settings"].exists)
+        let filter = app.searchFields["meetings-list-filter"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.tables["Meetings"].staticTexts["UI fixture meeting"].firstMatch.waitForExistence(timeout: 10))
+        filter.click()
+        filter.typeText("fixture")
+        XCTAssertEqual(filter.value as? String, "fixture")
+        app.typeKey("f", modifierFlags: .command)
+        let global = app.searchFields["Search"]
+        XCTAssertTrue(global.waitForExistence(timeout: 10))
+        XCTAssertEqual(global.value as? String, "")
+        global.typeText("nonexistent-search-07")
+        XCTAssertTrue(app.staticTexts["No results"].waitForExistence(timeout: 15))
+        global.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(filter.waitForExistence(timeout: 10))
+        XCTAssertEqual(filter.value as? String, "fixture")
+        XCTAssertEqual(global.value as? String, "nonexistent-search-07")
+        XCTAssertTrue(app.buttons["meetings-show-filters"].exists)
+        XCTAssertTrue(app.buttons["meetings-clear-filters"].exists == false)
+        app.buttons["sidebar-today"].click()
+        app.buttons["sidebar-meetings"].click()
+        XCTAssertEqual(filter.value as? String, "fixture")
+        XCTAssertEqual(try meetingText(), before)
+    }
+
     func testExternalMeetingEditRefreshesVisibleBrowserAndDetail() throws {
         try seedMeeting()
         openFixtureMeeting()

@@ -16,6 +16,7 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
         case failed(String)
     }
 
+    private let controls: GraphiteFocusControls
     var onOpenResult: (SearchResult) -> Void
     private let onOpenSettings: () -> Void
     private let onRetry: () -> Void
@@ -33,8 +34,10 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
         onOpenResult: @escaping (SearchResult) -> Void,
         onOpenSettings: @escaping () -> Void,
         onRetry: @escaping () -> Void,
-        onDismiss: @escaping () -> Void
+        onDismiss: @escaping () -> Void,
+        controls: GraphiteFocusControls = GraphiteFocusControls()
     ) {
+        self.controls = controls
         self.onOpenResult = onOpenResult
         self.onOpenSettings = onOpenSettings
         self.onRetry = onRetry
@@ -213,8 +216,7 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
         stack.spacing = GraphiteFocusPresentation.Space.compact
         stack.translatesAutoresizingMaskIntoConstraints = false
         if let actionTitle = actionTitle, let action = action {
-            let button = NSButton(title: actionTitle, target: self, action: action)
-            button.bezelStyle = .rounded
+            let button = controls.button(actionTitle, identifier: "search-state-action", target: self, action: action)
             stack.addArrangedSubview(button)
         }
         stateContainer.addSubview(stack)

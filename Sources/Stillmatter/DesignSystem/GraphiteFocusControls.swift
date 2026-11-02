@@ -16,6 +16,21 @@ struct GraphiteFocusControls {
         return button
     }
 
+    func navigationButton(symbol: String, title: String, identifier: String, target: AnyObject, action: Selector) -> NSButton {
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            ?? NSImage(size: NSSize(width: 20, height: 20))
+        let button = NSButton(image: image, target: target, action: action)
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.toolTip = title
+        button.setAccessibilityLabel(title)
+        configure(button, identifier: identifier)
+        button.wantsLayer = true
+        button.layer?.cornerRadius = GraphiteFocusPresentation.Radius.control
+        return button
+    }
+
     func checkbox(_ title: String, identifier: String) -> NSButton {
         let button = NSButton(checkboxWithTitle: title, target: nil, action: nil)
         configure(button, identifier: identifier)

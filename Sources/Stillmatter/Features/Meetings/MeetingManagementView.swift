@@ -9,6 +9,7 @@ import StillmatterPresentation
 /// Meeting detail canvas. `browserView` is hosted independently in the shell's content-list region.
 final class MeetingManagementView: NSView {
     let browserView = NSView()
+    private let controls: GraphiteFocusControls
 
     private let readModelProvider: () -> MeetingReadModel?
     private let mutationExecutorProvider: () -> MeetingMutationExecuting?
@@ -40,17 +41,17 @@ final class MeetingManagementView: NSView {
     private(set) var onOpenSelection: () -> Void = {}
 
     let table = NSTableView()
-    let queryField = NSSearchField()
+    lazy var queryField = controls.searchField(identifier: "meetings-list-filter")
     let startDatePicker = NSDatePicker()
     let endDatePicker = NSDatePicker()
-    let startDateEnabled = NSButton(checkboxWithTitle: "From", target: nil, action: nil)
-    let endDateEnabled = NSButton(checkboxWithTitle: "To", target: nil, action: nil)
-    let clearFiltersButton = NSButton(title: "Clear filters", target: nil, action: nil)
-    let projectFilter = NSPopUpButton(frame: .zero, pullsDown: false)
-    let processingFilter = NSPopUpButton(frame: .zero, pullsDown: false)
-    let archiveFilter = NSPopUpButton(frame: .zero, pullsDown: false)
+    lazy var startDateEnabled = controls.checkbox("From", identifier: "meetings-from-enabled")
+    lazy var endDateEnabled = controls.checkbox("To", identifier: "meetings-to-enabled")
+    lazy var clearFiltersButton = controls.button("Clear filters", identifier: "meetings-clear-filters")
+    lazy var projectFilter = controls.popup(identifier: "meetings-project-filter")
+    lazy var processingFilter = controls.popup(identifier: "meetings-state-filter")
+    lazy var archiveFilter = controls.popup(identifier: "meetings-archive-filter")
     let filterStatus = NSTextField(labelWithString: "")
-    let advancedFiltersButton = NSButton(title: "Filters", target: nil, action: nil)
+    lazy var advancedFiltersButton = controls.button("Filters", identifier: "meetings-show-filters")
     let advancedFilters = NSStackView()
     typealias MeetingQueue = MeetingQueueFilter
     var selectedQueue: MeetingQueue {
@@ -79,11 +80,11 @@ final class MeetingManagementView: NSView {
     let overviewPage = NSStackView()
     let timelinePage = NSStackView()
     let pinnedAudio = NSStackView()
-    let pageSelector = NSSegmentedControl(labels: ["Overview", "Transcript"], trackingMode: .selectOne, target: nil, action: nil)
+    lazy var pageSelector = controls.segments(["Overview", "Transcript"], identifier: "meeting-page-selector")
     let reviewPrompt = NSStackView()
     let reviewCount = NSTextField(labelWithString: "")
-    let reviewButton = NSButton(title: "Review", target: nil, action: nil)
-    let diagnosticsDisclosure = NSButton(checkboxWithTitle: "Processing & source files", target: nil, action: nil)
+    lazy var reviewButton = controls.button("Review", identifier: "meeting-review")
+    lazy var diagnosticsDisclosure = controls.checkbox("Processing & source files", identifier: "meeting-diagnostics")
     let diagnostics = NSStackView()
     let decisionsContainer = NSStackView()
     let othersContainer = NSStackView()
@@ -115,12 +116,12 @@ final class MeetingManagementView: NSView {
     private var outcomeSourceTargets: [String: OutcomeSourceTarget] = [:]
     let status = NSTextField(wrappingLabelWithString: "")
     let retryRows = NSStackView()
-    let reprocessButton = NSButton(title: "Reprocess…", target: nil, action: nil)
-    let renameButton = NSButton(title: "Rename…", target: nil, action: nil)
+    lazy var reprocessButton = controls.button("Reprocess…", identifier: "meeting-reprocess")
+    lazy var renameButton = controls.button("Rename…", identifier: "meeting-rename")
     let archiveButton = MeetingHeaderButton(title: "Archive", target: nil, action: nil)
     private(set) var retryFeedback: (meetingID: String, message: String)?
     private var restoredSelectionID: String?
-    let openRecordingButton = NSButton(title: "Open Recording", target: nil, action: nil)
+    lazy var openRecordingButton = controls.button("Open Recording", identifier: "meeting-open-recording")
     let audioStatus = NSTextField(wrappingLabelWithString: "Recording Bundle unavailable")
     let playButton = MeetingPlaybackButton(frame: .zero)
     let waveform = MeetingWaveformView()
@@ -146,6 +147,7 @@ final class MeetingManagementView: NSView {
         playbackTransportProvider: @escaping () -> MeetingPlaybackTransport?,
         openRecording: @escaping () -> Void,
         openWorkspaceFile: @escaping (String) -> Void,
+        controls: GraphiteFocusControls = GraphiteFocusControls(),
         presentConfirmationAlert: @escaping (NSAlert) -> NSApplication.ModalResponse = { $0.runModal() },
         presentationMetrics: MeetingPresentationMetrics? = nil
     ) {
@@ -154,6 +156,7 @@ final class MeetingManagementView: NSView {
         self.playbackTransportProvider = playbackTransportProvider
         self.openRecording = openRecording
         self.openWorkspaceFile = openWorkspaceFile
+        self.controls = controls
         self.presentConfirmationAlert = presentConfirmationAlert
         self.presentationMetrics = presentationMetrics
         super.init(frame: .zero)
@@ -285,10 +288,9 @@ final class MeetingManagementView: NSView {
         searchRow.orientation = .horizontal
         searchRow.spacing = GraphiteFocusPresentation.Space.compact
         queueButtons = [("Recorded", MeetingQueue.recorded), ("Needs attention", .attention), ("Ready", .ready)].map { title, queue in
-            let button = NSButton(title: title, target: self, action: #selector(selectQueue(_:)))
+            let button = controls.button(title, identifier: "meetings-queue-\(queue.rawValue)", target: self, action: #selector(selectQueue(_:)))
             button.tag = queue.rawValue
             button.bezelStyle = .recessed
-            button.setAccessibilityIdentifier("meetings-queue-\(queue.rawValue)")
             return button
         }
         let queue = NSStackView(views: queueButtons)

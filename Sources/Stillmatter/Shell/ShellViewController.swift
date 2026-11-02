@@ -113,15 +113,16 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         onRetry: { [weak self] in self?.lastSearchRequest = nil; self?.updateSearchPresentation() },
         onDismiss: { [weak self] in self?.dismissSearch() }
     )
-    let searchField = NSSearchField()
-    let compactSearchField = NSSearchField()
-    let compactSearchKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let controls = GraphiteFocusControls()
+    lazy var searchField = controls.searchField(identifier: "global-search")
+    lazy var compactSearchField = controls.searchField(identifier: "compact-global-search")
+    lazy var compactSearchKindPopup = controls.popup(identifier: "compact-search-type")
     let compactSearchScopeLabel = NSTextField(labelWithString: "")
     let compactSearchPopover = NSPopover()
     private var transferFocusToResultsOnPopoverClose = false
-    let searchKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    lazy var searchKindPopup = controls.popup(identifier: "global-search-type")
     let toolbarAreaLabel = NSTextField(labelWithString: "Today")
-    let narrowBackButton = NSButton(title: "Back", target: nil, action: nil)
+    lazy var narrowBackButton = controls.button("Back", identifier: "narrow-back")
     let toolbar = NSToolbar(identifier: "Stillmatter.MainToolbar.v3")
     var hasContentListRegion = false
     var hasInspectorRegion = false
@@ -305,16 +306,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
         stack.translatesAutoresizingMaskIntoConstraints = false
         for (index, tab) in sidebarTabs.enumerated() {
-            let button = NSButton(image: NSImage(systemSymbolName: symbol(for: tab), accessibilityDescription: tab.rawValue) ?? NSImage(size: NSSize(width: 20, height: 20)), target: self, action: #selector(selectNavigationArea(_:)))
+            let button = controls.navigationButton(symbol: symbol(for: tab), title: tab.rawValue,
+                identifier: "sidebar-\(tab.rawValue.lowercased().replacingOccurrences(of: " ", with: "-"))",
+                target: self, action: #selector(selectNavigationArea(_:)))
             button.tag = index
-            button.isBordered = false
-            button.imagePosition = .imageOnly
-            button.imageScaling = .scaleProportionallyDown
-            button.toolTip = tab.rawValue
-            button.setAccessibilityLabel(tab.rawValue)
-            button.setAccessibilityIdentifier("sidebar-\(tab.rawValue.lowercased().replacingOccurrences(of: " ", with: "-"))")
-            button.wantsLayer = true
-            button.layer?.cornerRadius = GraphiteFocusPresentation.Radius.control
             button.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 button.widthAnchor.constraint(equalToConstant: 44),
@@ -1184,8 +1179,11 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         } else if compactFieldHadFocus && stateStore.state.searchText != compactSearchField.stringValue {
             stateStore.state.searchText = compactSearchField.stringValue
         }
+        // Keep global search in the Status Bar at the minimum supported width.
+        // Compact only ancillary status/rail controls; Command-F still has a
+        // popover fallback if the user has removed Search from a custom toolbar.
         let compactedIdentifiers: Set<NSToolbarItem.Identifier> = [
-            .toggleStillmatterSidebar, .recordingStatus, .jobStatus, .areaSearch
+            .toggleStillmatterSidebar, .recordingStatus, .jobStatus
         ]
         if width < 900 && toolbarItemsCompactedForWidth.isEmpty {
             toolbarItemsCompactedForWidth = toolbar.items.enumerated().compactMap { index, item in
