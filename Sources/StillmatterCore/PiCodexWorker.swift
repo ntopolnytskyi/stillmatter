@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public struct PiCommand: Equatable {
     public let executable: URL
@@ -38,6 +39,10 @@ public protocol PiCommandRunning: AnyObject {
     func run(_ command: PiCommand) throws -> PiCommandResult
 }
 
+public protocol CancellablePiCommandRunning: PiCommandRunning {
+    func run(_ command: PiCommand, cancellation: JobExecutionCancellation) throws -> PiCommandResult
+}
+
 public enum PiCommandError: Error, Equatable, CustomStringConvertible {
     case timedOut(TimeInterval)
     case launchFailed(String)
@@ -50,10 +55,14 @@ public enum PiCommandError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-public final class FoundationPiCommandRunner: PiCommandRunning {
+public final class FoundationPiCommandRunner: CancellablePiCommandRunning {
     public init() {}
 
     public func run(_ command: PiCommand) throws -> PiCommandResult {
+        try run(command, cancellation: JobExecutionCancellation())
+    }
+
+    public func run(_ command: PiCommand, cancellation: JobExecutionCancellation) throws -> PiCommandResult {
         let process = Process()
         process.executableURL = command.executable
         process.arguments = command.arguments
@@ -94,10 +103,26 @@ public final class FoundationPiCommandRunner: PiCommandRunning {
 
         let finished = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in finished.signal() }
-        guard finished.wait(timeout: .now() + command.timeout) == .success else {
-            process.terminate()
-            _ = finished.wait(timeout: .now() + 2)
-            throw PiCommandError.timedOut(command.timeout)
+        let deadline = Date().addingTimeInterval(command.timeout)
+        while finished.wait(timeout: .now() + 0.05) != .success {
+            if cancellation.isCancelled {
+                stop(process, finished: finished)
+                reads.wait()
+                throw JobsError.executionCancelled
+            }
+            if Date() >= deadline {
+                process.terminate()
+                if finished.wait(timeout: .now() + 0.5) != .success, process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                    finished.wait()
+                }
+                reads.wait()
+                throw PiCommandError.timedOut(command.timeout)
+            }
+        }
+        if cancellation.isCancelled {
+            reads.wait()
+            throw JobsError.executionCancelled
         }
         reads.wait()
         return PiCommandResult(
@@ -105,6 +130,14 @@ public final class FoundationPiCommandRunner: PiCommandRunning {
             standardOutput: String(data: outputData, encoding: .utf8) ?? "",
             standardError: String(data: errorData, encoding: .utf8) ?? ""
         )
+    }
+
+    private func stop(_ process: Process, finished: DispatchSemaphore) {
+        process.terminate()
+        if finished.wait(timeout: .now() + 0.5) != .success, process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+            finished.wait()
+        }
     }
 }
 
@@ -374,7 +407,8 @@ public final class PiCodexWorker {
         self.environment = environment
     }
 
-    public func run(manifest: PiWorkflowManifest) throws -> JobStageResult {
+    public func run(manifest: PiWorkflowManifest, cancellation: JobExecutionCancellation? = nil) throws -> JobStageResult {
+        if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
         try manifest.validate()
         let command = PiCommand(
             executable: executableURL,
@@ -389,7 +423,13 @@ public final class PiCodexWorker {
             environment: environment,
             timeout: TimeInterval(manifest.timeoutSeconds)
         )
-        let result = try commandRunner.run(command)
+        let result: PiCommandResult
+        if let cancellation, let cancellable = commandRunner as? CancellablePiCommandRunning {
+            result = try cancellable.run(command, cancellation: cancellation)
+        } else {
+            result = try commandRunner.run(command)
+        }
+        if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
         guard result.exitCode == 0 else {
             let message = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
             throw PiWorkerError.commandFailed(exitCode: result.exitCode, message: message)

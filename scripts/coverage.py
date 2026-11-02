@@ -165,7 +165,7 @@ def normalize(lcov, source_root, manifest, lane):
             "files": parse_lcov(lcov, source_root, manifest)}
 
 
-def merge_reports(manifest, reports):
+def merge_reports(manifest, reports, require_complete=True):
     merged = {}
     for report in reports:
         if report.get("schema") != 1 or report.get("inventory") != manifest:
@@ -183,9 +183,18 @@ def merge_reports(manifest, reports):
                     raise CoverageError("Invalid normalized executable line")
                 dest[number] = dest.get(number, False) or covered
     missing = sorted(p for p, v in manifest["files"].items() if not v.get("excluded") and p not in merged)
-    if missing:
+    if require_complete and missing:
         raise CoverageError("Missing shipped source coverage: " + ", ".join(missing))
     return merged
+
+
+def require_changed_sources_covered(manifest, merged, changed):
+    missing = sorted(path for path, lines in changed.items()
+                     if lines and path in manifest["files"]
+                     and not manifest["files"][path].get("excluded")
+                     and path not in merged)
+    if missing:
+        raise CoverageError("Missing changed shipped source coverage: " + ", ".join(missing))
 
 
 def _git_quoted_path(value):
@@ -300,6 +309,8 @@ def main(argv=None):
     report.add_argument("--reports", type=Path, nargs="+", required=True)
     report.add_argument("--base", help="Git base revision; includes committed, staged, unstaged and untracked Swift changes")
     report.add_argument("--whole", action="store_true", help="Also enforce final whole-source 95%% gate")
+    report.add_argument("--incremental-only", action="store_true",
+                        help="Measure changed shipped source lines without requiring unchanged app/native source maps")
     report.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     root = args.root.resolve()
@@ -311,9 +322,11 @@ def main(argv=None):
         else:
             if not args.base and not args.whole:
                 raise CoverageError("Choose --base for incremental gate, --whole for final gate, or both")
+            if args.incremental_only and (not args.base or args.whole):
+                raise CoverageError("--incremental-only requires --base and cannot be combined with --whole")
             manifest = current_inventory(root)
-            merged = merge_reports(manifest, [read_json(p) for p in args.reports])
-            result = {"whole": summarize(manifest, merged)}
+            merged = merge_reports(manifest, [read_json(p) for p in args.reports], require_complete=not args.incremental_only)
+            result = {} if args.incremental_only else {"whole": summarize(manifest, merged)}
             if args.base:
                 diff = command(["git", "-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-renames", "--unified=0", args.base, "--", "Sources"], cwd=root)
                 changed = changed_lines(diff)
@@ -321,6 +334,8 @@ def main(argv=None):
                 for path in filter(None, untracked.split("\0")):
                     if path in manifest["files"]:
                         changed[path].update(int(n) for n in merged.get(path, {}))
+                if args.incremental_only:
+                    require_changed_sources_covered(manifest, merged, changed)
                 result["incremental"] = summarize(manifest, merged, changed)
             if args.output:
                 save_json(args.output, result)

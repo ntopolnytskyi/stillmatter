@@ -252,6 +252,62 @@ public protocol JobExecuting: AnyObject {
     )
 }
 
+/// Optional contract for executors whose running work can be stopped safely.
+/// `cancelAndWait` must return only after the worker can no longer publish output
+/// or perform side effects. Executors that cannot make that guarantee must not
+/// conform; their stages remain queue-owning until completion or process exit.
+public protocol CancellableJobExecuting: JobExecuting {
+    func execute(
+        job: JobRecord,
+        stage: JobStageDefinition,
+        cancellation: JobExecutionCancellation,
+        completion: @escaping (Result<JobStageResult, Error>) -> Void
+    )
+}
+
+/// Per-attempt cancellation and publication fence shared by the scheduler and executor.
+public final class JobExecutionCancellation {
+    private let lock = NSRecursiveLock()
+    private var cancelled = false
+    private var cancelAndWaitHandler: (() -> Bool)?
+
+    public init() {}
+
+    public var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
+
+    /// Serializes publication against timeout cancellation. If publication enters
+    /// first, cancellation waits for it to finish; if cancellation enters first,
+    /// publication is rejected.
+    public func performIfActive<T>(_ body: () throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { throw JobsError.executionCancelled }
+        return try body()
+    }
+
+    /// Installs a synchronous worker stop. Returns false when cancellation has
+    /// already started; callers must then observe `isCancelled` before publishing.
+    public func installCancelAndWait(_ handler: @escaping () -> Bool) {
+        lock.lock()
+        let runNow = cancelled
+        if !cancelled { cancelAndWaitHandler = handler }
+        lock.unlock()
+        if runNow { _ = handler() }
+    }
+
+    /// Returns true only when an installed handler confirms the worker is quiescent.
+    public func cancelAndWait() -> Bool {
+        lock.lock()
+        guard !cancelled else { lock.unlock(); return false }
+        cancelled = true
+        let handler = cancelAndWaitHandler
+        lock.unlock()
+        return handler?() ?? false
+    }
+}
+
 public enum JobsError: Error, Equatable, CustomStringConvertible {
     case sqlite(code: Int32, message: String)
     case unsupportedManifestVersion(Int)
@@ -264,6 +320,8 @@ public enum JobsError: Error, Equatable, CustomStringConvertible {
     case unexpectedArtifact(String)
     case invalidArtifact(path: String, reason: String)
     case invalidStoredValue(column: String, value: String)
+    case stageTimedOut(String, TimeInterval)
+    case executionCancelled
 
     public var description: String {
         switch self {
@@ -278,6 +336,8 @@ public enum JobsError: Error, Equatable, CustomStringConvertible {
         case let .unexpectedArtifact(path): return "Generated artifact was not declared in the manifest: \(path)"
         case let .invalidArtifact(path, reason): return "Invalid generated artifact \(path): \(reason)"
         case let .invalidStoredValue(column, value): return "Invalid stored \(column): \(value)"
+        case let .stageTimedOut(stage, seconds): return "Stage \(stage) exceeded its \(String(format: "%.2g", seconds)) second execution limit."
+        case .executionCancelled: return "Job stage execution was cancelled."
         }
     }
 }
@@ -930,9 +990,11 @@ public final class JobScheduler {
     private let heavyGateOwner = UUID()
     private let validators: [String: GeneratedArtifactValidator]
     private let onWorkQueuedWhilePaused: (() -> Void)?
+    private let executionTimeout: TimeInterval
     private let stateQueue = DispatchQueue(label: "Stillmatter.JobScheduler")
     private var activeHeavyJobID: String?
     private var activeLightweightJobIDs: Set<String> = []
+    private var activeExecutions: [String: (id: UUID, cancellation: JobExecutionCancellation?, timeout: DispatchWorkItem?)] = [:]
     private var isPaused = false
     private var isStopped = false
 
@@ -948,6 +1010,7 @@ public final class JobScheduler {
             "markdown": MarkdownGeneratedArtifactValidator(),
             "webvtt": WebVTTGeneratedArtifactValidator()
         ],
+        executionTimeout: TimeInterval = 30 * 60,
         onWorkQueuedWhilePaused: (() -> Void)? = nil
     ) {
         self.store = store
@@ -957,6 +1020,7 @@ public final class JobScheduler {
         self.workspaceOwner = workspaceRootURL?.standardizedFileURL.resolvingSymlinksInPath().path
         self.heavyExecutionGate = heavyExecutionGate
         self.validators = validators
+        self.executionTimeout = max(0.01, executionTimeout)
         self.onWorkQueuedWhilePaused = onWorkQueuedWhilePaused
     }
 
@@ -1065,9 +1129,40 @@ public final class JobScheduler {
             }
             // The completion owns the scheduler until the running stage is durably persisted.
             // App reconfiguration may otherwise release a paused scheduler while its executor is active.
-            executor.execute(job: job, stage: stage) { [self] result in
-                stateQueue.async { [self] in
-                    handle(result, job: job, stage: stage, executionClass: executionClass)
+            let executionID = UUID()
+            if let cancellableExecutor = executor as? CancellableJobExecuting {
+                let cancellation = JobExecutionCancellation()
+                let timeout = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    self.stateQueue.async { [self] in
+                        guard let active = self.activeExecutions[job.id], active.id == executionID,
+                              active.cancellation?.cancelAndWait() == true else { return }
+                        self.activeExecutions.removeValue(forKey: job.id)
+                        self.handle(.failure(JobsError.stageTimedOut(stage.id, self.executionTimeout)),
+                               job: job, stage: stage, executionClass: executionClass)
+                    }
+                }
+                activeExecutions[job.id] = (executionID, cancellation, timeout)
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + executionTimeout, execute: timeout)
+                cancellableExecutor.execute(job: job, stage: stage, cancellation: cancellation) { [self] result in
+                    stateQueue.async { [self] in
+                        guard let active = activeExecutions[job.id], active.id == executionID else { return }
+                        active.timeout?.cancel()
+                        activeExecutions.removeValue(forKey: job.id)
+                        let finalResult: Result<JobStageResult, Error> = active.cancellation?.isCancelled == true
+                            ? .failure(JobsError.stageTimedOut(stage.id, executionTimeout))
+                            : result
+                        handle(finalResult, job: job, stage: stage, executionClass: executionClass)
+                    }
+                }
+            } else {
+                activeExecutions[job.id] = (executionID, nil, nil)
+                executor.execute(job: job, stage: stage) { [self] result in
+                    stateQueue.async { [self] in
+                        guard activeExecutions[job.id]?.id == executionID else { return }
+                        activeExecutions.removeValue(forKey: job.id)
+                        handle(result, job: job, stage: stage, executionClass: executionClass)
+                    }
                 }
             }
         } catch {

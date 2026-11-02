@@ -25,6 +25,28 @@ final class PiCodexWorkerTests: XCTestCase {
         XCTAssertEqual(runner.commands[1].timeout, 30)
     }
 
+    func testFoundationPiRunnerTimesOutAndTerminatesTheChildProcess() throws {
+        let fixture = try PiWorkerFixture()
+        let executable = fixture.rootURL.appendingPathComponent("slow-pi.sh")
+        try "#!/bin/sh\ntrap '' TERM\nwhile :; do /bin/sleep 1; done\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let command = PiCommand(executable: executable, arguments: [], timeout: 0.1)
+
+        XCTAssertThrowsError(try FoundationPiCommandRunner().run(command)) { error in
+            XCTAssertEqual(error as? PiCommandError, .timedOut(0.1))
+        }
+    }
+
+    func testFoundationPiRunnerRejectsCompletionAfterCancellation() throws {
+        let cancellation = JobExecutionCancellation()
+        XCTAssertFalse(cancellation.cancelAndWait())
+        let command = PiCommand(executable: URL(fileURLWithPath: "/usr/bin/true"), arguments: [], timeout: 2)
+
+        XCTAssertThrowsError(try FoundationPiCommandRunner().run(command, cancellation: cancellation)) { error in
+            XCTAssertEqual(error as? JobsError, .executionCancelled)
+        }
+    }
+
     func testWorkerBuildsReadOnlyWholeVaultCommandAndReturnsDeclaredArtifacts() throws {
         let fixture = try PiWorkerFixture()
         try fixture.write("# Transcript\nA decision was made.", to: "Meetings/kickoff/transcript.md")

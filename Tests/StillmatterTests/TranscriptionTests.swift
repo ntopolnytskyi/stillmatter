@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import XCTest
 @testable import StillmatterCore
 
@@ -219,6 +220,40 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(handedOffPath, "Meetings/2027/01/15/10-00-roadmap/transcript.json")
     }
 
+    func testProductionTranscriptionExecutorQuiescesCancellationBeforePublishing() throws {
+        let fixture = try TranscriptionFixture()
+        let started = expectation(description: "transcription engine started")
+        let engine = BlockingCancellableTranscriptionEngine(started: started)
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: engine)
+        let publicationLock = NSLock()
+        var published = false
+        let executor = TranscriptionJobExecutor(pipeline: pipeline, onTranscriptGenerated: { _, _ in
+            publicationLock.lock(); published = true; publicationLock.unlock()
+        })
+        let transcription = TranscriptionJob.manifest(title: "Roadmap", bundle: fixture.makeBundle(system: nil),
+            selection: fixture.selection, language: .english)
+        let manifest = try MeetingWorkflowJob.manifest(transcription: transcription)
+        let job = JobRecord(id: "cancel-transcription", manifest: manifest, status: .running, stages: [],
+            createdAt: "2027-01-15T10:00:00Z", updatedAt: "2027-01-15T10:00:00Z", failureDetails: nil)
+        let cancellation = JobExecutionCancellation()
+        let completed = expectation(description: "cancelled transcription completed")
+        executor.execute(job: job, stage: manifest.stages[0], cancellation: cancellation) { result in
+            guard case .failure = result else { XCTFail("Cancelled stage unexpectedly succeeded"); completed.fulfill(); return }
+            completed.fulfill()
+        }
+
+        wait(for: [started], timeout: 2)
+        XCTAssertTrue(cancellation.cancelAndWait(), "Executor must wait for its worker to stop")
+        wait(for: [completed], timeout: 2)
+        let paths = TranscriptionPipeline.artifactPaths(meetingRelativePath: fixture.bundle.meetingRelativePath)
+        publicationLock.lock(); let wasPublished = published; publicationLock.unlock()
+        XCTAssertFalse(wasPublished)
+        for path in [paths.markdown, paths.json, paths.vtt] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceRootURL.appendingPathComponent(path).path))
+        }
+    }
+
     func testWhisperCLIAdapterPassesLanguageAndNormalizesCurrentJSONFormat() throws {
         let fixture = try TranscriptionFixture()
         let executable = fixture.rootURL.appendingPathComponent("fake-whisper.sh")
@@ -251,6 +286,75 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertTrue(arguments.contains("-l\nuk\n"))
         XCTAssertTrue(arguments.contains("-oj\n"))
     }
+
+    func testWhisperCLIProcessStopsWhenTranscriptionIsCancelled() throws {
+        let fixture = try TranscriptionFixture()
+        let executable = fixture.rootURL.appendingPathComponent("hanging-whisper.sh")
+        let started = fixture.rootURL.appendingPathComponent("whisper-started")
+        try Data("#!/bin/sh\ntrap '' TERM\nprintf started > '\(started.path)'\nexec /bin/sleep 30\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let model = fixture.rootURL.appendingPathComponent("model.bin")
+        try Data("model".utf8).write(to: model)
+        let engine = WhisperCLITranscriptionEngine(executableURL: executable, modelURL: model)
+        let cancellation = JobExecutionCancellation()
+        let stopped = expectation(description: "whisper process stopped")
+        let resultLock = NSLock()
+        var result: Result<TranscriptionEngineResult, Error>?
+        DispatchQueue.global().async {
+            let value = Result { try engine.transcribe(audioURL: fixture.echoSidecarURL, language: .english,
+                track: .microphone, cancellation: cancellation) }
+            resultLock.lock(); result = value; resultLock.unlock()
+            stopped.fulfill()
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline && !FileManager.default.fileExists(atPath: started.path) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.005))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: started.path), "Fake transcription process did not start")
+        _ = cancellation.cancelAndWait()
+        wait(for: [stopped], timeout: 3)
+        resultLock.lock(); let finalResult = result; resultLock.unlock()
+        guard case .failure(let error)? = finalResult else { return XCTFail("Cancelled process unexpectedly succeeded") }
+        XCTAssertEqual(error as? JobsError, .executionCancelled)
+        XCTAssertEqual(TranscriptionError.cancelled.description, "Transcription was cancelled.")
+    }
+
+    func testWhisperAudioConversionStopsWhenTranscriptionIsCancelled() throws {
+        let fixture = try TranscriptionFixture()
+        let converter = fixture.rootURL.appendingPathComponent("hanging-afconvert.sh")
+        let started = fixture.rootURL.appendingPathComponent("converter-started")
+        try "#!/bin/sh\nprintf started > '\(started.path)'\nexec /bin/sleep 30\n".write(
+            to: converter, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: converter.path)
+        let model = fixture.rootURL.appendingPathComponent("model.bin")
+        try Data("model".utf8).write(to: model)
+        let engine = WhisperCLITranscriptionEngine(executableURL: URL(fileURLWithPath: "/bin/sh"),
+            modelURL: model, audioConverterURL: converter)
+        let cancellation = JobExecutionCancellation()
+        let stopped = expectation(description: "audio converter stopped")
+        let resultLock = NSLock()
+        var result: Result<TranscriptionEngineResult, Error>?
+        DispatchQueue.global().async {
+            let value = Result { try engine.transcribe(audioURL: fixture.microphoneURL, language: .english,
+                track: .microphone, cancellation: cancellation) }
+            resultLock.lock(); result = value; resultLock.unlock()
+            stopped.fulfill()
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline && !FileManager.default.fileExists(atPath: started.path) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.005))
+        }
+        if !FileManager.default.fileExists(atPath: started.path) {
+            wait(for: [stopped], timeout: 1)
+            resultLock.lock(); let earlyResult = result; resultLock.unlock()
+            return XCTFail("Converter did not start: \(String(describing: earlyResult))")
+        }
+        _ = cancellation.cancelAndWait()
+        wait(for: [stopped], timeout: 3)
+        resultLock.lock(); let finalResult = result; resultLock.unlock()
+        guard case .failure(let error)? = finalResult else { return XCTFail("Cancelled converter unexpectedly succeeded") }
+        XCTAssertEqual(error as? JobsError, .executionCancelled)
+    }
 }
 
 private final class StubTranscriptionEngine: TranscriptionEngine {
@@ -282,6 +386,26 @@ private final class StubTranscriptionEngine: TranscriptionEngine {
             detectedLanguage: language,
             diagnostics: ["fixture transcript"]
         )
+    }
+}
+
+private final class BlockingCancellableTranscriptionEngine: CancellableTranscriptionEngine {
+    let engineIdentifier = "blocking-test-engine"
+    let modelIdentifier = "blocking-test-model"
+    private let started: XCTestExpectation
+
+    init(started: XCTestExpectation) { self.started = started }
+
+    func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack) throws -> TranscriptionEngineResult {
+        XCTFail("Cancellable pipeline should call the cancellation-aware engine method")
+        return TranscriptionEngineResult(segments: [])
+    }
+
+    func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack,
+                    cancellation: JobExecutionCancellation) throws -> TranscriptionEngineResult {
+        started.fulfill()
+        while !cancellation.isCancelled { Thread.sleep(forTimeInterval: 0.005) }
+        throw JobsError.executionCancelled
     }
 }
 

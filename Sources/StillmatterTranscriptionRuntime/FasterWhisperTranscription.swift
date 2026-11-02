@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import StillmatterCore
 
 public enum FasterWhisperRuntimeSupport {
@@ -55,7 +56,7 @@ enum FasterWhisperPythonSelector {
     }
 }
 
-private final class ProcessRunner {
+final class ProcessRunner {
     private let fileManager: FileManager
 
     init(fileManager: FileManager = .default) {
@@ -66,6 +67,7 @@ private final class ProcessRunner {
         executable: URL,
         arguments: [String],
         cancellation: TranscriptionInstallCancellation? = nil,
+        jobCancellation: JobExecutionCancellation? = nil,
         environment: [String: String]? = nil
     ) throws -> String {
         let stderrURL = fileManager.temporaryDirectory.appendingPathComponent("Stillmatter-faster-whisper-\(UUID().uuidString).log")
@@ -80,14 +82,18 @@ private final class ProcessRunner {
         process.standardOutput = stderr
         process.standardError = stderr
         if let environment { process.environment = environment }
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
         try process.run()
-        while process.isRunning {
+        while finished.wait(timeout: .now() + 0.05) != .success {
+            if jobCancellation?.isCancelled == true {
+                Self.stop(process, finished: finished)
+                throw JobsError.executionCancelled
+            }
             if cancellation?.isCancelled == true {
-                process.terminate()
-                process.waitUntilExit()
+                Self.stop(process, finished: finished)
                 throw TranscriptionComponentInstallError.cancelled
             }
-            Thread.sleep(forTimeInterval: 0.1)
         }
         try stderr.synchronize()
         let output = (try? String(contentsOf: stderrURL, encoding: .utf8))?
@@ -98,6 +104,14 @@ private final class ProcessRunner {
                 : output)
         }
         return output
+    }
+
+    private static func stop(_ process: Process, finished: DispatchSemaphore) {
+        process.terminate()
+        if finished.wait(timeout: .now() + 0.5) != .success, process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+            finished.wait()
+        }
     }
 }
 
@@ -243,7 +257,7 @@ with open(output_path, "w", encoding="utf-8") as output:
 """#
 }
 
-public final class FasterWhisperTranscriptionEngine: TranscriptionEngine {
+public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEngine {
     public let engineIdentifier = "faster-whisper"
     public let modelIdentifier: String
 
@@ -263,6 +277,12 @@ public final class FasterWhisperTranscriptionEngine: TranscriptionEngine {
         language: TranscriptLanguage,
         track: TranscriptTrack
     ) throws -> TranscriptionEngineResult {
+        try transcribe(audioURL: audioURL, language: language, track: track, cancellation: JobExecutionCancellation())
+    }
+
+    public func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack,
+                           cancellation: JobExecutionCancellation) throws -> TranscriptionEngineResult {
+        guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let pythonURL = componentURL.appendingPathComponent("runtime/bin/python3")
         let scriptURL = componentURL.appendingPathComponent("transcribe.py")
         let modelURL = componentURL.appendingPathComponent("model", isDirectory: true)
@@ -275,8 +295,10 @@ public final class FasterWhisperTranscriptionEngine: TranscriptionEngine {
         defer { try? fileManager.removeItem(at: outputURL) }
         let diagnostics = try runner.run(
             executable: pythonURL,
-            arguments: [scriptURL.path, modelURL.path, audioURL.path, language.rawValue, outputURL.path]
+            arguments: [scriptURL.path, modelURL.path, audioURL.path, language.rawValue, outputURL.path],
+            jobCancellation: cancellation
         )
+        guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let output = try JSONDecoder().decode(FasterWhisperOutput.self, from: Data(contentsOf: outputURL))
         let segments = output.segments.enumerated().compactMap { index, segment -> TranscriptSegment? in
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)

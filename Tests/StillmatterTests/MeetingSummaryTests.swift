@@ -69,6 +69,85 @@ final class MeetingSummaryTests: XCTestCase {
         XCTAssertFalse(reviewItems.contains { $0.title.contains("Alex") })
     }
 
+    func testProductionSummaryExecutorTimeoutKillsWorkerBeforeRetryAndQueueAdvances() throws {
+        let fixture = try MeetingSummaryFixture()
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript,
+            transcriptJSONRelativePath: fixture.transcriptPath).owned(by: fixture.workspaceURL)
+        let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath,
+            transcript: fixture.transcriptPath, decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        let encoder = JSONEncoder()
+        let extractionJSON = String(decoding: try encoder.encode(extraction), as: UTF8.self)
+        let summaryText = """
+        ---
+        type: meeting-summary
+        schema_version: 1
+        meeting: \(fixture.transcript.meetingRelativePath)
+        transcript: \(fixture.transcriptPath)
+        generated_at: 2026-09-21T09:00:00Z
+        ---
+
+        # Summary
+
+        Completed after retry.
+
+        ## Decisions
+
+        -
+
+        ## My action items
+
+        -
+
+        ## Other action items
+
+        -
+
+        ## Open questions
+
+        -
+        """
+        let responseObject: [String: Any] = ["schema_version": 1, "artifacts": [
+            ["relative_path": fixture.summaryPath, "content": summaryText],
+            ["relative_path": fixture.extractionPath, "content": extractionJSON]
+        ]]
+        let responseURL = fixture.rootURL.appendingPathComponent("response.json")
+        try JSONSerialization.data(withJSONObject: responseObject, options: [.sortedKeys]).write(to: responseURL)
+        let countURL = fixture.rootURL.appendingPathComponent("worker-count")
+        let executableURL = fixture.rootURL.appendingPathComponent("fake-pi.sh")
+        let script = """
+        #!/bin/sh
+        count=0
+        [ ! -f '\(countURL.path)' ] || count=$(cat '\(countURL.path)')
+        count=$((count + 1))
+        printf '%s' "$count" > '\(countURL.path)'
+        if [ "$count" -lt 3 ]; then trap '' TERM; while :; do /bin/sleep 1; done; fi
+        cat '\(responseURL.path)'
+        """
+        try Data(script.utf8).write(to: executableURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+        let worker = PiCodexWorker(executableURL: executableURL, vaultRootURL: fixture.workspaceURL)
+        let executor = MeetingSummaryJobExecutor(worker: worker, workspaceRootURL: fixture.workspaceURL,
+            vault: WorkspaceVault(workspaceRootURL: fixture.workspaceURL,
+                appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support")), inbox: fixture.inbox)
+        let store = try JobStore(databaseURL: fixture.rootURL.appendingPathComponent("support/jobs.sqlite"))
+        _ = try store.enqueue(id: "A", manifest: manifest)
+        _ = try store.enqueue(id: "B", manifest: manifest)
+        let scheduler = JobScheduler(store: store, executor: executor, workspaceRootURL: fixture.workspaceURL,
+            executionTimeout: 0.15)
+        defer { scheduler.stop() }
+        scheduler.start()
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, (try store.job(id: "A")?.status != .failed || store.job(id: "B")?.status != .succeeded) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+
+        XCTAssertEqual(try store.job(id: "A")?.status, .failed)
+        XCTAssertEqual(try store.job(id: "A")?.stages.first?.attemptCount, 2)
+        XCTAssertEqual(try store.job(id: "B")?.status, .succeeded)
+        XCTAssertEqual(try String(contentsOf: countURL), "3", "Both timed-out workers must be stopped before the next attempt starts")
+        XCTAssertTrue(try fixture.contents(fixture.summaryPath).contains("Completed after retry."))
+    }
+
     func testRegenerationKeepsManualSummaryUntilValidationSucceedsThenReplacesIt() throws {
         let fixture = try MeetingSummaryFixture()
         let original = "## Summary\n\nManually corrected.\n"

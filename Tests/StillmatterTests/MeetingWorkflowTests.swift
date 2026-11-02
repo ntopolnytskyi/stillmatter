@@ -134,6 +134,71 @@ final class MeetingWorkflowTests: XCTestCase {
         XCTAssertEqual(try recoveredStore.job(id: "A")?.stages.last?.attemptCount, 2)
     }
 
+    func testCancellableHungExecutorTimesOutTwiceRejectsLateCompletionAndAdvancesQueue() throws {
+        let store = try store()
+        _ = try store.enqueue(id: "A", manifest: JobManifest(type: MeetingWorkflowJob.type, title: "A",
+            executionClass: .heavy, stages: [.init(id: "prepare", title: "Prepare")],
+            sourceArtifacts: [.init(relativePath: "Meetings/A/meeting.md", role: "meeting")], maxAutomaticRetries: 1).owned(by: workspace))
+        _ = try store.enqueue(id: "B", manifest: JobManifest(type: MeetingWorkflowJob.type, title: "B",
+            executionClass: .heavy, stages: [.init(id: "prepare", title: "Prepare")],
+            sourceArtifacts: [.init(relativePath: "Meetings/B/meeting.md", role: "meeting")], maxAutomaticRetries: 1).owned(by: workspace))
+        let executor = HungCancellableExecutor()
+        let scheduler = JobScheduler(store: store, executor: executor, workspaceRootURL: workspace, executionTimeout: 0.05)
+        defer { scheduler.stop() }
+        scheduler.start()
+        wait { executor.events.count == 1 }
+        wait { executor.cancellations.count == 1 }
+        wait { executor.events.count == 2 }
+        wait { executor.cancellations.count == 2 }
+        wait { try store.job(id: "A")?.status == .failed }
+        XCTAssertEqual(try store.job(id: "A")?.stages.first?.attemptCount, 2)
+        XCTAssertTrue(try store.job(id: "A")?.failureDetails?.contains("execution limit") == true)
+
+        // A worker that reports success after its acknowledged cancellation must not
+        // overwrite the durable timeout failure or publish a second completion.
+        executor.completeFirstLate()
+        wait { executor.events.last == "B/prepare" }
+        XCTAssertEqual(try store.job(id: "A")?.status, .failed)
+        XCTAssertEqual(try store.job(id: "A")?.stages.first?.status, .failed)
+    }
+
+    func testCancellationFenceAndWorkflowRegistryDispatchContracts() throws {
+        let cancellation = JobExecutionCancellation()
+        XCTAssertTrue(try cancellation.performIfActive { true })
+        XCTAssertFalse(cancellation.cancelAndWait(), "Cancellation without a stop handler cannot acknowledge quiescence")
+        var lateStopInstalled = false
+        cancellation.installCancelAndWait { lateStopInstalled = true; return true }
+        XCTAssertTrue(lateStopInstalled)
+        XCTAssertThrowsError(try cancellation.performIfActive { true })
+        XCTAssertFalse(cancellation.cancelAndWait(), "A repeated cancellation cannot acknowledge a stop twice")
+
+        let jobManifest = try workflow("dispatch")
+        let job = JobRecord(id: "dispatch", manifest: jobManifest, status: .running, stages: [],
+            createdAt: "2027-01-15T10:00:00Z", updatedAt: "2027-01-15T10:00:00Z", failureDetails: nil)
+        let stage = try XCTUnwrap(jobManifest.stages.first)
+        let cancellable = CancellableDispatchExecutor()
+        let registry = JobHandlerRegistry(handlers: [MeetingWorkflowJob.type:
+            MeetingWorkflowHandler(transcription: cancellable, analysis: cancellable)])
+        var delivered: Result<JobStageResult, Error>?
+        registry.execute(job: job, stage: stage, cancellation: JobExecutionCancellation()) { delivered = $0 }
+        XCTAssertTrue(cancellable.receivedCancellation)
+        XCTAssertNoThrow(try delivered?.get())
+
+        let nonCancellable = WorkflowStageControl()
+        let fallback = MeetingWorkflowHandler(transcription: nonCancellable, analysis: nonCancellable)
+        var fallbackDelivered = false
+        fallback.execute(job: job, stage: stage, cancellation: JobExecutionCancellation()) { _ in fallbackDelivered = true }
+        nonCancellable.complete()
+        XCTAssertTrue(fallbackDelivered)
+
+        let missingRegistry = JobHandlerRegistry(handlers: [:])
+        var missingFailed = false
+        missingRegistry.execute(job: job, stage: stage, cancellation: JobExecutionCancellation()) { result in
+            if case .failure = result { missingFailed = true }
+        }
+        XCTAssertTrue(missingFailed)
+    }
+
     func testMissingModelFailureCanRetryOutstandingStageAfterSetup() throws {
         let store = try store()
         _ = try store.enqueue(id: "A", manifest: workflow("A"))
@@ -340,5 +405,54 @@ private final class WorkflowStageControl: JobExecuting {
             return GeneratedArtifact(relativePath: expectation.relativePath, data: Data(text.utf8))
         }
         next.2(.success(JobStageResult(artifacts: artifacts)))
+    }
+}
+
+private final class HungCancellableExecutor: CancellableJobExecuting {
+    private let lock = NSLock()
+    private var completions: [(Result<JobStageResult, Error>) -> Void] = []
+    private var eventStorage: [String] = []
+    private var cancellationStorage: [Bool] = []
+    var events: [String] { lock.lock(); defer { lock.unlock() }; return eventStorage }
+    var cancellations: [Bool] { lock.lock(); defer { lock.unlock() }; return cancellationStorage }
+
+    func execute(job: JobRecord, stage: JobStageDefinition,
+                 completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        execute(job: job, stage: stage, cancellation: JobExecutionCancellation(), completion: completion)
+    }
+
+    func execute(job: JobRecord, stage: JobStageDefinition, cancellation: JobExecutionCancellation,
+                 completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        lock.lock()
+        eventStorage.append("\(job.id)/\(stage.id)")
+        completions.append(completion)
+        lock.unlock()
+        cancellation.installCancelAndWait { [weak self] in
+            guard let self else { return false }
+            self.lock.lock(); defer { self.lock.unlock() }
+            self.cancellationStorage.append(true)
+            return true
+        }
+    }
+
+    func completeFirstLate() {
+        lock.lock(); let completion = completions.first; lock.unlock()
+        completion?(.success(JobStageResult(artifacts: [], logMessages: ["late completion"])))
+    }
+}
+
+private final class CancellableDispatchExecutor: CancellableJobExecuting {
+    private(set) var receivedCancellation = false
+
+    func execute(job: JobRecord, stage: JobStageDefinition,
+                 completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        completion(.success(JobStageResult(artifacts: [])))
+    }
+
+    func execute(job: JobRecord, stage: JobStageDefinition, cancellation: JobExecutionCancellation,
+                 completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        receivedCancellation = true
+        cancellation.installCancelAndWait { true }
+        completion(.success(JobStageResult(artifacts: [])))
     }
 }

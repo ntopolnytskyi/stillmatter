@@ -119,6 +119,16 @@ class CoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.CoverageError, "Missing shipped source coverage.*Window.swift"):
             gate.merge_reports(self.manifest, [self.report()])
 
+    def test_incremental_only_allows_unmodified_source_gaps_but_requires_changed_files(self):
+        report = self.report()
+        merged = gate.merge_reports(self.manifest, [report], require_complete=False)
+        gate.require_changed_sources_covered(self.manifest, merged, {self.core: {1}})
+        self.assertTrue(gate.passes(gate.summarize(self.manifest, merged, {self.core: {1}})))
+        with self.assertRaisesRegex(gate.CoverageError, "Missing changed shipped source coverage.*Window.swift"):
+            gate.require_changed_sources_covered(self.manifest, merged, {self.app: {1}})
+        with self.assertRaisesRegex(gate.CoverageError, "Missing shipped source coverage.*Window.swift"):
+            gate.merge_reports(self.manifest, [report])
+
     def test_empty_file_record_cannot_launder_missing_instrumentation(self):
         report = self.report(app={1: 1})
         report["files"][self.app] = {}

@@ -2,7 +2,7 @@ import Foundation
 
 /// Dispatches a persisted job type to its registered handler. Registrations are
 /// immutable for one scheduler lifetime, so reconfiguration cannot retarget a stage.
-public final class JobHandlerRegistry: JobExecuting {
+public final class JobHandlerRegistry: CancellableJobExecuting {
     public let jobTypes: Set<String>
     private let handlers: [String: JobExecuting]
 
@@ -18,6 +18,21 @@ public final class JobHandlerRegistry: JobExecuting {
             return
         }
         handler.execute(job: job, stage: stage, completion: completion)
+    }
+
+    public func execute(job: JobRecord, stage: JobStageDefinition, cancellation: JobExecutionCancellation,
+                        completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        guard let handler = handlers[job.manifest.type] else {
+            completion(.failure(JobsError.invalidManifest("No registered handler for \(job.manifest.type)")))
+            return
+        }
+        if let cancellable = handler as? CancellableJobExecuting {
+            cancellable.execute(job: job, stage: stage, cancellation: cancellation, completion: completion)
+        } else {
+            // No cancellation acknowledgement means the scheduler will keep the
+            // queue turn until this handler completes; never guess that it stopped.
+            handler.execute(job: job, stage: stage, completion: completion)
+        }
     }
 }
 

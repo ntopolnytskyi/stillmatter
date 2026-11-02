@@ -56,6 +56,66 @@ final class FasterWhisperRuntimeTests: XCTestCase {
         }
     }
 
+    func testEngineStopsManagedProcessWhenJobExecutionIsCancelled() throws {
+        let root = try makeComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executableURL = root.appendingPathComponent("runtime/bin/python3")
+        let startedURL = root.appendingPathComponent("started")
+        try "#!/bin/sh\ntrap '' TERM\nprintf started > '\(startedURL.path)'\nexec /bin/sleep 30\n".write(
+            to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+        let engine = FasterWhisperTranscriptionEngine(componentURL: root, modelIdentifier: "fixture")
+        let cancellation = JobExecutionCancellation()
+        let stopped = expectation(description: "managed process stopped")
+        let resultLock = NSLock()
+        var result: Result<TranscriptionEngineResult, Error>?
+        DispatchQueue.global().async {
+            let value = Result { try engine.transcribe(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"),
+                language: .english, track: .microphone, cancellation: cancellation) }
+            resultLock.lock(); result = value; resultLock.unlock()
+            stopped.fulfill()
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline && !FileManager.default.fileExists(atPath: startedURL.path) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.005))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: startedURL.path))
+        _ = cancellation.cancelAndWait()
+        wait(for: [stopped], timeout: 3)
+        resultLock.lock(); let finalResult = result; resultLock.unlock()
+        guard case .failure(let error)? = finalResult else { return XCTFail("Cancelled process unexpectedly succeeded") }
+        XCTAssertEqual(error as? JobsError, .executionCancelled)
+    }
+
+    func testManagedProcessRunnerStopsInstallerProcessOnCancellation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("StillmatterProcessRunnerTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("blocking-installer.sh")
+        let started = root.appendingPathComponent("installer-started")
+        try "#!/bin/sh\ntrap '' TERM\nprintf started > '\(started.path)'\nwhile :; do /bin/sleep 1; done\n".write(
+            to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let cancellation = TranscriptionInstallCancellation()
+        let stopped = expectation(description: "installer process stopped")
+        let resultLock = NSLock()
+        var failure: Error?
+        DispatchQueue.global().async {
+            do { _ = try ProcessRunner().run(executable: executable, arguments: [], cancellation: cancellation) }
+            catch { resultLock.lock(); failure = error; resultLock.unlock() }
+            stopped.fulfill()
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline && !FileManager.default.fileExists(atPath: started.path) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.005))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: started.path))
+        cancellation.cancel()
+        wait(for: [stopped], timeout: 4)
+        resultLock.lock(); let finalFailure = failure; resultLock.unlock()
+        XCTAssertEqual(finalFailure as? TranscriptionComponentInstallError, .cancelled)
+    }
+
     func testModelChoicesUsePinnedFasterWhisperRepositoriesAndRuntime() {
         XCTAssertEqual(FasterWhisperModelAcquirer.packageVersion, "1.2.1")
         XCTAssertEqual(TranscriptionComponentPaths.runtimeVersion, "faster-whisper-1.2.1")

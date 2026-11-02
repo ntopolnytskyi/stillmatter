@@ -48,21 +48,35 @@ public enum MeetingWorkflowJob {
 
 /// Owns Meeting-specific stage dispatch. Jobs only sees registered types and
 /// persisted ordered stages, never transcription/analysis policy.
-public final class MeetingWorkflowHandler: JobExecuting {
+public final class MeetingWorkflowHandler: CancellableJobExecuting {
     private let transcription: JobExecuting
     private let analysis: JobExecuting
     public init(transcription: JobExecuting, analysis: JobExecuting) { self.transcription = transcription; self.analysis = analysis }
 
     public func execute(job: JobRecord, stage: JobStageDefinition,
                         completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        let handler = stageHandler(stage)
+        handler.execute(job: job, stage: stage, completion: completion)
+    }
+
+    public func execute(job: JobRecord, stage: JobStageDefinition, cancellation: JobExecutionCancellation,
+                        completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        let handler = stageHandler(stage)
+        if let cancellable = handler as? CancellableJobExecuting {
+            cancellable.execute(job: job, stage: stage, cancellation: cancellation, completion: completion)
+        } else {
+            handler.execute(job: job, stage: stage, completion: completion)
+        }
+    }
+
+    private func stageHandler(_ stage: JobStageDefinition) -> JobExecuting {
         let handler: JobExecuting
         switch stage.id {
         case TranscriptionJob.stageID: handler = transcription
         case MeetingSummaryJob.stageID: handler = analysis
         default:
-            completion(.failure(JobsError.invalidManifest("Unsupported Meeting workflow stage \(stage.id)")))
-            return
+            return UnavailableJobHandler(guidance: "Unsupported Meeting workflow stage \(stage.id)")
         }
-        handler.execute(job: job, stage: stage, completion: completion)
+        return handler
     }
 }

@@ -164,7 +164,7 @@ public enum MeetingSummaryJob {
 
 /// Validates pi/Codex output against the source Transcript before atomically publishing generated
 /// artifacts and creating Review Inbox proposals for the user's Action Items only.
-public final class MeetingSummaryJobExecutor: JobExecuting {
+public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
     private let worker: PiCodexWorker
     private let workspaceRootURL: URL
     private let vault: WorkspaceVault
@@ -193,12 +193,26 @@ public final class MeetingSummaryJobExecutor: JobExecuting {
         stage: JobStageDefinition,
         completion: @escaping (Result<JobStageResult, Error>) -> Void
     ) {
+        execute(job: job, stage: stage, cancellation: JobExecutionCancellation(), completion: completion)
+    }
+
+    public func execute(job: JobRecord, stage: JobStageDefinition, cancellation: JobExecutionCancellation,
+                        completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        let workerFinished = DispatchGroup()
+        workerFinished.enter()
+        cancellation.installCancelAndWait {
+            workerFinished.wait()
+            return true
+        }
         queue.async { [self] in
-            completion(Result { try run(job: job, stage: stage) })
+            defer { workerFinished.leave() }
+            completion(Result { try run(job: job, stage: stage, cancellation: cancellation) })
         }
     }
 
-    private func run(job: JobRecord, stage: JobStageDefinition) throws -> JobStageResult {
+    private func run(job: JobRecord, stage: JobStageDefinition,
+                     cancellation: JobExecutionCancellation) throws -> JobStageResult {
+        guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         guard (job.manifest.type == MeetingSummaryJob.type || job.manifest.type == MeetingWorkflowJob.type), stage.id == MeetingSummaryJob.stageID else {
             throw MeetingSummaryError.unsupportedJob("\(job.manifest.type)/\(stage.id)")
         }
@@ -221,7 +235,8 @@ public final class MeetingSummaryJobExecutor: JobExecuting {
         let expectedVersions = try Dictionary(uniqueKeysWithValues: workflow.expectedOutputs.map {
             ($0.relativePath, try vault.versionOfMarkdown(relativePath: $0.relativePath))
         })
-        let result = try worker.run(manifest: workflow)
+        let result = try worker.run(manifest: workflow, cancellation: cancellation)
+        guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let artifactsByPath = Dictionary(uniqueKeysWithValues: result.artifacts.map { ($0.relativePath, $0) })
         let paths = MeetingSummaryJob.artifactPaths(meetingRelativePath: transcript.meetingRelativePath)
         guard let summary = artifactsByPath[paths.summary] else {
@@ -246,32 +261,34 @@ public final class MeetingSummaryJobExecutor: JobExecuting {
         }
         try validate(extraction, transcript: transcript, transcriptPath: transcriptPath)
 
-        if let canonicalBase, let canonicalID {
-            try artifacts.publishGenerated(summary: summary.data, extraction: extraction, extractionData: extractionArtifact.data,
-                base: canonicalBase, meetingPath: transcript.meetingRelativePath, meetingID: canonicalID,
-                expectedExtraction: expectedVersions[paths.extraction] ?? nil)
-        } else {
-            try vault.replaceMarkdownTransaction(result.artifacts.map {
-                WorkspaceMarkdownReplacement(relativePath: $0.relativePath, data: $0.data,
-                    expectedVersion: expectedVersions[$0.relativePath] ?? nil)
-            })
-        }
         let sourceRef = Self.summarySourceRef(meetingRelativePath: transcript.meetingRelativePath)
         var queued = 0
-        for item in extraction.myActionItems {
-            let proposalID = "meeting-action:\(captureSessionID):\(item.id)"
-            if try inbox.queueProposal(
-                id: proposalID,
-                title: "\(item.text) #ai-proposed",
-                sourceRef: sourceRef,
-                suppressionKey: proposalID
-            ) {
-                queued += 1
+        try cancellation.performIfActive {
+            if let canonicalBase, let canonicalID {
+                try artifacts.publishGenerated(summary: summary.data, extraction: extraction, extractionData: extractionArtifact.data,
+                    base: canonicalBase, meetingPath: transcript.meetingRelativePath, meetingID: canonicalID,
+                    expectedExtraction: expectedVersions[paths.extraction] ?? nil)
+            } else {
+                try vault.replaceMarkdownTransaction(result.artifacts.map {
+                    WorkspaceMarkdownReplacement(relativePath: $0.relativePath, data: $0.data,
+                        expectedVersion: expectedVersions[$0.relativePath] ?? nil)
+                })
             }
+            for item in extraction.myActionItems {
+                let proposalID = "meeting-action:\(captureSessionID):\(item.id)"
+                if try inbox.queueProposal(
+                    id: proposalID,
+                    title: "\(item.text) #ai-proposed",
+                    sourceRef: sourceRef,
+                    suppressionKey: proposalID
+                ) {
+                    queued += 1
+                }
+            }
+            try inbox.reconcileMeetingProposals(sessionID: captureSessionID, sourceRef: sourceRef,
+                currentIDs: Set(extraction.myActionItems.map { "meeting-action:\(captureSessionID):\($0.id)" }))
+            onApplied()
         }
-        try inbox.reconcileMeetingProposals(sessionID: captureSessionID, sourceRef: sourceRef,
-            currentIDs: Set(extraction.myActionItems.map { "meeting-action:\(captureSessionID):\($0.id)" }))
-        onApplied()
         return JobStageResult(
             artifacts: result.artifacts,
             logMessages: result.logMessages + [

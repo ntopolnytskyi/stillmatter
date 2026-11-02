@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public enum TranscriptLanguage: String, Codable, CaseIterable, Equatable {
     case english = "en"
@@ -84,6 +85,11 @@ public protocol TranscriptionEngine: AnyObject {
     func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack) throws -> TranscriptionEngineResult
 }
 
+public protocol CancellableTranscriptionEngine: TranscriptionEngine {
+    func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack,
+                    cancellation: JobExecutionCancellation) throws -> TranscriptionEngineResult
+}
+
 public struct TranscriptAudioSource: Codable, Equatable {
     public let track: TranscriptTrack
     public let filePath: String
@@ -146,6 +152,7 @@ public enum TranscriptionError: Error, Equatable, CustomStringConvertible {
     case missingConfiguration(String)
     case engineFailed(String)
     case invalidEngineOutput(String)
+    case cancelled
 
     public var description: String {
         switch self {
@@ -156,6 +163,7 @@ public enum TranscriptionError: Error, Equatable, CustomStringConvertible {
         case let .missingConfiguration(reason): return "Transcription is not configured: \(reason)"
         case let .engineFailed(reason): return "Transcription engine failed: \(reason)"
         case let .invalidEngineOutput(reason): return "Invalid transcription engine output: \(reason)"
+        case .cancelled: return "Transcription was cancelled."
         }
     }
 }
@@ -190,8 +198,10 @@ public final class TranscriptionPipeline {
         from bundle: RecordingBundle,
         selection: TranscriptionAudioSidecar?,
         language: TranscriptLanguage,
-        onPublished: ((TranscriptionArtifacts) throws -> Void)? = nil
+        onPublished: ((TranscriptionArtifacts) throws -> Void)? = nil,
+        cancellation: JobExecutionCancellation? = nil
     ) throws -> TranscriptionArtifacts {
+        if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
         try bundleValidator.validate(bundle)
         let microphone = try microphoneSource(bundle: bundle, selection: selection)
         var sources = [microphone]
@@ -207,14 +217,17 @@ public final class TranscriptionPipeline {
         var diagnostics = selection?.diagnostics ?? []
         var detectedLanguages: [TranscriptLanguage] = []
         for source in sources {
+            if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
             guard fileManager.fileExists(atPath: source.filePath) else {
                 throw TranscriptionError.missingAudio(source.filePath)
             }
-            let result = try engine.transcribe(
-                audioURL: URL(fileURLWithPath: source.filePath),
-                language: language,
-                track: source.track
-            )
+            let result: TranscriptionEngineResult
+            if let cancellation, let cancellable = engine as? CancellableTranscriptionEngine {
+                result = try cancellable.transcribe(audioURL: URL(fileURLWithPath: source.filePath),
+                    language: language, track: source.track, cancellation: cancellation)
+            } else {
+                result = try engine.transcribe(audioURL: URL(fileURLWithPath: source.filePath), language: language, track: source.track)
+            }
             try validate(result.segments, expectedTrack: source.track)
             segments.append(contentsOf: result.segments)
             diagnostics.append(contentsOf: result.diagnostics.map { "\(source.track.rawValue): \($0)" })
@@ -288,10 +301,14 @@ public final class TranscriptionPipeline {
                 expectedVersion: try vault.versionOfMarkdown(relativePath: artifact.relativePath))
         }
         do {
-            try vault.replaceMarkdownTransaction(replacements) {
-                try self.searchIndex?.update(relativePath: paths.json)
-                try onPublished?(artifacts)
+            let publish = {
+                try vault.replaceMarkdownTransaction(replacements) {
+                    try self.searchIndex?.update(relativePath: paths.json)
+                    try onPublished?(artifacts)
+                }
             }
+            if let cancellation { try cancellation.performIfActive(publish) }
+            else { try publish() }
         } catch {
             // If publication was undone after indexing, restore the old JSON chunks too.
             if let searchIndex {
@@ -457,7 +474,7 @@ public enum TranscriptionJob {
     }
 }
 
-public final class TranscriptionJobExecutor: JobExecuting {
+public final class TranscriptionJobExecutor: CancellableJobExecuting {
     private let pipeline: TranscriptionPipeline
     private let queue: DispatchQueue
     private let onTranscriptGenerated: (JobRecord, TranscriptionArtifacts) throws -> Void
@@ -480,8 +497,21 @@ public final class TranscriptionJobExecutor: JobExecuting {
         stage: JobStageDefinition,
         completion: @escaping (Result<JobStageResult, Error>) -> Void
     ) {
+        execute(job: job, stage: stage, cancellation: JobExecutionCancellation(), completion: completion)
+    }
+
+    public func execute(job: JobRecord, stage: JobStageDefinition, cancellation: JobExecutionCancellation,
+                        completion: @escaping (Result<JobStageResult, Error>) -> Void) {
+        let workerFinished = DispatchGroup()
+        workerFinished.enter()
+        cancellation.installCancelAndWait {
+            workerFinished.wait()
+            return true
+        }
         queue.async { [pipeline, decoder, onTranscriptGenerated] in
+            defer { workerFinished.leave() }
             do {
+                guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
                 guard (job.manifest.type == TranscriptionJob.type || job.manifest.type == MeetingWorkflowJob.type), stage.id == TranscriptionJob.stageID else {
                     throw TranscriptionError.unsupportedJob("\(job.manifest.type)/\(stage.id)")
                 }
@@ -498,9 +528,9 @@ public final class TranscriptionJobExecutor: JobExecuting {
                 guard let language = TranscriptLanguage(rawValue: job.manifest.metadata["language"] ?? "") else {
                     throw TranscriptionError.unsupportedJob("language must be en or uk")
                 }
-                let artifacts = try pipeline.generate(from: bundle, selection: selection, language: language) { artifacts in
+                let artifacts = try pipeline.generate(from: bundle, selection: selection, language: language, onPublished: { artifacts in
                     try onTranscriptGenerated(job, artifacts)
-                }
+                }, cancellation: cancellation)
                 completion(.success(JobStageResult(
                     artifacts: artifacts.generatedArtifacts,
                     logMessages: [
@@ -518,16 +548,19 @@ public final class TranscriptionJobExecutor: JobExecuting {
 
 /// Local whisper.cpp adapter. It invokes whisper-cli with JSON output enabled and normalizes
 /// both current `transcription` output and older `segments` output into Stillmatter segments.
-public final class WhisperCLITranscriptionEngine: TranscriptionEngine {
+public final class WhisperCLITranscriptionEngine: CancellableTranscriptionEngine {
     public let engineIdentifier = "whisper.cpp"
     public let modelIdentifier: String
     private let executableURL: URL
     private let modelURL: URL
+    private let audioConverterURL: URL
     private let fileManager: FileManager
 
-    public init(executableURL: URL, modelURL: URL, fileManager: FileManager = .default) {
+    public init(executableURL: URL, modelURL: URL, audioConverterURL: URL = URL(fileURLWithPath: "/usr/bin/afconvert"),
+                fileManager: FileManager = .default) {
         self.executableURL = executableURL
         self.modelURL = modelURL
+        self.audioConverterURL = audioConverterURL
         self.modelIdentifier = modelURL.deletingPathExtension().lastPathComponent
         self.fileManager = fileManager
     }
@@ -537,6 +570,12 @@ public final class WhisperCLITranscriptionEngine: TranscriptionEngine {
         language: TranscriptLanguage,
         track: TranscriptTrack
     ) throws -> TranscriptionEngineResult {
+        try transcribe(audioURL: audioURL, language: language, track: track, cancellation: JobExecutionCancellation())
+    }
+
+    public func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack,
+                           cancellation: JobExecutionCancellation) throws -> TranscriptionEngineResult {
+        if cancellation.isCancelled { throw JobsError.executionCancelled }
         guard fileManager.isExecutableFile(atPath: executableURL.path) else {
             throw TranscriptionError.missingConfiguration("whisper-cli is not executable at \(executableURL.path)")
         }
@@ -547,7 +586,7 @@ public final class WhisperCLITranscriptionEngine: TranscriptionEngine {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: directory) }
         let prefix = directory.appendingPathComponent("transcript")
-        let preparedAudioURL = try prepareAudioInput(audioURL, in: directory)
+        let preparedAudioURL = try prepareAudioInput(audioURL, in: directory, cancellation: cancellation)
         let stderrURL = directory.appendingPathComponent("whisper-stderr.log")
         fileManager.createFile(atPath: stderrURL.path, contents: nil)
         let stderrHandle = try FileHandle(forWritingTo: stderrURL)
@@ -563,8 +602,16 @@ public final class WhisperCLITranscriptionEngine: TranscriptionEngine {
         ]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = stderrHandle
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
         try process.run()
-        process.waitUntilExit()
+        while finished.wait(timeout: .now() + 0.05) != .success {
+            if cancellation.isCancelled {
+                Self.stop(process, finished: finished)
+                throw JobsError.executionCancelled
+            }
+        }
+        if cancellation.isCancelled { throw JobsError.executionCancelled }
         try stderrHandle.synchronize()
         let stderrText = (try? String(contentsOf: stderrURL)) ?? ""
         guard process.terminationStatus == 0 else {
@@ -583,9 +630,10 @@ public final class WhisperCLITranscriptionEngine: TranscriptionEngine {
         )
     }
 
-    private func prepareAudioInput(_ audioURL: URL, in directory: URL) throws -> URL {
+    private func prepareAudioInput(_ audioURL: URL, in directory: URL,
+                                   cancellation: JobExecutionCancellation) throws -> URL {
         guard audioURL.pathExtension.lowercased() != "wav" else { return audioURL }
-        let converterURL = URL(fileURLWithPath: "/usr/bin/afconvert")
+        let converterURL = audioConverterURL
         guard fileManager.isExecutableFile(atPath: converterURL.path) else {
             throw TranscriptionError.missingConfiguration("afconvert is required to prepare non-WAV recordings")
         }
@@ -595,12 +643,28 @@ public final class WhisperCLITranscriptionEngine: TranscriptionEngine {
         process.arguments = ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", audioURL.path, outputURL.path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
         try process.run()
-        process.waitUntilExit()
+        while finished.wait(timeout: .now() + 0.05) != .success {
+            if cancellation.isCancelled {
+                Self.stop(process, finished: finished)
+                throw JobsError.executionCancelled
+            }
+        }
+        if cancellation.isCancelled { throw JobsError.executionCancelled }
         guard process.terminationStatus == 0, fileManager.fileExists(atPath: outputURL.path) else {
             throw TranscriptionError.engineFailed("afconvert could not decode \(audioURL.path)")
         }
         return outputURL
+    }
+
+    private static func stop(_ process: Process, finished: DispatchSemaphore) {
+        process.terminate()
+        if finished.wait(timeout: .now() + 0.5) != .success, process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+            finished.wait()
+        }
     }
 
     private func parse(
