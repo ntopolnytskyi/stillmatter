@@ -5,7 +5,7 @@ import StillmatterCore
 import StillmatterPresentation
 #endif
 
-final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolbarDelegate, NSSearchFieldDelegate, NSPopoverDelegate {
+final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
     // Module-internal native controls/state support the owner-approved validation extensions.
     let stateStore: ShellStateStore
     let settingsStore: SettingsStore
@@ -25,6 +25,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     private let jobStatusProvider: () -> String
     let settingsFormView: SettingsFormView
     let splitView = NSSplitView()
+    let statusBar = NSView()
+    private let statusBarContent = NSStackView()
     let workspaceSplitView = NSSplitView()
     private var workspaceContainer = NSView()
     let sidebarContainer = NSView()
@@ -108,18 +110,13 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         onOpenSettings: { [weak self] in self?.stateStore.state.select(.settings) }
     )
     lazy var searchResultsView = SearchResultsView(
-        onOpenResult: { [weak self] result in self?.openWorkspaceFile(result.sourcePath) },
+        onOpenResult: { [weak self] result in self?.openSearchResult(result) },
         onOpenSettings: { [weak self] in self?.stateStore.state.select(.settings) },
         onRetry: { [weak self] in self?.lastSearchRequest = nil; self?.updateSearchPresentation() },
         onDismiss: { [weak self] in self?.dismissSearch() }
     )
     private let controls = GraphiteFocusControls()
     lazy var searchField = controls.searchField(identifier: "global-search")
-    lazy var compactSearchField = controls.searchField(identifier: "compact-global-search")
-    lazy var compactSearchKindPopup = controls.popup(identifier: "compact-search-type")
-    let compactSearchScopeLabel = NSTextField(labelWithString: "")
-    let compactSearchPopover = NSPopover()
-    private var transferFocusToResultsOnPopoverClose = false
     lazy var searchKindPopup = controls.popup(identifier: "global-search-type")
     let toolbarAreaLabel = NSTextField(labelWithString: "Today")
     lazy var narrowBackButton = controls.button("Back", identifier: "narrow-back")
@@ -285,11 +282,46 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         workspaceMinimum.priority = .defaultLow
         workspaceMinimum.isActive = true
 
+        statusBar.translatesAutoresizingMaskIntoConstraints = false
+        statusBar.wantsLayer = true
+        statusBar.setAccessibilityIdentifier("global-status-bar")
+        statusBarContent.orientation = .horizontal
+        statusBarContent.alignment = .centerY
+        statusBarContent.spacing = GraphiteFocusPresentation.Space.compact
+        statusBarContent.translatesAutoresizingMaskIntoConstraints = false
+        statusBar.addSubview(statusBarContent)
+        configureAreaSearchIfNeeded()
+        toolbarAreaLabel.font = GraphiteFocusPresentation.Typography.control
+        toolbarAreaLabel.setAccessibilityLabel("Current area")
+        narrowBackButton.image = NSImage(systemSymbolName: "chevron.backward", accessibilityDescription: "Back to list")
+        narrowBackButton.imagePosition = .imageLeading
+        narrowBackButton.target = self
+        narrowBackButton.action = #selector(showNarrowList(_:))
+        narrowBackButton.setAccessibilityLabel("Back to list")
+        narrowBackButton.isHidden = true
+        statusBarContent.addArrangedSubview(searchField)
+        statusBarContent.addArrangedSubview(searchKindPopup)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        statusBarContent.addArrangedSubview(spacer)
+        statusBarContent.addArrangedSubview(narrowBackButton)
+        statusBarContent.addArrangedSubview(toolbarAreaLabel)
+        view.addSubview(statusBar)
         view.addSubview(splitView)
         NSLayoutConstraint.activate([
+            statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            statusBar.topAnchor.constraint(equalTo: view.topAnchor),
+            statusBar.heightAnchor.constraint(equalToConstant: 48),
+            statusBarContent.leadingAnchor.constraint(equalTo: statusBar.leadingAnchor, constant: GraphiteFocusPresentation.Space.panel),
+            statusBarContent.trailingAnchor.constraint(equalTo: statusBar.trailingAnchor, constant: -GraphiteFocusPresentation.Space.panel),
+            statusBarContent.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            searchField.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+            searchKindPopup.widthAnchor.constraint(equalToConstant: 110),
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            splitView.topAnchor.constraint(equalTo: view.topAnchor),
+            splitView.topAnchor.constraint(equalTo: statusBar.bottomAnchor),
             splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
@@ -463,11 +495,11 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleStillmatterSidebar, .sidebarDivider, .currentArea, .recordingStatus, .flexibleSpace, .jobStatus, .areaSearch]
+        [.toggleStillmatterSidebar, .sidebarDivider, .currentArea, .recordingStatus, .flexibleSpace, .jobStatus]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleStillmatterSidebar, .sidebarDivider, .currentArea, .recordingStatus, .flexibleSpace, .jobStatus, .areaSearch]
+        [.toggleStillmatterSidebar, .sidebarDivider, .currentArea, .recordingStatus, .flexibleSpace, .jobStatus]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -490,18 +522,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         case .currentArea:
             toolbarAreaLabel.font = GraphiteFocusPresentation.Typography.control
             toolbarAreaLabel.setAccessibilityLabel("Current area")
-            narrowBackButton.bezelStyle = .texturedRounded
-            narrowBackButton.image = NSImage(systemSymbolName: "chevron.backward", accessibilityDescription: "Back to list")
-            narrowBackButton.imagePosition = .imageLeading
-            narrowBackButton.target = self
-            narrowBackButton.action = #selector(showNarrowList(_:))
-            narrowBackButton.setAccessibilityLabel("Back to list")
-            narrowBackButton.isHidden = true
-            let location = NSStackView(views: [narrowBackButton, toolbarAreaLabel])
-            location.orientation = .horizontal
-            location.spacing = GraphiteFocusPresentation.Space.compact
             item.label = "Current Area"
-            item.view = location
+            item.view = toolbarAreaLabel
         case .recordingStatus:
             recordingBadge.frame.size = NSSize(width: 145, height: 22)
             item.label = "Recording Status"
@@ -511,31 +533,11 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             configureJobPresentationIfNeeded()
             item.label = "Job Status"
             item.view = jobPresentationContainer
-        case .areaSearch:
-            configureAreaSearchIfNeeded()
-            let stack = NSStackView(views: [searchField, searchKindPopup])
-            stack.orientation = .horizontal
-            stack.spacing = GraphiteFocusPresentation.Space.compact
-            let searchWidth = searchField.widthAnchor.constraint(equalToConstant: 220)
-            let kindWidth = searchKindPopup.widthAnchor.constraint(equalToConstant: 110)
-            searchWidth.priority = .defaultHigh
-            kindWidth.priority = .defaultHigh
-            NSLayoutConstraint.activate([
-                searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
-                searchField.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
-                searchKindPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
-                searchKindPopup.widthAnchor.constraint(lessThanOrEqualToConstant: 110),
-                searchWidth,
-                kindWidth
-            ])
-            item.label = "Search"
-            item.paletteLabel = item.label
-            item.view = stack
         default:
             return nil
         }
         switch identifier {
-        case .toggleStillmatterSidebar, .areaSearch:
+        case .toggleStillmatterSidebar:
             item.visibilityPriority = .high
         case .currentArea:
             item.visibilityPriority = .user
@@ -556,7 +558,6 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         searchField.setAccessibilityLabel("Search")
         searchField.setAccessibilityHelp("Search indexed results in the current area. Use the result type menu to narrow by type.")
         configureSearchKindPopup(searchKindPopup, action: #selector(searchKindChanged(_:)))
-        configureSearchKindPopup(compactSearchKindPopup, action: #selector(compactSearchKindChanged(_:)))
         updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
     }
 
@@ -680,6 +681,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         let colors = GraphiteFocusPresentation.Colors(environment: currentPresentationEnvironment)
         view.layer?.backgroundColor = colors.surfaceBase.cgColor
         sidebarContainer.layer?.backgroundColor = colors.surfaceChrome.cgColor
+        statusBar.layer?.backgroundColor = colors.surfaceChrome.cgColor
         contentListContainer.layer?.backgroundColor = colors.surfaceChrome.cgColor
         inspectorContainer.layer?.backgroundColor = colors.surfacePanel.cgColor
         [sidebarContainer, contentListContainer, inspectorContainer].forEach { region in
@@ -813,8 +815,6 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         if searchField.stringValue != state.searchText { searchField.stringValue = state.searchText }
         searchField.placeholderString = "Search"
         updateSearchAccessibilityContext(area: state.selectedTab)
-        if compactSearchField.stringValue != state.searchText { compactSearchField.stringValue = state.searchText }
-        compactSearchField.placeholderString = searchField.placeholderString
     }
 
     private func updateToolbarStatus() {
@@ -891,25 +891,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     }
 
     func updateSearchAccessibilityContext(area: ShellTab) {
-        synchronizeSearchKindPopups(from: searchKindPopup)
         let typeName = currentSearchKind()?.displayName ?? "All types"
         let help = "Search indexed results in \(area.rawValue). Current result type: \(typeName)."
         searchField.setAccessibilityHelp(help)
-        compactSearchField.setAccessibilityHelp(help)
         searchKindPopup.setAccessibilityValue(typeName)
-        compactSearchKindPopup.setAccessibilityValue(typeName)
-        compactSearchScopeLabel.stringValue = "Scope: \(area.rawValue)"
-        compactSearchScopeLabel.setAccessibilityLabel("Search scope")
-        compactSearchScopeLabel.setAccessibilityValue(area.rawValue)
-    }
-
-    func synchronizeSearchKindPopups(from source: NSPopUpButton) {
-        let representedValue = source.selectedItem?.representedObject as? String
-        let target = source === searchKindPopup ? compactSearchKindPopup : searchKindPopup
-        let index = target.itemArray.firstIndex {
-            ($0.representedObject as? String) == representedValue
-        } ?? 0
-        target.selectItem(at: index)
     }
 
     private func searchKinds(for area: ShellTab) -> Set<SearchChunkKind>? {
@@ -947,6 +932,26 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             return
         }
         WorkspaceSourceOpener.present(rootURL.appendingPathComponent(relativePath))
+    }
+
+    private func openSearchResult(_ result: SearchResult) {
+        let destination: ShellTab
+        switch result.kind {
+        case .todo:
+            destination = .tasks
+        case .meeting, .summary, .transcript, .metadata:
+            destination = .meetings
+        case .project, .markdown:
+            if result.sourcePath.hasPrefix("Todos/") { destination = .tasks }
+            else if result.sourcePath.hasPrefix("Meetings/") { destination = .meetings }
+            else { destination = stateStore.state.selectedTab }
+        }
+        isSearchPresented = false
+        stateStore.state.select(destination)
+        render()
+        if destination == .meetings {
+            meetingManagementView.focusSearchSource(result.sourcePath)
+        }
     }
 
     func updateJobBadge(colors: GraphiteFocusPresentation.Colors) {
@@ -1171,17 +1176,11 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         requestedWindowWidth = width
         installToolbarIfNeeded()
         let toolbarSearchHadFocus = searchControlHasFocus(searchField)
-        let toolbarTypeHadFocus = view.window?.firstResponder === searchKindPopup
-        let compactFieldHadFocus = searchControlHasFocus(compactSearchField)
-        let compactTypeHadFocus = view.window?.firstResponder === compactSearchKindPopup
         if toolbarSearchHadFocus && stateStore.state.searchText != searchField.stringValue {
             stateStore.state.searchText = searchField.stringValue
-        } else if compactFieldHadFocus && stateStore.state.searchText != compactSearchField.stringValue {
-            stateStore.state.searchText = compactSearchField.stringValue
         }
         // Keep global search in the Status Bar at the minimum supported width.
-        // Compact only ancillary status/rail controls; Command-F still has a
-        // popover fallback if the user has removed Search from a custom toolbar.
+        // Search stays in the fixed Status Bar; only optional toolbar status controls compact.
         let compactedIdentifiers: Set<NSToolbarItem.Identifier> = [
             .toggleStillmatterSidebar, .recordingStatus, .jobStatus
         ]
@@ -1194,10 +1193,6 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 toolbar.removeItem(at: entry.index)
             }
             toolbar.autosavesConfiguration = true
-            if toolbarSearchHadFocus || toolbarTypeHadFocus {
-                focusAreaSearch(nil)
-                if toolbarTypeHadFocus { compactSearchField.window?.makeFirstResponder(compactSearchKindPopup) }
-            }
         } else if width >= 900 && !toolbarItemsCompactedForWidth.isEmpty {
             toolbar.autosavesConfiguration = false
             for entry in toolbarItemsCompactedForWidth.sorted(by: { $0.index < $1.index }) {
@@ -1205,18 +1200,6 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             }
             toolbar.autosavesConfiguration = true
             toolbarItemsCompactedForWidth = []
-            if (compactFieldHadFocus || compactTypeHadFocus),
-               toolbar.items.contains(where: { $0.itemIdentifier == .areaSearch }) {
-                compactSearchPopover.close()
-                view.window?.toolbar?.validateVisibleItems()
-                view.window?.layoutIfNeeded()
-                let target = compactTypeHadFocus ? searchKindPopup : searchField
-                view.window?.makeFirstResponder(target)
-                DispatchQueue.main.async { [weak self, weak target] in
-                    guard let self, let target else { return }
-                    self.view.window?.makeFirstResponder(target)
-                }
-            }
         }
         // Collapse target regions before AppKit evaluates their fitting widths.
         applyAdaptiveLayout(availableWidth: width)
@@ -1244,64 +1227,11 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     @objc func focusAreaSearch(_ sender: Any?) {
         isSearchPresented = stateStore.state.selectedTab != .settings
         render()
-        installToolbarIfNeeded()
-        if toolbar.items.contains(where: { $0.itemIdentifier == .areaSearch }) {
-            view.window?.makeFirstResponder(searchField)
-            return
-        }
-        if compactSearchPopover.contentViewController == nil {
-            compactSearchPopover.delegate = self
-            compactSearchField.target = self
-            compactSearchField.action = #selector(compactSearchChanged(_:))
-            compactSearchField.delegate = self
-            compactSearchField.placeholderString = "Search"
-            compactSearchField.setAccessibilityLabel("Search")
-            compactSearchField.setAccessibilityHelp("Search indexed results in the current area. Choose a result type to narrow results without changing this scope.")
-            compactSearchScopeLabel.font = GraphiteFocusPresentation.Typography.metadata
-            compactSearchScopeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-            updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
-
-            let controls = NSStackView(views: [compactSearchField, compactSearchKindPopup])
-            controls.orientation = .horizontal
-            controls.alignment = .centerY
-            controls.spacing = GraphiteFocusPresentation.Space.compact
-            compactSearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true // graphite-focus-native-exception: compact native search field minimum
-            compactSearchKindPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true // graphite-focus-native-exception: native picker must show selected result type
-            let content = NSStackView(views: [compactSearchScopeLabel, controls])
-            content.orientation = .vertical
-            content.alignment = .leading
-            content.spacing = GraphiteFocusPresentation.Space.compact
-            content.edgeInsets = NSEdgeInsets(
-                top: GraphiteFocusPresentation.Space.dense,
-                left: GraphiteFocusPresentation.Space.dense,
-                bottom: GraphiteFocusPresentation.Space.dense,
-                right: GraphiteFocusPresentation.Space.dense
-            )
-            content.frame = NSRect(x: 0, y: 0, width: 320, height: 76) // graphite-focus-native-exception: compact popover fitting size for native controls
-            controls.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.dense).isActive = true
-            let controller = NSViewController()
-            controller.view = content
-            compactSearchPopover.contentViewController = controller
-            compactSearchPopover.behavior = .transient
-        }
-        let anchor = toolbarAreaLabel.window == view.window ? toolbarAreaLabel : view
-        compactSearchPopover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
-        compactSearchField.window?.makeFirstResponder(compactSearchField)
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        guard transferFocusToResultsOnPopoverClose else { return }
-        transferFocusToResultsOnPopoverClose = false
-        // AppKit restores the popover's field editor after didClose. Restore the
-        // results on the next main-queue turn, but not if search was dismissed.
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, self.isSearchPresented, !self.searchResultsView.isHidden else { return }
-            self.searchResultsView.focusResults()
-        }
+        view.window?.makeFirstResponder(searchField)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard control === searchField || control === compactSearchField else { return false }
+        guard control === searchField else { return false }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             dismissSearch()
             return true
@@ -1309,18 +1239,12 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         guard commandSelector == #selector(NSResponder.moveDown(_:)),
               !searchResultsView.isHidden,
               searchResultsView.focusResults() else { return false }
-        if control === compactSearchField {
-            transferFocusToResultsOnPopoverClose = true
-            compactSearchPopover.close()
-        }
         return true
     }
 
     private func dismissSearch() {
         guard isSearchPresented else { return }
         isSearchPresented = false
-        transferFocusToResultsOnPopoverClose = false
-        if compactSearchPopover.isShown { compactSearchPopover.close() }
         render()
         view.window?.makeFirstResponder(navigationButtons[stateStore.state.selectedTab])
     }
@@ -1341,24 +1265,10 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         stateStore.state.searchText = sender.stringValue
     }
 
-    @objc private func compactSearchChanged(_ sender: NSSearchField) {
-        isSearchPresented = true
-        stateStore.state.searchText = sender.stringValue
-    }
-
-    @objc private func searchKindChanged(_ sender: NSPopUpButton) {
-        synchronizeSearchKindPopups(from: sender)
+    @objc func searchKindChanged(_ sender: NSPopUpButton) {
         updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
         lastSearchRequest = nil
         updateSearchPresentation()
-    }
-
-    @objc func compactSearchKindChanged(_ sender: NSPopUpButton) {
-        synchronizeSearchKindPopups(from: sender)
-        updateSearchAccessibilityContext(area: stateStore.state.selectedTab)
-        lastSearchRequest = nil
-        updateSearchPresentation()
-        compactSearchField.window?.makeFirstResponder(compactSearchKindPopup)
     }
 
 }
@@ -1386,5 +1296,4 @@ extension NSToolbarItem.Identifier {
     static let sidebarDivider = NSToolbarItem.Identifier("Stillmatter.SidebarDivider")
     static let recordingStatus = NSToolbarItem.Identifier("Stillmatter.RecordingStatus")
     static let jobStatus = NSToolbarItem.Identifier("Stillmatter.JobStatus")
-    static let areaSearch = NSToolbarItem.Identifier("Stillmatter.AreaSearch")
 }

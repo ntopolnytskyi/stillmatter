@@ -38,6 +38,8 @@ Relevant accepted decisions: [file authority and shared identity](../../../docs/
 
 ## Required tests
 
+**UI test execution:** Run UI tests only when this implementation changes UI code. If UI code is unchanged, do not run UI tests; record “UI tests skipped: no UI code changed” in the completion evidence. This condition applies to all UI/native interaction test requirements in this ticket. Continue running relevant non-UI tests.
+
 - [x] Load old/new fixtures and verify notes, accepted items, references, archive metadata and Transcript representations survive round trips.
 - [x] Interrupt each migration/write phase, reopen and assert recoverable old/new content with no duplicated task identities.
 - [x] Externally edit/rename content while a draft is open; assert updated source remains intact and the draft remains available.
@@ -58,6 +60,8 @@ Relevant accepted decisions: [file authority and shared identity](../../../docs/
 >>>>>>> aef10c7 (Resolve ticket 08 with test and coverage evidence)
 
 ## Required tests
+
+**UI test execution:** Run UI tests only when this implementation changes UI code. If UI code is unchanged, do not run UI tests; record “UI tests skipped: no UI code changed” in the completion evidence. This condition applies to all UI/native interaction test requirements in this ticket. Continue running relevant non-UI tests.
 
 - [x] Load old/new fixtures and verify notes, accepted items, references, archive metadata and Transcript representations survive round trips.
 - [x] Interrupt each migration/write phase, reopen and assert recoverable old/new content with no duplicated task identities.

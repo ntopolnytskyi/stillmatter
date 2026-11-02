@@ -27,6 +27,8 @@ This slice introduces no new interactive page or control. Verify its observable 
 
 ## Required tests
 
+**UI test execution:** Run UI tests only when this implementation changes UI code. If UI code is unchanged, do not run UI tests; record “UI tests skipped: no UI code changed” in the completion evidence. This condition applies to all UI/native interaction test requirements in this ticket. Continue running relevant non-UI tests.
+
 - [ ] Emit distinguishable synthetic signals in the call source and an unrelated app/tab; verify retained tracks include only authorized source content.
 - [ ] Exercise permission denial, source disappearance/reappearance and hidden call controls; record exact observed behavior and latency.
 - [ ] Repeat the probe while controlled heavy work runs; inspect actual samples/duration and retain logs sufficient to reproduce the finding.

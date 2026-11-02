@@ -1,5 +1,22 @@
 import AppKit
 
+enum GraphiteFocusRowStyle {
+    static func title(_ label: NSTextField, colors: GraphiteFocusPresentation.Colors) {
+        label.font = GraphiteFocusPresentation.Typography.rowTitle
+        label.textColor = colors.textPrimary
+    }
+
+    static func metadata(_ label: NSTextField, colors: GraphiteFocusPresentation.Colors) {
+        label.font = GraphiteFocusPresentation.Typography.metadata
+        label.textColor = colors.textMetadata
+    }
+
+    static func excerpt(_ label: NSTextField, colors: GraphiteFocusPresentation.Colors) {
+        label.font = GraphiteFocusPresentation.Typography.body
+        label.textColor = colors.textSecondary
+    }
+}
+
 /// Shared construction and semantic styling. AppKit owns activation, focus,
 /// disabled controls, popup selection and checkbox state; pages own their actions.
 struct GraphiteFocusControls {

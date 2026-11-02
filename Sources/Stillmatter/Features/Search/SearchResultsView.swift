@@ -299,16 +299,15 @@ private final class SearchResultCellView: NSTableCellView {
     }
 
     private func buildLayout() {
+        let colors = GraphiteFocusPresentation.Colors(environment: .system(window: window))
         kindLabel.font = GraphiteFocusPresentation.Typography.caption
-        kindLabel.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).accent
+        kindLabel.textColor = colors.accent
         kindLabel.setContentHuggingPriority(.required, for: .horizontal)
-        titleLabel.font = GraphiteFocusPresentation.Typography.control
+        GraphiteFocusRowStyle.title(titleLabel, colors: colors)
         titleLabel.lineBreakMode = .byTruncatingTail
-        sourceLabel.font = GraphiteFocusPresentation.Typography.metadata
-        sourceLabel.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textMetadata
+        GraphiteFocusRowStyle.metadata(sourceLabel, colors: colors)
         sourceLabel.lineBreakMode = .byTruncatingMiddle
-        excerptLabel.font = GraphiteFocusPresentation.Typography.body
-        excerptLabel.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textSecondary
+        GraphiteFocusRowStyle.excerpt(excerptLabel, colors: colors)
         excerptLabel.lineBreakMode = .byTruncatingTail
         excerptLabel.maximumNumberOfLines = 2
 

@@ -29,6 +29,8 @@ This slice introduces no new interactive page or control. Verify its observable 
 
 ## Required tests
 
+**UI test execution:** Run UI tests only when this implementation changes UI code. If UI code is unchanged, do not run UI tests; record “UI tests skipped: no UI code changed” in the completion evidence. This condition applies to all UI/native interaction test requirements in this ticket. Continue running relevant non-UI tests.
+
 - [x] Round-trip representative old/new fixtures, Unicode names, checkbox edits/removal and duplicate-looking tasks without identity collision.
 - [x] Interrupt migration between file replacements, reopen and prove recoverable content and preserved approved-state/source references.
 - [x] Change files externally during an unsaved app edit and prove the contract preserves the external version and local draft rather than guessing.

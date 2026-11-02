@@ -36,12 +36,10 @@ final class GraphiteFocusCollectionRow: NSButton {
         symbolLabel.widthAnchor.constraint(equalToConstant: 20).isActive = true
 
         let titleLabel = NSTextField(wrappingLabelWithString: title)
-        titleLabel.font = GraphiteFocusPresentation.Typography.rowTitle
-        titleLabel.textColor = colors.textPrimary
+        GraphiteFocusRowStyle.title(titleLabel, colors: colors)
         titleLabel.maximumNumberOfLines = 2
         let metadataLabel = NSTextField(wrappingLabelWithString: metadata)
-        metadataLabel.font = GraphiteFocusPresentation.Typography.metadata
-        metadataLabel.textColor = colors.textMetadata
+        GraphiteFocusRowStyle.metadata(metadataLabel, colors: colors)
         metadataLabel.maximumNumberOfLines = 2
         let labels = NSStackView(views: [titleLabel, metadataLabel])
         labels.orientation = .vertical

@@ -44,6 +44,116 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(search.value as? String, "KeyboardSearchMarker")
     }
 
+    func testSearchResultNavigatesToOwningMeetingAreaAndSelectsMeeting() throws {
+        app.terminate()
+        let originalDirectory = meetingURL.deletingLastPathComponent()
+        let targetDirectory = fixtureRoot.appendingPathComponent("workspace/Meetings/target-fixture", isDirectory: true)
+        try FileManager.default.createDirectory(at: originalDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+        try "---\ntitle: UI fixture meeting\ncapture_session_id: ui-fixture\n---\n# UI fixture meeting\n\n## Notes\n\nOriginal notes.\n"
+            .write(to: meetingURL, atomically: true, encoding: .utf8)
+        try "## Summary\n\nOriginal summary.\n"
+            .write(to: originalDirectory.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
+        try "---\ntitle: Target UI meeting\ncapture_session_id: target-fixture\n---\n# Target UI meeting\n"
+            .write(to: targetDirectory.appendingPathComponent("meeting.md"), atomically: true, encoding: .utf8)
+        try "## Summary\n\nTicket07TargetSummaryMarker.\n"
+            .write(to: targetDirectory.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
+        relaunch()
+        app.buttons["sidebar-meetings"].click()
+        let meetings = app.tables["Meetings"]
+        XCTAssertTrue(meetings.staticTexts["UI fixture meeting"].waitForExistence(timeout: 10))
+        XCTAssertTrue(meetings.staticTexts["Target UI meeting"].waitForExistence(timeout: 10))
+        meetings.staticTexts["UI fixture meeting"].click()
+        XCTAssertEqual(app.staticTexts["meeting-detail"].value as? String, "UI fixture meeting")
+        app.typeKey("f", modifierFlags: .command)
+        let search = app.searchFields["Search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.typeText("Ticket07TargetSummaryMarker")
+        let results = app.tables["Search results"]
+        XCTAssertTrue(results.waitForExistence(timeout: 15))
+        XCTAssertTrue(results.tableRows.firstMatch.waitForExistence(timeout: 10))
+        search.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
+        waitForArea("Meetings")
+        XCTAssertTrue(app.staticTexts["meeting-detail"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["meeting-detail"].value as? String, "Target UI meeting")
+        XCTAssertTrue(meetings.staticTexts["Target UI meeting"].exists)
+        XCTAssertEqual(search.value as? String, "Ticket07TargetSummaryMarker", "Opening a result keeps the global query available")
+    }
+
+    func testTodoSearchResultOpensTasksAndResultTypeKeepsQuery() throws {
+        app.terminate()
+        let todo = fixtureRoot.appendingPathComponent("workspace/Todos/todo.md")
+        try FileManager.default.createDirectory(at: todo.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "# Todos\n\n## Queue\n\n- [ ] Ticket07TodoSearchMarker\n"
+            .write(to: todo, atomically: true, encoding: .utf8)
+        relaunch()
+        app.buttons["sidebar-today"].click()
+        app.typeKey("f", modifierFlags: .command)
+        let search = app.searchFields["Search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.typeText("Ticket07TodoSearchMarker")
+        let results = app.tables["Search results"]
+        XCTAssertTrue(results.waitForExistence(timeout: 15))
+        XCTAssertTrue(results.tableRows.firstMatch.waitForExistence(timeout: 10))
+        let resultType = app.popUpButtons["global-search-type"]
+        XCTAssertTrue(resultType.waitForExistence(timeout: 10))
+        resultType.click()
+        app.menuItems["Todo Item"].click()
+        XCTAssertEqual(search.value as? String, "Ticket07TodoSearchMarker")
+        XCTAssertTrue(results.waitForExistence(timeout: 15))
+        XCTAssertTrue(results.tableRows.firstMatch.waitForExistence(timeout: 10))
+        search.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
+        waitForArea("Tasks")
+        XCTAssertTrue(app.staticTexts["Ticket07TodoSearchMarker"].waitForExistence(timeout: 10))
+        XCTAssertEqual(search.value as? String, "Ticket07TodoSearchMarker")
+    }
+
+    func testMinimumWindowShowsGlobalSearchAndBackRestoresMeetingSelection() throws {
+        try seedMeeting()
+        let window = app.windows["Stillmatter"]
+        func resizeWindow(width: CGFloat, height: CGFloat) {
+            let frame = window.frame
+            let lowerTrailingCorner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+                .withOffset(CGVector(dx: -4, dy: -4))
+            let offset = CGVector(dx: width - frame.width, dy: height - frame.height)
+            lowerTrailingCorner.press(forDuration: 0.1, thenDragTo: lowerTrailingCorner.withOffset(offset))
+            expectation(for: NSPredicate { _, _ in
+                abs(window.frame.width - width) < 3 && abs(window.frame.height - height) < 3
+            }, evaluatedWith: window)
+            waitForExpectations(timeout: 10)
+        }
+
+        resizeWindow(width: 1200, height: 760)
+        let search = app.searchFields["Search"]
+        XCTAssertTrue(search.exists)
+        XCTAssertTrue(window.frame.intersects(search.frame), "Global Search must remain on-screen at wide size")
+        app.buttons["sidebar-meetings"].click()
+        let meetings = app.tables["Meetings"]
+        let row = meetings.tableRows.containing(.staticText, identifier: "UI fixture meeting").firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+        XCTAssertTrue(app.staticTexts["meeting-detail"].waitForExistence(timeout: 10))
+        XCTAssertGreaterThan(row.frame.width, 0, "The Listing column must remain usable at wide size")
+        XCTAssertTrue(window.frame.intersects(app.staticTexts["meeting-detail"].frame),
+                      "The Detail Workspace must remain visible at wide size")
+
+        resizeWindow(width: 720, height: 520)
+        XCTAssertTrue(search.exists)
+        XCTAssertTrue(window.frame.intersects(search.frame), "Global Search must stay on-screen at the minimum window size")
+        let back = app.buttons["narrow-back"]
+        let compactRow = meetings.tableRows.containing(.staticText, identifier: "UI fixture meeting").firstMatch
+        if !back.waitForExistence(timeout: 2) {
+            XCTAssertTrue(compactRow.waitForExistence(timeout: 10))
+            compactRow.click()
+        }
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        back.click()
+        XCTAssertTrue(compactRow.waitForExistence(timeout: 10))
+        XCTAssertTrue(compactRow.isSelected, "Back must restore the retained Meeting selection")
+    }
+
     func testMeetingListingFiltersRemainSeparateFromGlobalSearchAndSurviveNavigation() throws {
         try seedMeeting()
         let before = try meetingText()

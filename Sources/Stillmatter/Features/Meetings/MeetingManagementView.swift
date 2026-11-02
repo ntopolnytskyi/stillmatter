@@ -121,6 +121,8 @@ final class MeetingManagementView: NSView {
     let archiveButton = MeetingHeaderButton(title: "Archive", target: nil, action: nil)
     private(set) var retryFeedback: (meetingID: String, message: String)?
     private var restoredSelectionID: String?
+    private var pendingSearchSourcePath: String?
+    private var restoredSearchSelectionNeedsOpen = false
     lazy var openRecordingButton = controls.button("Open Recording", identifier: "meeting-open-recording")
     let audioStatus = NSTextField(wrappingLabelWithString: "Recording Bundle unavailable")
     let playButton = MeetingPlaybackButton(frame: .zero)
@@ -175,6 +177,13 @@ final class MeetingManagementView: NSView {
 
     func setOnOpenSelection(_ handler: @escaping () -> Void) {
         onOpenSelection = handler
+    }
+
+    func focusSearchSource(_ sourcePath: String) {
+        pendingSearchSourcePath = sourcePath
+        restoredSearchSelectionNeedsOpen = true
+        guard featureIsVisible else { return }
+        applySnapshot(meetingsModel.snapshot)
     }
 
     private var featureIsVisible = false
@@ -733,13 +742,24 @@ final class MeetingManagementView: NSView {
     }
 
     func applySnapshot(_ snapshot: MeetingBrowserSnapshot?) {
+        if let sourcePath = pendingSearchSourcePath,
+           let row = snapshot?.visibleRows.first(where: {
+               URL(fileURLWithPath: $0.meetingRelativePath).deletingLastPathComponent().path
+                   == URL(fileURLWithPath: sourcePath).deletingLastPathComponent().path
+           }) {
+            pendingSearchSourcePath = nil
+            restoredSelectionID = row.id
+        }
         if let id = restoredSelectionID, snapshot?.visibleRows.contains(where: { $0.id == id && !$0.isArchived }) == true {
             restoredSelectionID = nil
+            let shouldOpenSelection = restoredSearchSelectionNeedsOpen
+            restoredSearchSelectionNeedsOpen = false
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.featureIsVisible, self.archiveFilter.indexOfSelectedItem == 0,
                       let index = self.rows.firstIndex(where: { $0.id == id }) else { return }
                 self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
                 self.show(row: index)
+                if shouldOpenSelection { self.onOpenSelection() }
             }
         }
         isApplyingFeatureState = true
@@ -2208,12 +2228,11 @@ extension MeetingManagementView: NSTableViewDataSource, NSTableViewDelegate {
         guard rows.indices.contains(row) else { return nil }
         let meeting = rows[row]
         let title = NSTextField(labelWithString: meeting.displayTitle)
-        title.font = GraphiteFocusPresentation.Typography.rowTitle
+        GraphiteFocusRowStyle.title(title, colors: presentationColors)
         GraphiteFocusOverflow.configurePrimaryTitle(title, fullText: meeting.title)
         title.alignment = .left
         let date = NSTextField(labelWithString: meeting.startedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Date unavailable")
-        date.font = GraphiteFocusPresentation.Typography.metadata
-        date.textColor = .secondaryLabelColor
+        GraphiteFocusRowStyle.metadata(date, colors: presentationColors)
         GraphiteFocusOverflow.configureSecondaryMetadata(date, fullText: date.stringValue, lineBreakMode: .byTruncatingTail)
         date.alignment = .left
         let colors = presentationColors
@@ -2221,8 +2240,7 @@ extension MeetingManagementView: NSTableViewDataSource, NSTableViewDelegate {
         if let duration = meeting.durationSeconds, duration.isFinite, duration >= 0 {
             metadataParts.append(meetingSymbol("clock", label: "Duration", color: colors.textMetadata))
             let durationLabel = NSTextField(labelWithString: timeLabel(duration))
-            durationLabel.font = GraphiteFocusPresentation.Typography.metadata
-            durationLabel.textColor = colors.textMetadata
+            GraphiteFocusRowStyle.metadata(durationLabel, colors: colors)
             metadataParts.append(durationLabel)
         }
         if meeting.hasMyActions {
@@ -2251,7 +2269,7 @@ extension MeetingManagementView: NSTableViewDataSource, NSTableViewDelegate {
                     : statusMeaning(for: meeting).color(in: colors)
             metadataParts.append(meetingSymbol(statusName, label: statusLabel, color: statusColor))
             let visibleStatus = NSTextField(labelWithString: statusLabel)
-            visibleStatus.font = GraphiteFocusPresentation.Typography.metadata
+            GraphiteFocusRowStyle.metadata(visibleStatus, colors: colors)
             visibleStatus.textColor = statusColor
             GraphiteFocusOverflow.configureSecondaryMetadata(visibleStatus, fullText: statusLabel, lineBreakMode: .byTruncatingTail)
             metadataParts.append(visibleStatus)

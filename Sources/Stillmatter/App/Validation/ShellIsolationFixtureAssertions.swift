@@ -249,6 +249,8 @@ extension ShellViewController {
                     applyAdaptiveLayout()
                     precondition(lastAdaptiveLayout?.detailMode == .listOnly,
                                  "Compact Meeting layout must start in list mode")
+                    precondition(!statusBar.isHidden && !searchField.isHidden && searchField.window === window,
+                                 "Global Search must remain visible above Listing and Detail at 720×520")
                     let selectedMeetingID = meetingManagementView.prepareNarrowStateForValidation()
                     meetingManagementView.openSelectionForValidation()
                     precondition(!narrowBackButton.isHidden && !detailContainer.isHidden,

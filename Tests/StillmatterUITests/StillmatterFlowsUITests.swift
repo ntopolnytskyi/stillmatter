@@ -24,7 +24,7 @@ final class StillmatterFlowsUITests: XCTestCase {
         app.launchEnvironment["STILLMATTER_VALIDATION_APPLICATION_SUPPORT_ROOT"] = support.path
         app.launch()
         // macOS may restore a stale UI-test bundle after an interrupted run.
-        let restore = app.buttons["Don’t Reopen"]
+        let restore = app.dialogs.buttons["Don’t Reopen"].firstMatch
         if restore.waitForExistence(timeout: 3) { restore.click() }
         XCTAssertTrue(app.windows["Stillmatter"].waitForExistence(timeout: 15), app.debugDescription)
     }

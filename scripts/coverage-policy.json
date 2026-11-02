@@ -67,11 +67,11 @@
     },
     "Sources/Stillmatter/App/Validation/ShellIsolationFixtureAssertions.swift": {
       "reason": "Validation-only executable declarations are guarded by DEBUG or STILLMATTER_NATIVE_PROBES, neither defined by shipping release configuration.",
-      "sha256": "67b6c0ef7c67341347dadac96ed2ef72451719a776274c786864c6d11e0f43b9"
+      "sha256": "396776fafa6a691d6ed68885a2254d78d8b1bb330ab07ebda3766b1c5062bc21"
     },
     "Sources/Stillmatter/App/Validation/ShellLayoutFixtureAssertions.swift": {
       "reason": "Validation-only executable declarations are guarded by DEBUG or STILLMATTER_NATIVE_PROBES, neither defined by shipping release configuration.",
-      "sha256": "c1b1ab257c812a364b5b16c05d2eea3d70cff392d7af6b685c4c3e1e11fdd1be"
+      "sha256": "843df77932240bacf72aa07ea278b569c77160b085e74c00406bf319278d7a6c"
     },
     "Sources/Stillmatter/App/Validation/Task05NativeFixture.swift": {
       "reason": "Validation-only executable declarations are guarded by DEBUG or STILLMATTER_NATIVE_PROBES, neither defined by shipping release configuration.",

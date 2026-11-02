@@ -27,6 +27,8 @@ This slice introduces no new interactive page or control. Verify its observable 
 
 ## Required tests
 
+**UI test execution:** Run UI tests only when this implementation changes UI code. If UI code is unchanged, do not run UI tests; record “UI tests skipped: no UI code changed” in the completion evidence. This condition applies to all UI/native interaction test requirements in this ticket. Continue running relevant non-UI tests.
+
 - [x] Feed reports containing duplicate module/file entries and verify the merged denominator is counted once.
 - [x] Omit an app/platform source file and prove completeness validation fails even if remaining coverage exceeds 95%.
 - [x] Reproduce the package baseline and a coverage-enabled app route on isolated roots; distinguish skipped/unexecuted native tests from passing ones.

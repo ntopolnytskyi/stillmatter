@@ -92,22 +92,19 @@ extension ShellViewController {
         let identifiers = Set(toolbar.items.map(\.itemIdentifier.rawValue))
         [
             "Stillmatter.ToggleSidebar", "Stillmatter.CurrentArea", "Stillmatter.RecordingStatus",
-            "Stillmatter.JobStatus", "Stillmatter.AreaSearch"
+            "Stillmatter.JobStatus"
         ].forEach { precondition(identifiers.contains($0), "Toolbar is missing \($0)") }
 
         let removableToolbarItems = toolbar.items.enumerated().compactMap { index, item in
-            item.itemIdentifier == .areaSearch || item.itemIdentifier == .currentArea ? index : nil
+            item.itemIdentifier == .currentArea ? index : nil
         }
         removableToolbarItems.sorted(by: >).forEach(toolbar.removeItem)
         focusAreaSearch(nil)
-        precondition(compactSearchPopover.isShown, "Area Search menu command must work after toolbar customization")
-        precondition(compactSearchScopeLabel.stringValue == "Scope: Today", "Customized Search must keep its current scope visible")
-        precondition(compactSearchKindPopup.selectedItem?.title == "All types", "Customized Search must keep its selected result type visible")
-        precondition(compactSearchKindPopup.window?.makeFirstResponder(compactSearchKindPopup) == true,
-                     "Customized Search result type must accept native keyboard focus")
-        compactSearchPopover.close()
+        precondition(!statusBar.isHidden && !searchField.isHidden && searchField.window === view.window,
+                     "Toolbar customization must not remove global Search from the Status Bar")
+        precondition(view.window?.makeFirstResponder(searchKindPopup) == true,
+                     "Status Bar Search result type must accept native keyboard focus")
         toolbar.insertItem(withItemIdentifier: .currentArea, at: min(1, toolbar.items.count))
-        toolbar.insertItem(withItemIdentifier: .areaSearch, at: toolbar.items.count)
 
         stateStore.state.select(.tasks)
         view.layoutSubtreeIfNeeded()
@@ -251,28 +248,27 @@ extension ShellViewController {
         precondition(lastAdaptiveLayout?.detailMode == .listOnly, "Narrow layout must replace detail with the content list")
         precondition(lastAdaptiveLayout?.showsInspector == false && inspectorContainer.isHidden,
                      "Minimum width must collapse the optional inspector")
-        precondition(compactSearchPopover.isShown && searchControlHasFocus(compactSearchField),
-                     "Resize must transfer Search focus to compact presentation")
-        precondition(compactSearchField.stringValue == "preserved draft", "Resize must preserve focused Search input")
-        precondition(compactSearchScopeLabel.stringValue == "Scope: Meetings",
-                     "Compact Search must show its current area scope")
-        precondition(compactSearchKindPopup.selectedItem?.title == searchKindPopup.selectedItem?.title,
-                     "Compact and toolbar Search must share one selected result type")
+        precondition(!statusBar.isHidden && !searchField.isHidden && searchField.window === window,
+                     "Global Search must remain physically visible in the Status Bar at minimum width")
+        precondition(searchControlHasFocus(searchField),
+                     "Resize must preserve focus in the always-visible Status Bar Search field")
+        precondition(searchField.stringValue == "preserved draft", "Resize must preserve focused Search input")
+        precondition(searchKindPopup.selectedItem?.title == "All types",
+                     "The fixed Status Bar Search type must remain available at minimum width")
         prepareForWindowResize(to: 1200)
-        precondition(searchControlHasFocus(searchField), "Expanding must return Search focus to the toolbar field")
+        precondition(searchControlHasFocus(searchField), "Expanding must preserve Status Bar Search focus")
         prepareForWindowResize(to: 720)
-        precondition(compactSearchPopover.isShown && searchControlHasFocus(compactSearchField),
-                     "Recompacting must preserve Search focus")
+        precondition(!statusBar.isHidden && searchControlHasFocus(searchField),
+                     "Recompacting must preserve always-visible Search focus")
         prepareForWindowResize(to: 1200)
         precondition(window.makeFirstResponder(searchKindPopup), "Toolbar Search type must accept keyboard focus")
         prepareForWindowResize(to: 720)
-        precondition(compactSearchPopover.isShown && window.firstResponder === compactSearchKindPopup,
-                     "Compacting must transfer focus from the toolbar type to the compact type picker")
+        precondition(window.firstResponder === searchKindPopup,
+                     "Compacting must preserve focus in the fixed Status Bar type picker")
         prepareForWindowResize(to: 1200)
         precondition(window.firstResponder === searchKindPopup,
-                     "Expanding must return focus to the toolbar type picker")
+                     "Expanding must preserve focus in the Status Bar type picker")
         prepareForWindowResize(to: 720)
-        compactSearchPopover.close()
         precondition(abs(view.bounds.width - 720) < 2, "Compact Area Search must not force the window wider")
         precondition(!contentListContainer.isHidden && detailContainer.isHidden,
                      "Narrow layout must initially present the list")
@@ -406,8 +402,7 @@ extension ShellViewController {
                 precondition(searchResultsView.resultCountForValidation == 3, "Fixture must produce typed Todo and Meeting results")
                 validateSearchTypeFilteringWithFixture {
                     self.validateSearchKeyboardFocusWithFixture(in: window, width: width) {
-                        self.compactSearchKindPopup.selectItem(at: 0)
-                        self.synchronizeSearchKindPopups(from: self.compactSearchKindPopup)
+                        self.searchKindPopup.selectItem(at: 0)
                         self.updateSearchAccessibilityContext(area: self.stateStore.state.selectedTab)
                         self.searchIndexProvider = previousProvider
                         try? FileManager.default.removeItem(at: fixtureRoot)
@@ -421,25 +416,25 @@ extension ShellViewController {
     }
 
     private func validateSearchTypeFilteringWithFixture(completion: @escaping () -> Void) {
-        guard let todoIndex = compactSearchKindPopup.itemArray.firstIndex(where: {
+        guard let todoIndex = searchKindPopup.itemArray.firstIndex(where: {
             ($0.representedObject as? String) == SearchChunkKind.todo.rawValue
         }) else {
             preconditionFailure("Compact Search fixture is missing the Todo result type")
         }
-        compactSearchKindPopup.selectItem(at: todoIndex)
-        compactSearchKindChanged(compactSearchKindPopup)
+        searchKindPopup.selectItem(at: todoIndex)
+        searchKindChanged(searchKindPopup)
         precondition(searchKindPopup.selectedItem?.representedObject as? String == SearchChunkKind.todo.rawValue,
                      "Changing compact result type must update toolbar selection")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
             precondition(searchResultsView.resultCountForValidation == 2,
                          "Changing Search result type must narrow indexed results")
-            compactSearchKindPopup.selectItem(at: 0)
-            compactSearchKindChanged(compactSearchKindPopup)
+            searchKindPopup.selectItem(at: 0)
+            searchKindChanged(searchKindPopup)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
                 precondition(searchResultsView.resultCountForValidation == 3,
                              "All types must restore results without changing query or scope")
-                compactSearchKindPopup.selectItem(at: todoIndex)
-                compactSearchKindChanged(compactSearchKindPopup)
+                searchKindPopup.selectItem(at: todoIndex)
+                searchKindChanged(searchKindPopup)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
                     precondition(searchResultsView.resultCountForValidation == 2,
                                  "Filtered fixture must retain two rows for keyboard navigation")
@@ -450,10 +445,7 @@ extension ShellViewController {
     }
 
     private func validateSearchKeyboardFocusWithFixture(in window: NSWindow, width: CGFloat, completion: @escaping () -> Void) {
-        if width < 900 {
-            precondition(compactSearchPopover.isShown, "Compact Area Search must be open for keyboard handoff")
-        }
-        let activeSearchField = width < 900 ? compactSearchField : searchField
+        let activeSearchField = searchField
         precondition(control(activeSearchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.moveDown(_:))),
                      "Down Arrow must hand keyboard focus to search results")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
@@ -466,20 +458,8 @@ extension ShellViewController {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [self] in
                 precondition(searchResultsView.resultsHaveKeyboardFocus,
                              "After two arrows and a pause, focus must not return to Area Search")
-                if width < 900 {
-                    focusAreaSearch(nil)
-                    precondition(compactSearchPopover.isShown, "Compact search must open for dismissal test")
-                    compactSearchPopover.close()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
-                        precondition(searchResultsView.resultsHaveKeyboardFocus,
-                                     "Ordinary dismissal must return focus to the invoking results control")
-                        validateSearchDismissalWithFixture(width: width)
-                        completion()
-                    }
-                } else {
-                    validateSearchDismissalWithFixture(width: width)
-                    completion()
-                }
+                validateSearchDismissalWithFixture(width: width)
+                completion()
             }
         }
     }
@@ -491,7 +471,7 @@ extension ShellViewController {
         focusAreaSearch(nil)
         precondition(isSearchPresented && searchResultsView.isHidden,
                      "Focus Area Search must not replace the page before a query is entered")
-        let field = width < 900 ? compactSearchField : searchField
+        let field = searchField
         precondition(control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:))),
                      "Escape in Area Search must be handled")
         precondition(!isSearchPresented && searchResultsView.isHidden, "Escape in the search field must close search")
