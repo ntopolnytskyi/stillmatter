@@ -18,12 +18,18 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
         let dismissButton = ProposalReviewButton(title: "Dismiss", target: nil, action: nil)
         let container = ProposalReviewRowView()
 
-        init(proposal: ActionItemProposal) {
+        init(proposal: ActionItemProposal, controls: GraphiteFocusControls) {
             self.proposal = proposal
-            titleField = NSTextField(string: proposal.title)
+            titleField = controls.textField(identifier: "proposal-title-\(proposal.id)")
+            titleField.stringValue = proposal.title
+            for (control, name) in [(selection, "select"), (acceptButton, "accept"),
+                                    (referenceOnlyButton, "reference"), (dismissButton, "dismiss")] {
+                controls.configure(control, identifier: "proposal-\(name)-\(proposal.id)")
+            }
         }
     }
 
+    private let controls: GraphiteFocusControls
     private let settingsStore: SettingsStore
     private let inbox: TasksInbox?
     private var displayedOwner: String?
@@ -39,12 +45,17 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
     let mergeSelectedButton = ProposalReviewButton(title: "Merge Selected", target: nil, action: nil)
     var rows: [ProposalRow] = []
 
-    init(settingsStore: SettingsStore, inbox: TasksInbox?, onChange: @escaping () -> Void) {
+    init(controls: GraphiteFocusControls = GraphiteFocusControls(), settingsStore: SettingsStore, inbox: TasksInbox?, onChange: @escaping () -> Void) {
+        self.controls = controls
         self.settingsStore = settingsStore
         self.inbox = inbox
         self.onChange = onChange
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        for (control, name) in [(selectAllCheckbox, "select-all"), (acceptSelectedButton, "accept-selected"),
+                                (mergeSelectedButton, "merge-selected")] {
+            controls.configure(control, identifier: "proposal-\(name)")
+        }
         buildLayout()
     }
 
@@ -194,7 +205,7 @@ final class ProposalReviewView: NSView, NSTextFieldDelegate {
             listStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        rows = proposals.map(ProposalRow.init)
+        rows = proposals.map { ProposalRow(proposal: $0, controls: controls) }
         for (index, row) in rows.enumerated() {
             if let edit = edits[row.proposal.id] { row.titleField.stringValue = edit }
             row.selection.state = selectedIDs.contains(row.proposal.id) ? .on : .off

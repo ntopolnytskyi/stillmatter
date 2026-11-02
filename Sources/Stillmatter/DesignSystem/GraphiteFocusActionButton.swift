@@ -16,6 +16,14 @@ final class GraphiteFocusActionButton: NSButton {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 || event.keyCode == 76 {
+            performClick(nil)
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
     @objc private func activate() {
         invoke()
     }

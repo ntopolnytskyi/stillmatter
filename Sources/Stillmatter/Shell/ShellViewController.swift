@@ -100,6 +100,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         }
     )
     lazy var todoLedgerView: TodoLedgerView = TodoLedgerView(
+        completion: TodoCompletion(appSupportRoot: AppDelegate.applicationSupportURL, workspaceRoot: { [weak self] in self?.settingsStore.settings.stillmatterRootURL }),
+        onChange: { [weak self] in self?.stateStore.publish(.tasks) },
         stateProvider: { [weak self] in self?.todoLoader.state ?? .unavailable("Tasks are unavailable.") },
         onRetry: { [weak self] in self?.reloadTodos() },
         onOpenItem: { [weak self] item in self?.openTodoItem(item) },

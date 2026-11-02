@@ -3,7 +3,7 @@ import AppKit
 import StillmatterCore
 #endif
 
-/// Dense, read-only Precision Ledger for canonical Todo Items.
+/// Dense Precision Ledger for canonical Todo Items.
 final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     override var isFlipped: Bool { true }
 
@@ -29,12 +29,18 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         }
     }
 
+    private let controls: GraphiteFocusControls
+    private let completion: TodoCompletion?
+    private let onChange: () -> Void
+    private var displayedRoot: URL?
+    private lazy var completionRetry = controls.button("Refresh Tasks", identifier: "tasks-completion-retry", target: self, action: #selector(retry(_:)))
+    private let completionError = NSTextField(wrappingLabelWithString: "")
     let stateProvider: () -> State
     private let onRetry: () -> Void
     var onOpenItem: (TodoItem) -> Void
     private let onOpenSettings: () -> Void
-    let modeControl = NSSegmentedControl(labels: Mode.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
-    let sourceFilterField = NSSearchField()
+    let modeControl: NSSegmentedControl
+    let sourceFilterField: NSSearchField
     let contextLabel = NSTextField(labelWithString: "")
     let tableView = TodoLedgerTableView()
     private let scrollView = NSScrollView()
@@ -45,11 +51,19 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
     var renderedState = ""
 
     init(
+        controls: GraphiteFocusControls = GraphiteFocusControls(),
+        completion: TodoCompletion? = nil,
+        onChange: @escaping () -> Void = {},
         stateProvider: @escaping () -> State,
         onRetry: @escaping () -> Void,
         onOpenItem: @escaping (TodoItem) -> Void,
         onOpenSettings: @escaping () -> Void
     ) {
+        self.controls = controls
+        self.completion = completion
+        self.onChange = onChange
+        modeControl = controls.segments(Mode.allCases.map(\.title), identifier: "tasks-mode")
+        sourceFilterField = controls.searchField(identifier: "tasks-source-filter")
         self.stateProvider = stateProvider
         self.onRetry = onRetry
         self.onOpenItem = onOpenItem
@@ -77,8 +91,12 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         let item = visibleItems[row]
         let identifier = NSUserInterfaceItemIdentifier("TodoLedgerRow")
         let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? TodoLedgerCellView)
-            ?? TodoLedgerCellView(identifier: identifier)
+            ?? TodoLedgerCellView(identifier: identifier, controls: controls)
         cell.configure(item, parentTitle: item.parentID.flatMap { parentTitles[$0] })
+        cell.completionButton.isHidden = completion == nil
+        cell.completionButton.target = self
+        cell.completionButton.action = #selector(completeRow(_:))
+        cell.completionButton.tag = row
         return cell
     }
 
@@ -116,6 +134,15 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         tableView.doubleAction = #selector(openSelectedItem(_:))
         tableView.onReturn = { [weak self] in self?.activateSelectedItem() }
         tableView.setAccessibilityLabel("Todo Items")
+        tableView.setAccessibilityIdentifier("tasks-listing")
+        tableView.onComplete = { [weak self] in
+            guard let self, self.visibleItems.indices.contains(self.tableView.selectedRow) else { return }
+            self.completeItem(at: self.tableView.selectedRow)
+        }
+        completionError.isHidden = true
+        completionRetry.isHidden = true
+        completionError.textColor = colors.destructive
+        completionError.setAccessibilityIdentifier("tasks-completion-error")
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -124,9 +151,13 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         stateContainer.translatesAutoresizingMaskIntoConstraints = false
 
+        let feedback = NSStackView(views: [contextLabel, completionError, completionRetry])
+        feedback.orientation = .vertical
+        feedback.alignment = .leading
+        feedback.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(feedback)
         addSubview(modeControl)
         addSubview(sourceFilterField)
-        addSubview(contextLabel)
         addSubview(scrollView)
         addSubview(stateContainer)
         NSLayoutConstraint.activate([
@@ -137,17 +168,17 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
             sourceFilterField.centerYAnchor.constraint(equalTo: modeControl.centerYAnchor),
             sourceFilterField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
             sourceFilterField.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
-            contextLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            contextLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
-            contextLabel.topAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact),
+            feedback.leadingAnchor.constraint(equalTo: leadingAnchor),
+            feedback.trailingAnchor.constraint(equalTo: trailingAnchor),
+            feedback.topAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: contextLabel.bottomAnchor, constant: GraphiteFocusPresentation.Space.panel),
+            scrollView.topAnchor.constraint(equalTo: feedback.bottomAnchor, constant: GraphiteFocusPresentation.Space.panel),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
             stateContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
             stateContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stateContainer.topAnchor.constraint(equalTo: contextLabel.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
+            stateContainer.topAnchor.constraint(equalTo: feedback.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
             stateContainer.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor)
         ])
     }
@@ -172,10 +203,14 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
 
     func render(_ state: State) {
         renderCountForValidation += 1
+        completionError.isHidden = true
+        completionRetry.isHidden = true
         stateContainer.subviews.forEach { $0.removeFromSuperview() }
         switch state {
         case let .loaded(views):
-            let selectedID = visibleItems.indices.contains(tableView.selectedRow) ? visibleItems[tableView.selectedRow].id : nil
+            displayedRoot = completion?.workspaceRoot()
+            let selected = visibleItems.indices.contains(tableView.selectedRow) ? visibleItems[tableView.selectedRow] : nil
+            let selectedID = selected.flatMap { TodoSelection.resolve($0, in: views.allIndexed)?.id }
             loadedViews = views
             parentTitles = Dictionary(uniqueKeysWithValues: views.allIndexed.map { ($0.id, $0.title) })
             applyFilter(preserving: selectedID)
@@ -200,6 +235,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
 
     func applyFilter(preserving selectedID: String? = nil) {
         guard let views = loadedViews else { return }
+        let previousIndex = max(0, tableView.selectedRow)
         let query = sourceFilterField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let mode = Mode(rawValue: modeControl.selectedSegment) ?? .queue
         let items: [TodoItem]
@@ -232,7 +268,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         updateVisibility()
         tableView.reloadData()
         if !visibleItems.isEmpty {
-            let index = selectedID.flatMap { id in visibleItems.firstIndex(where: { $0.id == id }) } ?? 0
+            let index = selectedID.flatMap { id in visibleItems.firstIndex(where: { $0.id == id }) } ?? min(previousIndex, visibleItems.count - 1)
             tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         }
     }
@@ -267,7 +303,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         stack.spacing = GraphiteFocusPresentation.Space.compact
         stack.translatesAutoresizingMaskIntoConstraints = false
         if let actionTitle = actionTitle, let action = action {
-            stack.addArrangedSubview(NSButton(title: actionTitle, target: self, action: action))
+            stack.addArrangedSubview(controls.button(actionTitle, identifier: "tasks-state-action", target: self, action: action))
         }
         stateContainer.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -281,6 +317,30 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
 
     private var colors: GraphiteFocusPresentation.Colors {
         GraphiteFocusPresentation.Colors(environment: .system(window: window))
+    }
+
+    @objc private func completeRow(_ sender: NSButton) {
+        completeItem(at: sender.tag)
+    }
+
+    private func completeItem(at index: Int) {
+        guard let completion, visibleItems.indices.contains(index) else { return }
+        let item = visibleItems[index]
+        guard item.status == .open || item.status == .blocked else { return }
+        tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        do {
+            let views = try completion.complete(item, displayedRoot: displayedRoot)
+            completionError.isHidden = true
+            render(.loaded(views))
+            window?.makeFirstResponder(visibleItems.isEmpty ? stateContainer : tableView)
+            onChange()
+        } catch {
+            completionError.stringValue = "Could not complete this Todo Item. Refresh Tasks and try again. \(error)"
+            completionError.isHidden = false
+            completionRetry.isHidden = false
+            tableView.reloadData()
+            window?.makeFirstResponder(tableView)
+        }
     }
 
     private func activateSelectedItem() {
@@ -303,9 +363,12 @@ final class TodoLedgerStateView: NSView {
 
 final class TodoLedgerTableView: NSTableView {
     var onReturn: (() -> Void)?
+    var onComplete: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 || event.keyCode == 76 {
+        if event.keyCode == 49 && event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            onComplete?()
+        } else if event.keyCode == 36 || event.keyCode == 76 {
             onReturn?()
         } else {
             super.keyDown(with: event)
@@ -314,12 +377,14 @@ final class TodoLedgerTableView: NSTableView {
 }
 
 final class TodoLedgerCellView: NSTableCellView {
+    let completionButton: NSButton
     private let statusLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
     private let meaningLabel = NSTextField(labelWithString: "")
     private let metadataLabel = NSTextField(labelWithString: "")
 
-    init(identifier: NSUserInterfaceItemIdentifier) {
+    init(identifier: NSUserInterfaceItemIdentifier, controls: GraphiteFocusControls = GraphiteFocusControls()) {
+        completionButton = controls.checkbox("", identifier: "task-complete")
         super.init(frame: .zero)
         self.identifier = identifier
         buildLayout()
@@ -330,6 +395,10 @@ final class TodoLedgerCellView: NSTableCellView {
     }
 
     func configure(_ item: TodoItem, parentTitle: String?) {
+        completionButton.state = item.status == .done ? .on : .off
+        completionButton.isEnabled = item.isFromMainTodoFile && (item.status == .open || item.status == .blocked)
+        completionButton.setAccessibilityIdentifier("task-complete-\(item.id)")
+        completionButton.setAccessibilityLabel("Complete \(item.title)")
         let presentation = Self.presentation(for: item.status)
         statusLabel.stringValue = presentation.symbol
         statusLabel.textColor = presentation.color
@@ -369,7 +438,7 @@ final class TodoLedgerCellView: NSTableCellView {
         detail.orientation = .vertical
         detail.alignment = .leading
         detail.spacing = GraphiteFocusPresentation.Space.primitive
-        let row = NSStackView(views: [statusLabel, detail])
+        let row = NSStackView(views: [completionButton, statusLabel, detail])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = GraphiteFocusPresentation.Space.panel

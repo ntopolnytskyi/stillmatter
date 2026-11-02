@@ -14,6 +14,7 @@ final class TodayWorkbenchView: NSView {
         case failed(String)
     }
 
+    private let controls: GraphiteFocusControls
     let stateProvider: () -> State
     private let onRetry: () -> Void
     private let onSelectArea: (ShellTab) -> Void
@@ -35,6 +36,8 @@ final class TodayWorkbenchView: NSView {
     private(set) var lastRenderedRowCount = 0
     private(set) var inboxRows: [String: NSButton] = [:]
     private var emptyInboxRows: [InboxCategory: NSButton] = [:]
+    private var emptyQueueControl: NSButton?
+    private var queueRows: [String: NSButton] = [:]
     private var meetingRows: [String: NSButton] = [:]
     private var unavailableInboxItemID: String?
     private var unavailableInboxMessage: NSView?
@@ -44,6 +47,7 @@ final class TodayWorkbenchView: NSView {
     private var detailWorkspaceOwner: String?
 
     init(
+        controls: GraphiteFocusControls = GraphiteFocusControls(),
         stateProvider: @escaping () -> State,
         onRetry: @escaping () -> Void,
         onSelectArea: @escaping (ShellTab) -> Void,
@@ -53,6 +57,7 @@ final class TodayWorkbenchView: NSView {
         onOpenTodo: @escaping (TodoItem, String?) -> Void,
         onReviewTitle: @escaping (InboxItem) -> Void = { _ in }
     ) {
+        self.controls = controls
         self.stateProvider = stateProvider
         self.onRetry = onRetry
         self.onSelectArea = onSelectArea
@@ -96,7 +101,7 @@ final class TodayWorkbenchView: NSView {
         let content = NSTextField(wrappingLabelWithString: "\(currentTitle)\n\(currentTime)")
         content.font = GraphiteFocusPresentation.Typography.body
         content.textColor = colors.textPrimary
-        let close = TodayClosureButton(title: "Return to meetings", action: { [weak self] in
+        let close = controls.actionButton("Return to meetings", identifier: "today-return-meetings", action: { [weak self] in
             self?.decisionDetail?.removeFromSuperview()
             self?.decisionDetail = nil
             self?.detailMeetingID = nil
@@ -132,16 +137,18 @@ final class TodayWorkbenchView: NSView {
         let content = NSTextField(wrappingLabelWithString: "\(item.title)\(source)\(details)\(note)\(result)")
         content.font = GraphiteFocusPresentation.Typography.body
         content.textColor = colors.textPrimary
-        let close = TodayClosureButton(title: "Return to decisions", action: { [weak self] in
+        let close = controls.actionButton("Return to decisions", identifier: "today-return-decisions", action: { [weak self] in
             self?.decisionDetail?.removeFromSuperview()
             self?.decisionDetail = nil
             self?.detailInboxItem = nil
             self?.focusInboxItem(id: item.id)
         })
-        let controls: [NSView] = [content] + (actionTitle.flatMap { title in
-            onAction.map { action in TodayClosureButton(title: title, action: action) }
-        }.map { [$0] } ?? []) + [close]
-        let stack = NSStackView(views: controls)
+        var detailControls: [NSView] = [content]
+        if let actionTitle, let onAction {
+            detailControls.append(controls.actionButton(actionTitle, identifier: "today-decision-action", action: onAction))
+        }
+        detailControls.append(close)
+        let stack = NSStackView(views: detailControls)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = GraphiteFocusPresentation.Space.dense
@@ -151,7 +158,7 @@ final class TodayWorkbenchView: NSView {
         addFullWidth(panel, to: contentStack)
         layoutSubtreeIfNeeded()
         panel.scrollToVisible(panel.bounds)
-        window?.makeFirstResponder((controls.dropFirst().first as? NSButton) ?? close)
+        window?.makeFirstResponder((detailControls.dropFirst().first as? NSButton) ?? close)
     }
 
     func showUnavailableInboxItem(id: String) {
@@ -162,7 +169,7 @@ final class TodayWorkbenchView: NSView {
     }
 
     private func appendUnavailableInboxMessage() {
-        let message = TodayClosureButton(title: "This item is unavailable · Refresh Today", action: { [weak self] in self?.onRetry() })
+        let message = controls.actionButton("This item is unavailable · Refresh Today", identifier: "today-inbox-item-unavailable", action: { [weak self] in self?.onRetry() })
         message.setAccessibilityIdentifier("today-inbox-item-unavailable")
         unavailableInboxMessage = message
         addFullWidth(message, to: contentStack)
@@ -190,6 +197,12 @@ final class TodayWorkbenchView: NSView {
     func render(_ state: State) {
         guard renderedState != state else { return }
         renderCountForValidation += 1
+        let focusedQueueID = queueRows.first { $0.value === window?.firstResponder }?.key
+        let oldQueue = renderedSections.flatMap { entry -> [TodoItem] in
+            if case let .queue(items) = entry.1 { return items }
+            return []
+        }
+        let focusedQueueItem = oldQueue.first { $0.id == focusedQueueID }
         let focusedID = inboxRows.first { $0.value === window?.firstResponder }?.key
         let focusedCategory = renderedSections.compactMap { entry -> InboxCategory? in
             if case let .decisions(sections) = entry.1 {
@@ -254,6 +267,14 @@ final class TodayWorkbenchView: NSView {
             if inboxRows[id] == nil { appendUnavailableInboxMessage() }
             else { unavailableInboxItemID = nil }
         }
+        if let focusedQueueItem, case let .loaded(snapshot) = state {
+            let match = TodoSelection.resolve(focusedQueueItem, in: snapshot.queue)
+            let position = oldQueue.firstIndex(of: focusedQueueItem) ?? 0
+            let fallback = snapshot.queue.isEmpty ? nil : snapshot.queue[min(position, snapshot.queue.count - 1)].id
+            if let replacement = (match?.id ?? fallback).flatMap({ queueRows[$0] }) ?? emptyQueueControl {
+                window?.makeFirstResponder(replacement)
+            }
+        }
         if let focusedID {
             let position = oldInboxIDs.firstIndex(of: focusedID) ?? 0
             let replacement = inboxRows[focusedID] ?? inboxRowsForFocus(at: position)
@@ -277,6 +298,7 @@ final class TodayWorkbenchView: NSView {
         inboxRows.removeAll()
         emptyInboxRows.removeAll()
         meetingRows.removeAll()
+        queueRows.removeAll()
         contentStack.removeAllArrangedSubviews()
         addFullWidth(view, to: contentStack)
     }
@@ -336,7 +358,7 @@ final class TodayWorkbenchView: NSView {
         inboxStack.spacing = GraphiteFocusPresentation.Space.panel
         for section in sections {
             let rows = section.items.map { item in
-                let row = GraphiteFocusCollectionRow(
+                let row = controls.collectionRow(
                     symbol: inboxSymbol(for: item.kind),
                     title: item.title,
                     metadata: inboxMetadata(for: item),
@@ -358,7 +380,7 @@ final class TodayWorkbenchView: NSView {
                 inboxRows[item.id] = row
                 return row
             }
-            let empty = TodayClosureButton(title: "No \(section.category.displayName.lowercased()) items · Refresh", action: { [weak self] in self?.onRetry() })
+            let empty = controls.actionButton("No \(section.category.displayName.lowercased()) items · Refresh", identifier: "today-empty-\(section.category.rawValue)", action: { [weak self] in self?.onRetry() })
             if rows.isEmpty { emptyInboxRows[section.category] = empty }
             addFullWidth(makeSection(
                 title: "\(section.category.displayName) · \(section.items.count)",
@@ -373,27 +395,38 @@ final class TodayWorkbenchView: NSView {
     }
 
     private func makeQueue(_ items: [TodoItem], owner: String?) -> NSView {
-        let queueRows = items.map { item in
-            GraphiteFocusCollectionRow(
+        queueRows.removeAll()
+        emptyQueueControl = nil
+        let rows = items.map { item in
+            let row = controls.collectionRow(
                 symbol: todoSymbol(for: item.status),
                 title: item.title,
                 metadata: todoMetadata(for: item),
                 emphasis: item.status == .blocked ? .attention : .standard,
                 action: { [weak self] in self?.onOpenTodo(item, owner) }
             )
+            row.setAccessibilityIdentifier("today-todo-\(item.id)")
+            queueRows[item.id] = row
+            return row
         }
-        return makeSection(
+        let section = makeSection(
             title: "Your queue",
-            rows: queueRows,
+            rows: rows,
             emptyMessage: "No open Todo Items in the Queue.",
             identifier: "today-queue"
         )
+        if items.isEmpty {
+            let open = controls.actionButton("Open Tasks", identifier: "today-empty-queue-action", action: { [weak self] in self?.onSelectArea(.tasks) })
+            emptyQueueControl = open
+            section.addArrangedSubview(open)
+        }
+        return section
     }
 
     private func makeMeetings(_ meetings: [TodayMeeting], owner: String?) -> NSView {
         meetingRows.removeAll()
         let rows = meetings.map { meeting in
-            let row = GraphiteFocusCollectionRow(
+            let row = controls.collectionRow(
                 symbol: "◷",
                 title: meeting.title,
                 metadata: meeting.time.map { "Today at \($0)" } ?? "Time unavailable",
@@ -415,7 +448,7 @@ final class TodayWorkbenchView: NSView {
 
 
 
-    private func makeGroup(title: String, content: NSView) -> NSView {
+    private func makeGroup(title: String, content: NSView) -> NSStackView {
         let heading = makeHeading(title)
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -458,7 +491,7 @@ final class TodayWorkbenchView: NSView {
         emptyMessage: String,
         identifier: String,
         emptyControl: NSButton? = nil
-    ) -> NSView {
+    ) -> NSStackView {
         let rowsStack = NSStackView()
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
@@ -502,7 +535,7 @@ final class TodayWorkbenchView: NSView {
         let messageLabel = NSTextField(wrappingLabelWithString: message)
         messageLabel.font = GraphiteFocusPresentation.Typography.body
         messageLabel.textColor = colors.textSecondary
-        let button = TodayClosureButton(title: actionTitle, action: action)
+        let button = controls.actionButton(actionTitle, identifier: "today-state-action", action: action)
         let stack = NSStackView(views: [titleLabel, messageLabel, button])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -570,119 +603,6 @@ final class TodayWorkbenchView: NSView {
 
 }
 
-private final class GraphiteFocusCollectionRow: NSButton {
-    enum Emphasis {
-        case standard
-        case attention
-        case proposal
-    }
-
-    private let invoke: () -> Void
-
-    init(
-        symbol: String,
-        title: String,
-        metadata: String,
-        emphasis: Emphasis = .standard,
-        actionTitle: String = "Open",
-        action: @escaping () -> Void
-    ) {
-        invoke = action
-        super.init(frame: .zero)
-        self.title = ""
-        target = self
-        self.action = #selector(activate)
-        isBordered = false
-        focusRingType = .default
-        setButtonType(.momentaryChange)
-        setAccessibilityLabel("\(title). \(metadata). \(actionTitle)")
-
-        let colors = GraphiteFocusPresentation.Colors(environment: .system(window: nil))
-        let symbolLabel = NSTextField(labelWithString: symbol)
-        symbolLabel.font = GraphiteFocusPresentation.Typography.control
-        symbolLabel.textColor = emphasis == .attention ? colors.attention : (emphasis == .proposal ? colors.informational : colors.textMetadata)
-        symbolLabel.alignment = .center
-        symbolLabel.widthAnchor.constraint(equalToConstant: 20).isActive = true
-
-        let titleLabel = NSTextField(wrappingLabelWithString: title)
-        titleLabel.font = GraphiteFocusPresentation.Typography.rowTitle
-        titleLabel.textColor = colors.textPrimary
-        titleLabel.maximumNumberOfLines = 2
-        let metadataLabel = NSTextField(wrappingLabelWithString: metadata)
-        metadataLabel.font = GraphiteFocusPresentation.Typography.metadata
-        metadataLabel.textColor = colors.textMetadata
-        metadataLabel.maximumNumberOfLines = 2
-        let labels = NSStackView(views: [titleLabel, metadataLabel])
-        labels.orientation = .vertical
-        labels.alignment = .leading
-        labels.spacing = GraphiteFocusPresentation.Space.primitive
-        labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let actionLabel = NSTextField(labelWithString: actionTitle)
-        actionLabel.font = GraphiteFocusPresentation.Typography.control
-        actionLabel.textColor = colors.accent
-
-        let row = NSStackView(views: [symbolLabel, labels, actionLabel])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = GraphiteFocusPresentation.Space.dense
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: GraphiteFocusPresentation.Space.compact),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -GraphiteFocusPresentation.Space.compact),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: GraphiteFocusPresentation.Space.dense),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -GraphiteFocusPresentation.Space.dense),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 48)
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 || event.keyCode == 76 {
-            performClick(nil)
-        } else {
-            super.keyDown(with: event)
-        }
-    }
-
-    @objc private func activate() {
-        invoke()
-    }
-}
-
-final class TodayClosureButton: NSButton {
-    private let invoke: () -> Void
-
-    init(title: String, action: @escaping () -> Void) {
-        invoke = action
-        super.init(frame: .zero)
-        self.title = title
-        bezelStyle = .rounded
-        target = self
-        self.action = #selector(activate)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 || event.keyCode == 76 {
-            performClick(nil)
-        } else {
-            super.keyDown(with: event)
-        }
-    }
-
-    @objc private func activate() {
-        invoke()
-    }
-}
-
 private extension NSStackView {
     func removeAllArrangedSubviews() {
         arrangedSubviews.forEach { view in
@@ -691,3 +611,5 @@ private extension NSStackView {
         }
     }
 }
+
+typealias TodayClosureButton = GraphiteFocusActionButton

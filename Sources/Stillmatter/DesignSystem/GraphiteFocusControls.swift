@@ -56,7 +56,28 @@ struct GraphiteFocusControls {
         stop.contentTintColor = nil
     }
 
-    private func configure(_ control: NSControl, identifier: String) {
+    func searchField(identifier: String) -> NSSearchField {
+        let field = NSSearchField()
+        configure(field, identifier: identifier)
+        return field
+    }
+
+    func segments(_ labels: [String], identifier: String) -> NSSegmentedControl {
+        let control = NSSegmentedControl(labels: labels, trackingMode: .selectOne, target: nil, action: nil)
+        configure(control, identifier: identifier)
+        return control
+    }
+
+    func collectionRow(symbol: String, title: String, metadata: String,
+                       emphasis: GraphiteFocusCollectionRow.Emphasis = .standard,
+                       actionTitle: String = "Open", action: @escaping () -> Void) -> GraphiteFocusCollectionRow {
+        let row = GraphiteFocusCollectionRow(style: style, symbol: symbol, title: title, metadata: metadata,
+                                            emphasis: emphasis, actionTitle: actionTitle, action: action)
+        configure(row, identifier: "collection-row")
+        return row
+    }
+
+    func configure(_ control: NSControl, identifier: String) {
         control.font = style.font
         control.controlSize = style.controlSize
         control.setAccessibilityIdentifier(identifier)
