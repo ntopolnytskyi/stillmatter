@@ -786,15 +786,36 @@ public final class JobStore {
     private func recoverInterruptedJobs() throws {
         lock.lock()
         defer { lock.unlock() }
+        let interruptedIDs: [String] = try database.query(
+            "SELECT id FROM jobs WHERE status = ? ORDER BY created_at, id",
+            bindings: [.text(JobStatus.running.rawValue)]
+        ) { JobSQLiteDatabase.text($0, column: 0) }
         try database.transaction {
-            try database.run(
-                "UPDATE job_stages SET status = ?, last_error = ? WHERE status = ?",
-                bindings: [.text(JobStageStatus.pending.rawValue), .text("Interrupted before completion"), .text(JobStageStatus.running.rawValue)]
-            )
-            try database.run(
-                "UPDATE jobs SET status = ?, failure_details = ?, updated_at = ? WHERE status = ?",
-                bindings: [.text(JobStatus.queued.rawValue), .text("Interrupted before completion"), .text(now()), .text(JobStatus.running.rawValue)]
-            )
+            for id in interruptedIDs {
+                guard let job = try recordUnlocked(id: id),
+                      let stage = job.stages.first(where: { $0.status == .running }) else { continue }
+                let message = "Interrupted before completion"
+                let exhausted = stage.attemptCount > job.manifest.maxAutomaticRetries
+                let nextStageStatus: JobStageStatus = exhausted ? .failed : .pending
+                let nextJobStatus: JobStatus = exhausted ? .failed : .queued
+                let timestamp = now()
+                try database.run(
+                    "UPDATE job_stages SET status = ?, last_error = ?, finished_at = ? WHERE job_id = ? AND stage_id = ? AND status = ?",
+                    bindings: [.text(nextStageStatus.rawValue), .text(message), .text(timestamp), .text(id),
+                               .text(stage.definition.id), .text(JobStageStatus.running.rawValue)]
+                )
+                try database.run(
+                    "UPDATE jobs SET status = ?, failure_details = ?, updated_at = ? WHERE id = ? AND status = ?",
+                    bindings: [.text(nextJobStatus.rawValue), .text(message), .text(timestamp), .text(id),
+                               .text(JobStatus.running.rawValue)]
+                )
+                try appendLogUnlocked(jobID: id, level: exhausted ? "error" : "warning",
+                                      message: exhausted ? "Stage \(stage.definition.id) failed after interruption: \(message)"
+                                                         : "Stage \(stage.definition.id) interrupted; retrying: \(message)")
+                if exhausted {
+                    try inboxFor(job)?.recordFailedJob(id: inboxID(jobID: id), title: "\(job.manifest.title) failed", details: message)
+                }
+            }
         }
     }
 

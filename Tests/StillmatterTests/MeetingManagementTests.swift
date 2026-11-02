@@ -684,8 +684,9 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try store.job(id: "other-meeting")?.status, .queued)
         XCTAssertThrowsError(try service.retryFailedJob(meetingID: "first", jobID: "retry-first"))
         XCTAssertEqual(try store.jobs().count, 2)
+        scheduler.stop() // Simulate shutdown before reopening the durable JobStore.
         let reopened = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/jobs.sqlite"))
-        XCTAssertEqual(try MeetingManagementService(vault: fixture.vault, jobStore: reopened).detail(for: "first").row.processingState, .processing)
+        XCTAssertEqual(try MeetingManagementService(vault: fixture.vault, jobStore: reopened).detail(for: "first").row.processingState, .needsAttention)
     }
 
     func testRetryExplainsWhenProcessingServiceIsUnavailable() throws {

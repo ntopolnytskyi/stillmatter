@@ -89,6 +89,79 @@ final class MeetingWorkflowTests: XCTestCase {
         second.complete()
     }
 
+    func testRepeatedInterruptedStageAttemptsBecomeFailedAndReleaseMeetingQueue() throws {
+        let firstStore = try store()
+        let retryManifest = JobManifest(
+            type: MeetingWorkflowJob.type,
+            title: "Process A",
+            executionClass: .heavy,
+            stages: [.init(id: "prepare", title: "Prepare"), .init(id: "analyze", title: "Analyze")],
+            sourceArtifacts: [.init(relativePath: "Meetings/A/meeting.md", role: "meeting")],
+            maxAutomaticRetries: 1
+        ).owned(by: workspace)
+        let nextManifest = JobManifest(type: MeetingWorkflowJob.type, title: "Process B", executionClass: .heavy,
+            stages: [.init(id: "prepare", title: "Prepare")],
+            sourceArtifacts: [.init(relativePath: "Meetings/B/meeting.md", role: "meeting")], maxAutomaticRetries: 1).owned(by: workspace)
+        _ = try firstStore.enqueue(id: "A", manifest: retryManifest)
+        _ = try firstStore.enqueue(id: "B", manifest: nextManifest)
+
+        let firstExecutor = WorkflowStageControl()
+        let firstScheduler = JobScheduler(store: firstStore, executor: firstExecutor, workspaceRootURL: workspace)
+        firstScheduler.start()
+        wait { firstExecutor.events == ["A/prepare"] }
+        firstExecutor.complete()
+        wait { firstExecutor.events == ["A/prepare", "A/analyze"] }
+        firstScheduler.stop() // Simulate process exit while the durable stage is running.
+
+        let secondStore = try store()
+        let secondExecutor = WorkflowStageControl()
+        let secondScheduler = JobScheduler(store: secondStore, executor: secondExecutor, workspaceRootURL: workspace)
+        secondScheduler.start()
+        wait { secondExecutor.events == ["A/analyze"] }
+        secondScheduler.stop() // A second process exit interrupts attempt two.
+
+        let recoveredStore = try store()
+        let recoveredA = try XCTUnwrap(recoveredStore.job(id: "A"))
+        XCTAssertEqual(recoveredA.stages.map(\.status), [.succeeded, .failed])
+        XCTAssertEqual(recoveredA.stages.map(\.attemptCount), [1, 2])
+        XCTAssertTrue(recoveredA.failureDetails?.contains("Interrupted before completion") == true)
+
+        let nextExecutor = WorkflowStageControl()
+        let nextScheduler = JobScheduler(store: recoveredStore, executor: nextExecutor, workspaceRootURL: workspace)
+        defer { nextScheduler.stop() }
+        nextScheduler.start()
+        wait { nextExecutor.events == ["B/prepare"] }
+        XCTAssertEqual(try recoveredStore.job(id: "A")?.stages.last?.attemptCount, 2)
+    }
+
+    func testMissingModelFailureCanRetryOutstandingStageAfterSetup() throws {
+        let store = try store()
+        _ = try store.enqueue(id: "A", manifest: workflow("A"))
+
+        let transcription = WorkflowStageControl()
+        let unavailable = JobScheduler(store: store, executor: MeetingWorkflowHandler(
+            transcription: transcription, analysis: UnavailableJobHandler(guidance: "Install the local model")),
+            workspaceRootURL: workspace)
+        unavailable.start()
+        wait { transcription.events == ["A/\(TranscriptionJob.stageID)"] }
+        transcription.complete()
+        wait { try store.job(id: "A")?.status == .failed }
+        unavailable.stop()
+        XCTAssertEqual(try store.job(id: "A")?.stages.map(\.status), [.succeeded, .failed])
+        XCTAssertTrue(try store.job(id: "A")?.failureDetails?.contains("Install the local model") == true)
+
+        let setupExecutor = WorkflowStageControl()
+        let configured = JobScheduler(store: store, executor: setupExecutor, workspaceRootURL: workspace)
+        defer { configured.stop() }
+        try configured.retry(id: "A", meetingRelativePath: "Meetings/A/meeting.md")
+        configured.start()
+        wait { setupExecutor.events == ["A/\(MeetingSummaryJob.stageID)"] }
+        setupExecutor.complete()
+        wait { try store.job(id: "A")?.status == .succeeded }
+        XCTAssertEqual(try store.job(id: "A")?.stages.map(\.status), [.succeeded, .succeeded])
+        XCTAssertEqual(try store.job(id: "A")?.stages.map(\.attemptCount), [1, 3])
+    }
+
     func testLegacyContinuationAdoptionPreservesAttemptsSettingsAndFailure() throws {
         let store = try store(), executor = WorkflowStageControl()
         let original = try store.enqueue(id: "A", manifest: legacy("A"))
