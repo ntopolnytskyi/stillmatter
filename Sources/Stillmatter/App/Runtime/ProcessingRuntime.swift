@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 #if SWIFT_PACKAGE
 import StillmatterCore
@@ -16,10 +17,13 @@ final class ProcessingRuntime {
     private let makeTranscription: ((URL, SearchIndex?) -> JobExecuting)?
     private let analysisConfiguration: () -> String
     private let makeAnalysis: (URL) -> JobExecuting
+    private let wakeNotificationCenter: NotificationCenter
+    private let schedulerClock: () -> Date
     private(set) var transcriptionScheduler: JobScheduler?
     private(set) var configurationError: String?
     private var configurationKey: String?
     private var stopped = false
+    private var wakeObserver: NSObjectProtocol?
 
     init(applicationSupportURL: URL, componentInstaller: TranscriptionComponentInstaller,
          jobStore: @escaping () -> JobStore?, mayResumeTranscription: @escaping (String) -> Bool,
@@ -27,6 +31,8 @@ final class ProcessingRuntime {
          makeTranscription: ((URL, SearchIndex?) -> JobExecuting)? = nil,
          analysisConfiguration: @escaping () -> String = { "default-analysis" },
          makeAnalysis: ((URL) -> JobExecuting)? = nil,
+         wakeNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+         schedulerClock: @escaping () -> Date = Date.init,
          analysis: JobExecuting = UnavailableJobHandler(guidance:
             "A fully local analysis provider is required. Configure the local model, then Retry this stage. Recording and Transcript are retained; no Meeting text was uploaded.")) {
         self.applicationSupportURL = applicationSupportURL
@@ -37,6 +43,11 @@ final class ProcessingRuntime {
         self.makeTranscription = makeTranscription
         self.analysisConfiguration = analysisConfiguration
         self.makeAnalysis = makeAnalysis ?? { _ in analysis }
+        self.wakeNotificationCenter = wakeNotificationCenter
+        self.schedulerClock = schedulerClock
+        wakeObserver = wakeNotificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.transcriptionScheduler?.wake()
+        }
     }
 
     var schedulers: [JobScheduler] { [transcriptionScheduler].compactMap { $0 } }
@@ -47,6 +58,7 @@ final class ProcessingRuntime {
     func start() { guard !stopped else { return }; transcriptionScheduler?.start() }
     func stop() {
         stopped = true
+        if let wakeObserver { wakeNotificationCenter.removeObserver(wakeObserver); self.wakeObserver = nil }
         transcriptionScheduler?.stop()
         transcriptionScheduler = nil
         configurationKey = nil
@@ -85,7 +97,7 @@ final class ProcessingRuntime {
                         guard let self, !self.stopped, self.mayResumeTranscription(owner) else { return }
                         self.transcriptionScheduler?.start()
                     }
-                })
+                }, clock: schedulerClock)
             transcriptionScheduler = scheduler
             configurationKey = key
             configurationError = nil

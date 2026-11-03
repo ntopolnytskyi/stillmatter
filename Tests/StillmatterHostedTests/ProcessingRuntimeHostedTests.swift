@@ -105,6 +105,31 @@ final class ProcessingRuntimeHostedTests: XCTestCase {
         XCTAssertEqual(try store.job(id: "B")?.stages.last?.attemptCount, 0)
     }
 
+    @MainActor
+    func testSystemWakeNotificationRechecksPersistedDelayedWork() throws {
+        let store = try JobStore(databaseURL: support.appendingPathComponent("wake.sqlite"))
+        let handler = HostedWorkflowControl()
+        let center = NotificationCenter()
+        let clock = HostedSchedulerClock(Date(timeIntervalSince1970: 1_800_000_000))
+        let runtime = ProcessingRuntime(applicationSupportURL: support, componentInstaller: installer(),
+            jobStore: { store }, mayResumeTranscription: { _ in true },
+            makeTranscription: { _, _ in handler }, wakeNotificationCenter: center,
+            schedulerClock: { clock.now }, analysis: handler)
+        defer { runtime.stop() }
+        let due = clock.now.addingTimeInterval(600)
+        _ = try store.enqueue(id: "wake-delayed", manifest: legacy("wake-delayed"), notBefore: due)
+        runtime.configure(settings: settings(workspace), searchIndex: nil, indexGeneration: 0)
+        Thread.sleep(forTimeInterval: 0.03)
+        XCTAssertTrue(handler.events.isEmpty)
+        clock.advance(to: due)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        wait { handler.events == ["wake-delayed/transcribe"] }
+        handler.complete()
+        wait { handler.events.last == "wake-delayed/summarize-and-extract" }
+        handler.complete()
+        wait { try store.job(id: "wake-delayed")?.status == .succeeded }
+    }
+
     func testSameWorkspaceIndexReconfigurationKeepsPartialTurnWithEqualAndReversedClockTimestamps() throws {
         for reversed in [false, true] {
             let location = support.appendingPathComponent(reversed ? "reversed.sqlite" : "equal.sqlite")
@@ -235,6 +260,14 @@ private struct UnusedModelAcquirer: TranscriptionModelAcquiring {
                       progress: @escaping (TranscriptionInstallProgress) -> Void) throws -> URL {
         throw JobsError.invalidManifest("Tests never download models")
     }
+}
+
+private final class HostedSchedulerClock {
+    private let lock = NSLock()
+    private var value: Date
+    init(_ initial: Date) { value = initial }
+    var now: Date { lock.lock(); defer { lock.unlock() }; return value }
+    func advance(to date: Date) { lock.lock(); value = date; lock.unlock() }
 }
 
 private final class HostedWorkflowControl: JobExecuting {

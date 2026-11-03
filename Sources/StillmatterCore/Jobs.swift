@@ -135,6 +135,19 @@ public struct JobRecord: Equatable {
     public let createdAt: String
     public let updatedAt: String
     public let failureDetails: String?
+    public let notBefore: Date?
+
+    public init(id: String, manifest: JobManifest, status: JobStatus, stages: [JobStageRecord],
+                createdAt: String, updatedAt: String, failureDetails: String?, notBefore: Date? = nil) {
+        self.id = id
+        self.manifest = manifest
+        self.status = status
+        self.stages = stages
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.failureDetails = failureDetails
+        self.notBefore = notBefore
+    }
 }
 
 public struct JobLogEntry: Equatable {
@@ -379,10 +392,10 @@ public final class JobStore {
         changeObservers.removeValue(forKey: id)
     }
 
-    public func enqueue(id: String = UUID().uuidString, manifest: JobManifest) throws -> JobRecord {
+    public func enqueue(id: String = UUID().uuidString, manifest: JobManifest, notBefore: Date? = nil) throws -> JobRecord {
         lock.lock()
         defer { lock.unlock() }
-        let job = try enqueueUnlocked(id: id, manifest: manifest)
+        let job = try enqueueUnlocked(id: id, manifest: manifest, notBefore: notBefore)
         notifyChange(job)
         return job
     }
@@ -485,7 +498,7 @@ public final class JobStore {
         if renamingMeeting { try rewrite() } else { try database.transaction(rewrite) }
     }
 
-    private func enqueueUnlocked(id: String, manifest: JobManifest, inTransaction: Bool = false) throws -> JobRecord {
+    private func enqueueUnlocked(id: String, manifest: JobManifest, notBefore: Date? = nil, inTransaction: Bool = false) throws -> JobRecord {
         try validate(manifest)
         guard try recordUnlocked(id: id) == nil else { throw JobsError.duplicateJob(id) }
         let encoded = try JSONEncoder().encode(manifest)
@@ -495,8 +508,9 @@ public final class JobStore {
         let timestamp = now()
         let insert = {
             try self.database.run(
-                "INSERT INTO jobs (id, manifest_json, status, created_at, updated_at, failure_details) VALUES (?, ?, ?, ?, ?, NULL)",
-                bindings: [.text(id), .text(manifestJSON), .text(JobStatus.queued.rawValue), .text(timestamp), .text(timestamp)]
+                "INSERT INTO jobs (id, manifest_json, status, created_at, updated_at, failure_details, not_before) VALUES (?, ?, ?, ?, ?, NULL, ?)",
+                bindings: [.text(id), .text(manifestJSON), .text(JobStatus.queued.rawValue), .text(timestamp), .text(timestamp),
+                           notBefore.map { .real($0.timeIntervalSince1970) } ?? .null]
             )
             for (position, stage) in manifest.stages.enumerated() {
                 try self.database.run(
@@ -840,6 +854,8 @@ public final class JobStore {
                 )
                 """)
             try database.run("CREATE INDEX IF NOT EXISTS jobs_status_index ON jobs (status, created_at)")
+            let columns = try database.query("PRAGMA table_info(jobs)") { JobSQLiteDatabase.text($0, column: 1) }
+            if !columns.contains("not_before") { try database.run("ALTER TABLE jobs ADD COLUMN not_before REAL") }
         }
     }
 
@@ -880,8 +896,8 @@ public final class JobStore {
     }
 
     private func recordUnlocked(id: String) throws -> JobRecord? {
-        let rows: [(String, String, String, String, String?)] = try database.query(
-            "SELECT manifest_json, status, created_at, updated_at, failure_details FROM jobs WHERE id = ?",
+        let rows: [(String, String, String, String, String?, Double?)] = try database.query(
+            "SELECT manifest_json, status, created_at, updated_at, failure_details, not_before FROM jobs WHERE id = ?",
             bindings: [.text(id)]
         ) { statement in
             (
@@ -889,7 +905,8 @@ public final class JobStore {
                 JobSQLiteDatabase.text(statement, column: 1),
                 JobSQLiteDatabase.text(statement, column: 2),
                 JobSQLiteDatabase.text(statement, column: 3),
-                JobSQLiteDatabase.optionalText(statement, column: 4)
+                JobSQLiteDatabase.optionalText(statement, column: 4),
+                JobSQLiteDatabase.optionalDouble(statement, column: 5)
             )
         }
         guard let row = rows.first else { return nil }
@@ -927,7 +944,8 @@ public final class JobStore {
             stages: stages,
             createdAt: row.2,
             updatedAt: row.3,
-            failureDetails: row.4
+            failureDetails: row.4,
+            notBefore: row.5.map { Date(timeIntervalSince1970: $0) }
         )
     }
 
@@ -991,12 +1009,14 @@ public final class JobScheduler {
     private let validators: [String: GeneratedArtifactValidator]
     private let onWorkQueuedWhilePaused: (() -> Void)?
     private let executionTimeout: TimeInterval
+    private let clock: () -> Date
     private let stateQueue = DispatchQueue(label: "Stillmatter.JobScheduler")
     private var activeHeavyJobID: String?
     private var activeLightweightJobIDs: Set<String> = []
     private var activeExecutions: [String: (id: UUID, cancellation: JobExecutionCancellation?, timeout: DispatchWorkItem?)] = [:]
     private var isPaused = false
     private var isStopped = false
+    private var wakeTimer: DispatchWorkItem?
 
     public init(
         store: JobStore,
@@ -1011,7 +1031,8 @@ public final class JobScheduler {
             "webvtt": WebVTTGeneratedArtifactValidator()
         ],
         executionTimeout: TimeInterval = 30 * 60,
-        onWorkQueuedWhilePaused: (() -> Void)? = nil
+        onWorkQueuedWhilePaused: (() -> Void)? = nil,
+        clock: @escaping () -> Date = Date.init
     ) {
         self.store = store
         self.executor = executor
@@ -1022,14 +1043,20 @@ public final class JobScheduler {
         self.validators = validators
         self.executionTimeout = max(0.01, executionTimeout)
         self.onWorkQueuedWhilePaused = onWorkQueuedWhilePaused
+        self.clock = clock
     }
 
     @discardableResult
     public func enqueue(id: String = UUID().uuidString, manifest: JobManifest) throws -> JobRecord {
+        try enqueue(id: id, manifest: manifest, notBefore: nil)
+    }
+
+    @discardableResult
+    public func enqueue(id: String = UUID().uuidString, manifest: JobManifest, notBefore: Date?) throws -> JobRecord {
         if let workspaceOwner, manifest.workspaceOwner != workspaceOwner {
             throw JobsError.invalidManifest("Cannot enqueue a Job without this workspace's ownership identity.")
         }
-        let record = try store.enqueue(id: id, manifest: manifest)
+        let record = try store.enqueue(id: id, manifest: manifest, notBefore: notBefore)
         start()
         return record
     }
@@ -1054,7 +1081,18 @@ public final class JobScheduler {
     /// Terminal, synchronous barrier for application shutdown. Running stages may persist their
     /// result but can neither resume this scheduler nor start another stage afterwards.
     public func stop() {
-        stateQueue.sync { isStopped = true; isPaused = true }
+        stateQueue.sync { isStopped = true; isPaused = true; wakeTimer?.cancel(); wakeTimer = nil }
+    }
+
+    /// Rechecks persisted due work after system wake or an injected-clock advance.
+    /// Duplicate calls are safe because scheduling and claiming run on one queue.
+    public func wake() {
+        stateQueue.async { [weak self] in
+            guard let self, !self.isStopped else { return }
+            self.wakeTimer?.cancel()
+            self.wakeTimer = nil
+            self.scheduleAvailableWork()
+        }
     }
 
     public func retry(id: String) throws {
@@ -1094,13 +1132,15 @@ public final class JobScheduler {
         guard !isPaused, !isStopped else { return }
         do {
             let queued = try store.jobs(status: .queued)
+            let now = clock()
             // A persisted partial heavy Job already owns its whole turn. Preserve
             // that reservation across scheduler replacement/reopen, even if the
             // wall clock gave a newly queued Job an earlier creation timestamp.
             let continuing = queued.filter { $0.manifest.executionClass == .heavy && $0.stages.contains(where: { $0.attemptCount > 0 }) }
             let ordered = continuing + queued.filter { job in !continuing.contains(where: { $0.id == job.id }) }
-            for job in ordered where (eligibleJobTypes?.contains(job.manifest.type) ?? true)
-                && (workspaceOwner == nil || job.manifest.workspaceOwner == workspaceOwner) {
+            let eligible = ordered.filter { (eligibleJobTypes?.contains($0.manifest.type) ?? true)
+                && (workspaceOwner == nil || $0.manifest.workspaceOwner == workspaceOwner) }
+            for job in eligible where job.notBefore == nil || job.notBefore! <= now {
                 switch job.manifest.executionClass {
                 case .heavy:
                     guard activeHeavyJobID == nil else { continue }
@@ -1115,9 +1155,23 @@ public final class JobScheduler {
                     executeNextStage(jobID: job.id, executionClass: .lightweight)
                 }
             }
+            scheduleNextWake(for: eligible, after: now)
         } catch {
             NSLog("Could not schedule Stillmatter jobs: \(error)")
         }
+    }
+
+    private func scheduleNextWake(for jobs: [JobRecord], after now: Date) {
+        wakeTimer?.cancel()
+        wakeTimer = nil
+        guard let due = jobs.compactMap(\.notBefore).filter({ $0 > now }).min() else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.wakeTimer = nil
+            self.scheduleAvailableWork()
+        }
+        wakeTimer = work
+        stateQueue.asyncAfter(deadline: .now() + max(0, due.timeIntervalSince(now)), execute: work)
     }
 
     private func executeNextStage(jobID: String, executionClass: JobExecutionClass) {
@@ -1254,6 +1308,7 @@ public final class JobScheduler {
 private enum JobSQLiteValue {
     case text(String)
     case integer(Int)
+    case real(Double)
     case null
 }
 
@@ -1319,6 +1374,11 @@ private final class JobSQLiteDatabase {
         Int(sqlite3_column_int64(statement, column))
     }
 
+    static func optionalDouble(_ statement: OpaquePointer, column: Int32) -> Double? {
+        guard sqlite3_column_type(statement, column) != SQLITE_NULL else { return nil }
+        return sqlite3_column_double(statement, column)
+    }
+
     private func prepare(_ sql: String, bindings: [JobSQLiteValue]) throws -> OpaquePointer {
         guard let handle = handle else { throw JobsError.sqlite(code: SQLITE_MISUSE, message: "Database is closed") }
         var statement: OpaquePointer?
@@ -1333,6 +1393,8 @@ private final class JobSQLiteDatabase {
                     bindResult = sqlite3_bind_text(prepared, index, value, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
                 case let .integer(value):
                     bindResult = sqlite3_bind_int64(prepared, index, sqlite3_int64(value))
+                case let .real(value):
+                    bindResult = sqlite3_bind_double(prepared, index, value)
                 case .null:
                     bindResult = sqlite3_bind_null(prepared, index)
                 }

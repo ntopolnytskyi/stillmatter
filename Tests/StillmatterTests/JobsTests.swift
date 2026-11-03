@@ -30,6 +30,80 @@ final class JobsTests: XCTestCase {
         XCTAssertEqual(try reopened.details(id: job.id).logs.map(\.message), ["Job queued"])
     }
 
+    func testDelayedWorkPersistsUntilDueAndDoesNotBlockImmediateNonMeetingJobs() throws {
+        let fixture = try JobsFixture()
+        let store = try fixture.openStore()
+        let clock = MutableJobClock(Date(timeIntervalSince1970: 1_800_000_000))
+        let executor = ControlledJobExecutor()
+        let scheduler = JobScheduler(store: store, executor: executor, clock: { clock.now })
+        let due = clock.now.addingTimeInterval(60)
+        let delayedManifest = fixture.manifest(id: "delayed-handler", executionClass: .lightweight)
+        _ = try scheduler.enqueue(id: "delayed-first", manifest: delayedManifest, notBefore: due)
+        XCTAssertEqual(try store.job(id: "delayed-first")?.notBefore, due)
+        _ = try scheduler.enqueue(id: "immediate-meeting", manifest: fixture.manifest(id: "immediate-meeting", executionClass: .heavy))
+        waitUntil { executor.executionCount(jobID: "immediate-meeting") == 1 }
+        XCTAssertEqual(executor.executionCount(jobID: "delayed-first"), 0)
+        executor.complete(jobID: "immediate-meeting", with: .success(JobStageResult()))
+        waitUntil { (try? store.job(id: "immediate-meeting")?.status) == .succeeded }
+
+        scheduler.stop()
+        let reopened = try fixture.openStore()
+        let resumedExecutor = ControlledJobExecutor()
+        let resumed = JobScheduler(store: reopened, executor: resumedExecutor, clock: { clock.now })
+        resumed.start()
+        XCTAssertEqual(resumedExecutor.executionCount(jobID: "delayed-first"), 0)
+        clock.advance(to: due)
+        resumed.wake()
+        resumed.wake()
+        resumed.wake()
+        waitUntil { resumedExecutor.executionCount(jobID: "delayed-first") == 1 }
+        XCTAssertEqual(try reopened.job(id: "delayed-first")?.status, .running)
+        XCTAssertEqual(try reopened.job(id: "delayed-first")?.stages.first?.attemptCount, 1)
+        resumedExecutor.complete(jobID: "delayed-first", with: .failure(TestJobError.runnerFailed))
+        waitUntil { (try? reopened.job(id: "delayed-first")?.status) == .failed }
+        XCTAssertEqual(try reopened.job(id: "delayed-first")?.stages.first?.status, .failed)
+        try resumed.retry(id: "delayed-first")
+        waitUntil { resumedExecutor.executionCount(jobID: "delayed-first") == 2 }
+        resumedExecutor.complete(jobID: "delayed-first", with: .success(JobStageResult()))
+        waitUntil { (try? reopened.job(id: "delayed-first")?.status) == .succeeded }
+        resumed.wake()
+        Thread.sleep(forTimeInterval: 0.03)
+        XCTAssertEqual(resumedExecutor.executionCount(jobID: "delayed-first"), 2)
+        XCTAssertEqual(try reopened.details(id: "delayed-first").logs.filter { $0.message == "Started stage run" }.count, 2)
+        let afterDue = due.addingTimeInterval(60)
+        _ = try resumed.enqueue(id: "delayed-after", manifest: fixture.manifest(id: "delayed-after", executionClass: .lightweight),
+                                notBefore: afterDue)
+        clock.advance(to: afterDue.addingTimeInterval(1))
+        resumed.wake()
+        waitUntil { resumedExecutor.executionCount(jobID: "delayed-after") == 1 }
+        resumedExecutor.complete(jobID: "delayed-after", with: .success(JobStageResult()))
+        waitUntil { (try? reopened.job(id: "delayed-after")?.status) == .succeeded }
+        XCTAssertEqual(resumedExecutor.executionCount(jobID: "delayed-after"), 1)
+        let timerDue = clock.now.addingTimeInterval(0.25)
+        _ = try resumed.enqueue(id: "delayed-timer", manifest: fixture.manifest(id: "delayed-timer", executionClass: .lightweight),
+                                notBefore: timerDue)
+        Thread.sleep(forTimeInterval: 0.05) // Let the scheduler install its due timer.
+        clock.advance(to: timerDue)
+        waitUntil { resumedExecutor.executionCount(jobID: "delayed-timer") == 1 }
+        resumedExecutor.complete(jobID: "delayed-timer", with: .success(JobStageResult()))
+        waitUntil { (try? reopened.job(id: "delayed-timer")?.status) == .succeeded }
+        resumed.stop()
+
+        let stoppedClock = MutableJobClock(Date(timeIntervalSince1970: 1_900_000_000))
+        let stoppedExecutor = ControlledJobExecutor()
+        let stoppedScheduler = JobScheduler(store: reopened, executor: stoppedExecutor, clock: { stoppedClock.now })
+        let stoppedDue = stoppedClock.now.addingTimeInterval(0.1)
+        _ = try stoppedScheduler.enqueue(id: "delayed-after-quit", manifest: fixture.manifest(id: "delayed-after-quit", executionClass: .lightweight),
+                                         notBefore: stoppedDue)
+        Thread.sleep(forTimeInterval: 0.02)
+        stoppedScheduler.stop()
+        stoppedClock.advance(to: stoppedDue.addingTimeInterval(1))
+        stoppedScheduler.wake()
+        Thread.sleep(forTimeInterval: 0.15)
+        XCTAssertEqual(stoppedExecutor.executionCount(jobID: "delayed-after-quit"), 0)
+        XCTAssertEqual(try reopened.job(id: "delayed-after-quit")?.status, .queued)
+    }
+
     func testJobStoreObservationPublishesRelevantMeetingTransitionsAndCanBeCancelled() throws {
         let fixture = try JobsFixture()
         let store = try fixture.openStore()
@@ -723,5 +797,24 @@ private final class JobsFixture {
             stages: [JobStageDefinition(id: "run", title: "Run")],
             maxAutomaticRetries: 0
         )
+    }
+}
+
+private final class MutableJobClock {
+    private let lock = NSLock()
+    private var value: Date
+
+    init(_ initial: Date) { value = initial }
+
+    var now: Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func advance(to date: Date) {
+        lock.lock()
+        value = date
+        lock.unlock()
     }
 }
