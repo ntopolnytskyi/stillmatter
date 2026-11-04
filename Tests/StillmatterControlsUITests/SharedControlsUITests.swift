@@ -90,6 +90,67 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertTrue(notes.contains { $0.contains("Session B note") && !$0.contains("Session A note") })
     }
 
+    func testPriorFinalizationFailureStaysVisibleWhileNextCaptureCanStart() throws {
+        app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "overlap-failure"
+        launch()
+        let start = app.buttons["recording-start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        start.click()
+        app.buttons["recording-stop"].click()
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        XCTAssertTrue((app.staticTexts["capture-state-detail"].value as? String ?? "").contains("prior audio source has stopped"))
+
+        start.click()
+        XCTAssertTrue(app.buttons["recording-stop"].waitForExistence(timeout: 10))
+        XCTAssertTrue((app.staticTexts["capture-state-detail"].value as? String ?? "").contains("prior Meeting's audio is finalizing separately"))
+
+        let artifactsDisclosure = app.checkBoxes["recording-artifacts"]
+        for _ in 0..<4 where !artifactsDisclosure.exists {
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(artifactsDisclosure.exists, app.debugDescription)
+        artifactsDisclosure.click()
+        app.buttons["recording-test-release-prior-finalization"].click()
+        let priorRow = app.staticTexts["recording-prior-finalization-failure"]
+        let stateDetail = app.staticTexts["capture-state-detail"]
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "prior Meeting's audio finalization failed"), evaluatedWith: stateDetail)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(priorRow.exists, app.debugDescription)
+        XCTAssertEqual(priorRow.label, "Prior Meeting — Finalization failed")
+        XCTAssertTrue(app.buttons["recording-stop"].isEnabled)
+        XCTAssertFalse(app.staticTexts["capture-error"].exists, "A's late failure must not be reported as B's capture failure")
+    }
+
+    func testPriorFinalizationFailureDoesNotReplaceCurrentCaptureReleaseFailure() throws {
+        app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "overlap-failure-current-session-failure"
+        launch()
+        let start = app.buttons["recording-start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        start.click()
+        app.buttons["recording-stop"].click()
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+
+        start.click()
+        app.buttons["recording-stop"].click()
+        let state = app.staticTexts["capture-state"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Capture failed"), evaluatedWith: state)
+        waitForExpectations(timeout: 10)
+        let captureError = app.staticTexts["capture-error"]
+        let currentCaptureFailure = captureError.value as? String ?? ""
+        XCTAssertFalse(currentCaptureFailure.isEmpty)
+
+        let artifactsDisclosure = app.checkBoxes["recording-artifacts"]
+        for _ in 0..<4 where !artifactsDisclosure.exists {
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(artifactsDisclosure.exists, app.debugDescription)
+        artifactsDisclosure.click()
+        app.buttons["recording-test-release-prior-finalization"].click()
+        let priorRow = app.staticTexts["recording-prior-finalization-failure"]
+        XCTAssertTrue(priorRow.waitForExistence(timeout: 10))
+        XCTAssertEqual(captureError.value as? String, currentCaptureFailure)
+    }
+
     func testSettingsFieldPopupAndTogglePersistAfterRelaunch() throws {
         launch()
         app.buttons["controls-nav-settings"].click()

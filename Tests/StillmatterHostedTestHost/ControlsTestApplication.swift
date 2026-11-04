@@ -14,7 +14,7 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
     private var settings: SettingsFormView!
     private var settingsObserver: UUID?
     private var validationAttempts = 0
-    private var heldFinalizer: ControlsTestPausedBundleFinalizer?
+    private var releaseFinalization: (() -> Void)?
 
     init(root: URL, scenario: String) throws {
         self.root = root
@@ -36,10 +36,23 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
         installer = TranscriptionComponentInstaller(paths: TranscriptionComponentPaths(applicationSupportURL: support), acquirer: ControlsTestNoModelAcquirer())
         if scenario == "overlap" {
             let finalizer = ControlsTestPausedBundleFinalizer()
-            heldFinalizer = finalizer
+            releaseFinalization = { finalizer.resume.signal() }
             service = MeetingCaptureService(
                 vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support),
                 micRecorder: ControlsTestMicRecorder(mediaRoot: root.appendingPathComponent("media")),
+                bundleFinalizer: finalizer,
+                preflight: { .readyForTesting }
+            )
+        } else if scenario == "overlap-failure" || scenario == "overlap-failure-current-session-failure" {
+            let finalizer = ControlsTestPausedFailingBundleFinalizer()
+            releaseFinalization = { finalizer.resume.signal() }
+            let micRecorder = ControlsTestMicRecorder(
+                mediaRoot: root.appendingPathComponent("media"),
+                failingStopNumber: scenario == "overlap-failure-current-session-failure" ? 2 : nil
+            )
+            service = MeetingCaptureService(
+                vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support),
+                micRecorder: micRecorder,
                 bundleFinalizer: finalizer,
                 preflight: { .readyForTesting }
             )
@@ -79,7 +92,7 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
         let settingsNavigation = NSButton(title: "Settings", target: self, action: #selector(showSettings(_:)))
         settingsNavigation.setAccessibilityIdentifier("controls-nav-settings")
         var navigationItems: [NSView] = [recordingNavigation, settingsNavigation]
-        if scenario == "overlap" {
+        if scenario == "overlap" || scenario == "overlap-failure" || scenario == "overlap-failure-current-session-failure" {
             let release = NSButton(title: "Release Test Finalization", target: self, action: #selector(releaseHeldFinalization(_:)))
             release.setAccessibilityIdentifier("recording-test-release-prior-finalization")
             navigationItems.append(release)
@@ -133,7 +146,7 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
     }
 
     @objc private func releaseHeldFinalization(_ sender: Any?) {
-        heldFinalizer?.resume.signal()
+        releaseFinalization?()
     }
 
     private func show(_ view: NSView) {
@@ -172,13 +185,33 @@ private final class ControlsTestPausedBundleFinalizer: RecordingBundleFinalizing
     func validate(_ bundle: RecordingBundle) throws { try delegate.validate(bundle) }
 }
 
+private final class ControlsTestPausedFailingBundleFinalizer: RecordingBundleFinalizing {
+    let resume = DispatchSemaphore(value: 0)
+
+    func finalize(mic: MicTrackRecordingMetadata, system: SystemAudioTrackRecordingMetadata?,
+                  reason: RecordingBundleFinalizationReason) throws -> RecordingBundle {
+        resume.wait()
+        throw CocoaError(.fileWriteUnknown)
+    }
+
+    func validate(_ bundle: RecordingBundle) throws {}
+}
+
 private final class ControlsTestMicRecorder: MicTrackRecordingManaging {
     private let mediaRoot: URL
+    private let failingStopNumber: Int?
+    private var startCount = 0
+    private var activeStopNumber = 0
     private(set) var activeMetadata: MicTrackRecordingMetadata?
 
-    init(mediaRoot: URL) { self.mediaRoot = mediaRoot }
+    init(mediaRoot: URL, failingStopNumber: Int? = nil) {
+        self.mediaRoot = mediaRoot
+        self.failingStopNumber = failingStopNumber
+    }
 
     func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> MicTrackRecordingMetadata {
+        startCount += 1
+        activeStopNumber = startCount
         let directory = mediaRoot.appendingPathComponent("Stillmatter Recordings", isDirectory: true)
             .appendingPathComponent(sessionID, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -202,6 +235,9 @@ private final class ControlsTestMicRecorder: MicTrackRecordingManaging {
 
     func stop(endedAt: Date) throws -> MicTrackRecordingMetadata {
         guard var metadata = activeMetadata else { throw MicTrackRecordingError.noActiveRecording }
+        if activeStopNumber == failingStopNumber {
+            throw MicTrackRecordingError.recoveryArtifactMissing("B source release marker")
+        }
         metadata.endedAt = endedAt
         metadata.status = .completed
         metadata.durationSeconds = 1

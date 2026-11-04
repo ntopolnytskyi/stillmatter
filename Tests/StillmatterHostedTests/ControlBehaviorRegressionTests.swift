@@ -153,6 +153,9 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         view.refresh(isVisible: true)
 
         XCTAssertTrue(view.startButton.isEnabled)
+        XCTAssertEqual(view.statusLabel.stringValue, "Ready for the next capture")
+        XCTAssertTrue(view.stateDetail(.idle, hasMeeting: true, isPreviousSessionFinalizationFailed: true)
+            .contains("prior Meeting's audio finalization failed"))
         XCTAssertTrue(view.renderedArtifactTitles.contains("Prior Meeting — Finalization failed"))
         XCTAssertFalse(view.renderedArtifactTitles.contains("Meeting capture failed"))
     }

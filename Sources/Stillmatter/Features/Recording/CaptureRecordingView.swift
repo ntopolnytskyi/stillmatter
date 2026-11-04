@@ -203,7 +203,8 @@ final class CaptureRecordingView: NSView {
             stateDetail: stateDetail(
                 snapshot.state,
                 hasMeeting: snapshot.meetingRelativePath != nil,
-                isPreviousSessionFinalizing: snapshot.priorCaptureFinalizations.contains { if case .finalizing = $0.state { true } else { false } }
+                isPreviousSessionFinalizing: snapshot.priorCaptureFinalizations.contains { if case .finalizing = $0.state { true } else { false } },
+                isPreviousSessionFinalizationFailed: snapshot.priorCaptureFinalizations.contains { if case .failed = $0.state { true } else { false } }
             ),
             elapsedSeconds: snapshot.elapsedSeconds,
             meetingPath: snapshot.meetingRelativePath,
@@ -678,7 +679,10 @@ final class CaptureRecordingView: NSView {
                 symbol: row.meaning.symbol,
                 title: row.title,
                 detail: row.detail,
-                meaning: row.meaning
+                meaning: row.meaning,
+                accessibilityIdentifier: row.title == "Prior Meeting — Finalization failed"
+                    ? "recording-prior-finalization-failure"
+                    : nil
             ), to: artifactsRows)
         }
     }
@@ -718,7 +722,8 @@ final class CaptureRecordingView: NSView {
         symbol: String,
         title: String,
         detail: String,
-        meaning: GraphiteFocusStatusMeaning
+        meaning: GraphiteFocusStatusMeaning,
+        accessibilityIdentifier: String? = nil
     ) -> NSView {
         let marker = NSTextField(labelWithString: symbol)
         marker.font = GraphiteFocusPresentation.Typography.control
@@ -728,6 +733,12 @@ final class CaptureRecordingView: NSView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = GraphiteFocusPresentation.Typography.rowTitle
         titleLabel.textColor = colors.textPrimary
+        titleLabel.maximumNumberOfLines = 0
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.setAccessibilityLabel(title)
+        if let accessibilityIdentifier = accessibilityIdentifier {
+            titleLabel.setAccessibilityIdentifier(accessibilityIdentifier)
+        }
         let detailLabel = NSTextField(wrappingLabelWithString: detail)
         detailLabel.font = GraphiteFocusPresentation.Typography.metadata
         detailLabel.textColor = colors.textMetadata
@@ -792,10 +803,14 @@ final class CaptureRecordingView: NSView {
     @objc private func stopCapture(_ sender: NSButton) {
         guard let service = serviceProvider() else { return }
         onManualCapture()
+        let stoppedMeetingRelativePath = service.snapshot.meetingRelativePath
         service.stopManualAsync { [weak self] result in
             guard let self else { return }
+            guard service.snapshot.meetingRelativePath == stoppedMeetingRelativePath else { return }
             if case let .failure(error) = result {
-                self.operationFailure = "Could not stop capture: \(error)"
+                self.operationFailure = service.snapshot.state == .failed
+                    ? "Could not stop capture: \(error)"
+                    : nil
             } else {
                 self.operationFailure = nil
             }
@@ -847,7 +862,7 @@ final class CaptureRecordingView: NSView {
     private func displayName(_ state: CaptureState, snapshot: CaptureSnapshot) -> String {
         switch state {
         case .idle:
-            if snapshot.priorCaptureFinalizations.contains(where: { if case .finalizing = $0.state { true } else { false } }) {
+            if !snapshot.priorCaptureFinalizations.isEmpty {
                 return "Ready for the next capture"
             }
             return snapshot.meetingRelativePath == nil ? "Ready to capture" : "Capture complete"
@@ -867,12 +882,16 @@ final class CaptureRecordingView: NSView {
     func stateDetail(
         _ state: CaptureState,
         hasMeeting: Bool = false,
-        isPreviousSessionFinalizing: Bool = false
+        isPreviousSessionFinalizing: Bool = false,
+        isPreviousSessionFinalizationFailed: Bool = false
     ) -> String {
         switch state {
         case .idle:
             if isPreviousSessionFinalizing {
                 return "The prior audio source has stopped. Its audio is still being finalized while you can start the next Capture Session."
+            }
+            if isPreviousSessionFinalizationFailed {
+                return "The prior Meeting's audio finalization failed; its retained evidence and failure stay with that Meeting. You can start the next Capture Session."
             }
             return hasMeeting
                 ? "The last Capture Session was finalized. Its Meeting and processing artifacts remain available below."
@@ -880,9 +899,13 @@ final class CaptureRecordingView: NSView {
         case .detecting: return "Teams detection is active. Manual Start Capture remains available."
         case .starting: return "Checking prerequisites and preparing durable recording artifacts."
         case .recording:
-            return isPreviousSessionFinalizing
-                ? "Capture is live. A prior Meeting's audio is finalizing separately. Add notes or Action Item checkboxes, then stop deliberately when the Meeting ends."
-                : "Capture is live. Add notes or Action Item checkboxes, then stop deliberately when the Meeting ends."
+            if isPreviousSessionFinalizing {
+                return "Capture is live. A prior Meeting's audio is finalizing separately. Add notes or Action Item checkboxes, then stop deliberately when the Meeting ends."
+            }
+            if isPreviousSessionFinalizationFailed {
+                return "Capture is live. A prior Meeting's audio finalization failed; its retained evidence and failure stay with that Meeting. Add notes or Action Item checkboxes, then stop deliberately when the Meeting ends."
+            }
+            return "Capture is live. Add notes or Action Item checkboxes, then stop deliberately when the Meeting ends."
         case .stopping: return "Stopping recording input and finalizing audio in the background. This may take time for long meetings."
         case .finalizing: return "The Recording Bundle is being validated before Transcript and Summary Jobs begin."
         case .failed: return "Review the blocking finding or failure details before trying again."
