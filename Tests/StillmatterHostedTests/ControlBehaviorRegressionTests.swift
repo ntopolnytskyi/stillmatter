@@ -5,6 +5,25 @@ import StillmatterCore
 
 /// Runs unchanged against the pre-migration forms and their shared-control replacements.
 final class ControlBehaviorRegressionTests: XCTestCase {
+    func testMacRecorderReleaseAndExportEntryPointsWithoutActiveDevices() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-recorder-entry-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let recovery = root.appendingPathComponent("missing-mic.caf")
+        let microphone = MacMicTrackRecorder()
+        let released = try microphone.stopWritingRecovery(to: recovery)
+        XCTAssertEqual(released.codec, "linear PCM recovery")
+        XCTAssertEqual(released.durationSeconds, 0)
+        XCTAssertThrowsError(try microphone.finalizeRecovery(from: recovery, to: root.appendingPathComponent("missing-mic.m4a"), audioClockSpans: nil))
+
+        if #available(macOS 13.0, *) {
+            let system = MacSystemAudioTrackRecorder()
+            XCTAssertThrowsError(try system.stopWritingRecovery(to: root.appendingPathComponent("missing-system.caf")))
+            XCTAssertThrowsError(try system.finalizeRecovery(from: root.appendingPathComponent("missing-system.caf"), to: root.appendingPathComponent("missing-system.m4a"), audioClockSpans: nil))
+        }
+    }
+
     @MainActor
     func testRecordingControlsStartStopAndPersistLiveNoteWithoutDevices() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-controls-baseline-\(UUID().uuidString)")
