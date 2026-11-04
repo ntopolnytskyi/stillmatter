@@ -86,10 +86,36 @@ public protocol MicTrackRecordingBackend: AnyObject {
     func recover(recoveryURL: URL, finalURL: URL) throws -> MicTrackTechnicalInfo
 }
 
+/// A backend that can release its input device before exporting the retained recovery audio.
+/// The spans are captured at release time so a later session cannot overwrite its clock.
+public protocol MicTrackCaptureReleasingBackend: MicTrackRecordingBackend {
+    func stopWritingRecovery(to recoveryURL: URL) throws -> MicTrackTechnicalInfo
+    func finalizeRecovery(from recoveryURL: URL, to finalURL: URL, audioClockSpans: [AudioClockSpan]?) throws -> MicTrackTechnicalInfo
+}
+
 public protocol MicTrackRecordingManaging: AnyObject {
     var activeMetadata: MicTrackRecordingMetadata? { get }
     func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> MicTrackRecordingMetadata
     func stop(endedAt: Date) throws -> MicTrackRecordingMetadata
+    func releaseForFinalization(endedAt: Date) throws -> MicTrackRecordingMetadata
+    func finalizeReleased(_ metadata: MicTrackRecordingMetadata) throws -> MicTrackRecordingMetadata
+    func completeHandoff(_ metadata: MicTrackRecordingMetadata) throws -> MicTrackRecordingMetadata
+}
+
+public extension MicTrackRecordingManaging {
+    /// Legacy/test recorders stop synchronously. Production coordinators override this seam to
+    /// release the device independently from background encoding.
+    func releaseForFinalization(endedAt: Date) throws -> MicTrackRecordingMetadata {
+        try stop(endedAt: endedAt)
+    }
+
+    func finalizeReleased(_ metadata: MicTrackRecordingMetadata) throws -> MicTrackRecordingMetadata {
+        metadata
+    }
+
+    func completeHandoff(_ metadata: MicTrackRecordingMetadata) throws -> MicTrackRecordingMetadata {
+        metadata
+    }
 }
 
 public enum MicTrackRecordingError: Error, CustomStringConvertible {
@@ -112,7 +138,6 @@ public final class MicTrackRecordingCoordinator: MicTrackRecordingManaging {
     private let mediaRootURL: URL
     private let backend: MicTrackRecordingBackend
     private let fileManager: FileManager
-    private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     public private(set) var activeMetadata: MicTrackRecordingMetadata?
 
@@ -120,9 +145,6 @@ public final class MicTrackRecordingCoordinator: MicTrackRecordingManaging {
         self.mediaRootURL = mediaRootURL
         self.backend = backend
         self.fileManager = fileManager
-        encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
     }
@@ -163,6 +185,61 @@ public final class MicTrackRecordingCoordinator: MicTrackRecordingManaging {
             activeMetadata = nil
             throw error
         }
+    }
+
+    public func releaseForFinalization(endedAt: Date) throws -> MicTrackRecordingMetadata {
+        guard let splitBackend = backend as? MicTrackCaptureReleasingBackend else {
+            return try stop(endedAt: endedAt)
+        }
+        guard var metadata = activeMetadata else { throw MicTrackRecordingError.noActiveRecording }
+        metadata.status = .finalizing
+        metadata.endedAt = endedAt
+        try write(metadata)
+        do {
+            let info = try splitBackend.stopWritingRecovery(to: URL(fileURLWithPath: metadata.recoveryFilePath))
+            apply(info, to: &metadata)
+            metadata.diagnostics.append("Microphone input stopped; retained recovery audio awaits background encoding.")
+            try write(metadata)
+            activeMetadata = nil
+            return metadata
+        } catch {
+            metadata.status = .failed
+            metadata.diagnostics.append("Microphone input stop failed; source artifacts retained: \(error)")
+            try? write(metadata)
+            activeMetadata = nil
+            throw error
+        }
+    }
+
+    public func finalizeReleased(_ released: MicTrackRecordingMetadata) throws -> MicTrackRecordingMetadata {
+        guard let splitBackend = backend as? MicTrackCaptureReleasingBackend else { return released }
+        var metadata = released
+        do {
+            let info = try splitBackend.finalizeRecovery(
+                from: URL(fileURLWithPath: metadata.recoveryFilePath),
+                to: URL(fileURLWithPath: metadata.finalFilePath),
+                audioClockSpans: metadata.audioClockSpans
+            )
+            apply(info, to: &metadata)
+            metadata.status = .completed
+            metadata.diagnostics.append("Compact microphone track finalized; recovery/preview artifact retained.")
+            var pendingHandoff = metadata
+            pendingHandoff.status = .finalizing
+            try write(pendingHandoff)
+            return metadata
+        } catch {
+            metadata.status = .failed
+            metadata.diagnostics.append("Microphone finalization failed; source artifacts retained: \(error)")
+            try? write(metadata)
+            throw error
+        }
+    }
+
+    public func completeHandoff(_ finalized: MicTrackRecordingMetadata) throws -> MicTrackRecordingMetadata {
+        var metadata = finalized
+        metadata.status = .completed
+        try write(metadata)
+        return metadata
     }
 
     @discardableResult
@@ -241,6 +318,9 @@ public final class MicTrackRecordingCoordinator: MicTrackRecordingManaging {
     private func write(_ metadata: MicTrackRecordingMetadata) throws {
         let url = URL(fileURLWithPath: metadata.metadataFilePath)
         let temporaryURL = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).tmp")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(metadata).write(to: temporaryURL, options: .atomic)
         if fileManager.fileExists(atPath: url.path) {
             _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)

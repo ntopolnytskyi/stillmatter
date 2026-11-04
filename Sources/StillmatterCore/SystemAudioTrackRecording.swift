@@ -86,17 +86,40 @@ public protocol SystemAudioTrackRecordingBackend: AnyObject {
     func recover(recoveryURL: URL, finalURL: URL) throws -> SystemAudioTrackTechnicalInfo
 }
 
+/// A backend that can shut down the selected source before encoding retained PCM.
+public protocol SystemAudioCaptureReleasingBackend: SystemAudioTrackRecordingBackend {
+    func stopWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo
+    func finalizeRecovery(from recoveryURL: URL, to finalURL: URL, audioClockSpans: [AudioClockSpan]?) throws -> SystemAudioTrackTechnicalInfo
+}
+
 public protocol SystemAudioTrackRecordingManaging: AnyObject {
     var activeMetadata: SystemAudioTrackRecordingMetadata? { get }
     var latestMetadata: SystemAudioTrackRecordingMetadata? { get }
     func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> SystemAudioTrackRecordingMetadata
     func stop(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata
+    func releaseForFinalization(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata
+    func finalizeReleased(_ metadata: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata
+    func completeHandoff(_ metadata: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata
+}
+
+public extension SystemAudioTrackRecordingManaging {
+    func releaseForFinalization(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+        try stop(endedAt: endedAt)
+    }
+
+    func finalizeReleased(_ metadata: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata {
+        metadata
+    }
+
+    func completeHandoff(_ metadata: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata {
+        metadata
+    }
 }
 
 public enum SystemAudioTrackRecordingError: Error, CustomStringConvertible {
     case alreadyRecording
     case noActiveRecording
-    case recoveryArtifactMissing(String)
+        case recoveryArtifactMissing(String)
 
     public var description: String {
         switch self {
@@ -113,7 +136,6 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
     private let mediaRootURL: URL
     private let backend: SystemAudioTrackRecordingBackend
     private let fileManager: FileManager
-    private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     public private(set) var activeMetadata: SystemAudioTrackRecordingMetadata?
     public private(set) var latestMetadata: SystemAudioTrackRecordingMetadata?
@@ -122,9 +144,6 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
         self.mediaRootURL = mediaRootURL
         self.backend = backend
         self.fileManager = fileManager
-        encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
     }
@@ -167,6 +186,80 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
             latestMetadata = metadata
             throw error
         }
+    }
+
+    public func releaseForFinalization(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+        guard let splitBackend = backend as? SystemAudioCaptureReleasingBackend else {
+            return try stop(endedAt: endedAt)
+        }
+        guard var metadata = activeMetadata else { throw SystemAudioTrackRecordingError.noActiveRecording }
+        metadata.status = .finalizing
+        metadata.endedAt = endedAt
+        try write(metadata)
+        latestMetadata = metadata
+        do {
+            let info = try splitBackend.stopWritingRecovery(to: URL(fileURLWithPath: metadata.recoveryFilePath))
+            apply(info, to: &metadata)
+            metadata.diagnostics.append("System-audio input stopped; retained recovery audio awaits background encoding.")
+            try write(metadata)
+            activeMetadata = nil
+            latestMetadata = metadata
+            return metadata
+        } catch {
+            metadata.status = .failed
+            metadata.diagnostics.append("System-audio input stop failed; source artifacts retained: \(error)")
+            try? write(metadata)
+            activeMetadata = nil
+            latestMetadata = metadata
+            throw error
+        }
+    }
+
+    public func finalizeReleased(_ released: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata {
+        guard let splitBackend = backend as? SystemAudioCaptureReleasingBackend else { return released }
+        var metadata = released
+        do {
+            let info = try splitBackend.finalizeRecovery(
+                from: URL(fileURLWithPath: metadata.recoveryFilePath),
+                to: URL(fileURLWithPath: metadata.finalFilePath),
+                audioClockSpans: metadata.audioClockSpans
+            )
+            apply(info, to: &metadata)
+            metadata.status = .completed
+            metadata.diagnostics.append("Compact separate system-audio track finalized; recovery/preview artifact retained.")
+            var pendingHandoff = metadata
+            pendingHandoff.status = .finalizing
+            try write(pendingHandoff)
+            if latestMetadata?.captureSessionID == metadata.captureSessionID {
+                latestMetadata = pendingHandoff
+            }
+            return metadata
+        } catch {
+            metadata.status = .failed
+            metadata.diagnostics.append("System-audio finalization failed; source artifacts retained: \(error)")
+            try? write(metadata)
+            if latestMetadata?.captureSessionID == metadata.captureSessionID {
+                latestMetadata = metadata
+            }
+            throw error
+        }
+    }
+
+    public func completeHandoff(_ finalized: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata {
+        var metadata = finalized
+        guard metadata.status == .completed || metadata.status == .recovered else {
+            try write(metadata)
+            if latestMetadata?.captureSessionID == metadata.captureSessionID {
+                latestMetadata = metadata
+            }
+            return metadata
+        }
+        metadata.status = .completed
+        try write(metadata)
+        if latestMetadata?.captureSessionID == metadata.captureSessionID {
+            latestMetadata = metadata
+        }
+        return metadata
     }
 
     @discardableResult
@@ -247,6 +340,9 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
     private func write(_ metadata: SystemAudioTrackRecordingMetadata) throws {
         let url = URL(fileURLWithPath: metadata.metadataFilePath)
         let temporaryURL = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).tmp")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(metadata).write(to: temporaryURL, options: .atomic)
         if fileManager.fileExists(atPath: url.path) {
             _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)

@@ -697,7 +697,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             || snapshot.state == .finalizing
         let apply = { [weak self] in
             guard let self, !self.isShuttingDown else { return }
-            self.settingsStore.workspaceChangeHeld = isActive || snapshot.state == .failed || snapshot.state == .recovered
+            self.settingsStore.workspaceChangeHeld = isActive || !snapshot.priorCaptureFinalizations.isEmpty || snapshot.state == .failed || snapshot.state == .recovered
             self.meetingOrRecordingActivityDidChange(isActive: isActive)
             if snapshot.state == .failed {
                 self.settingsStore.reportPendingWorkspaceFailure(snapshot.failureMessage ?? "Capture or recovery failed")

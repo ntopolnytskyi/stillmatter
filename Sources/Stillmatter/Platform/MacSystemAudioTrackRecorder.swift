@@ -7,7 +7,7 @@ import StillmatterCore
 #endif
 
 @available(macOS 13.0, *)
-final class MacSystemAudioTrackRecorder: NSObject, SystemAudioTrackRecordingBackend, SCStreamOutput, SCStreamDelegate {
+final class MacSystemAudioTrackRecorder: NSObject, SystemAudioCaptureReleasingBackend, SCStreamOutput, SCStreamDelegate {
     private let sampleQueue = DispatchQueue(label: "Stillmatter.SystemAudioCapture")
     private let lock = NSLock()
     private var stream: SCStream?
@@ -64,6 +64,11 @@ final class MacSystemAudioTrackRecorder: NSObject, SystemAudioTrackRecordingBack
     }
 
     func stopAndFinalize(recoveryURL: URL, finalURL: URL) throws -> SystemAudioTrackTechnicalInfo {
+        let stopped = try stopWritingRecovery(to: recoveryURL)
+        return try finalizeRecovery(from: recoveryURL, to: finalURL, audioClockSpans: stopped.audioClockSpans)
+    }
+
+    func stopWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo {
         guard let activeStream = stream else {
             throw NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 3, userInfo: [NSLocalizedDescriptionKey: "There is no active system-audio stream."])
         }
@@ -79,11 +84,20 @@ final class MacSystemAudioTrackRecorder: NSObject, SystemAudioTrackRecordingBack
         writeError = nil
         lock.unlock()
         if let recordedError = recordedError { throw recordedError }
-        return try exportRecovery(
-            recoveryURL,
-            to: finalURL,
+        let file = recoveryFile
+        recoveryFile = nil
+        let format = file?.processingFormat
+        return SystemAudioTrackTechnicalInfo(
+            durationSeconds: format.map { $0.sampleRate > 0 ? Double(writtenFrames) / $0.sampleRate : 0 } ?? 0,
+            codec: "linear PCM recovery",
+            sampleRate: format?.sampleRate ?? 48_000,
+            channelCount: format.map { Int($0.channelCount) } ?? 2,
             audioClockSpans: audioClock.archive()
         )
+    }
+
+    func finalizeRecovery(from recoveryURL: URL, to finalURL: URL, audioClockSpans: [AudioClockSpan]?) throws -> SystemAudioTrackTechnicalInfo {
+        try exportRecovery(recoveryURL, to: finalURL, audioClockSpans: audioClockSpans)
     }
 
     func recover(recoveryURL: URL, finalURL: URL) throws -> SystemAudioTrackTechnicalInfo {

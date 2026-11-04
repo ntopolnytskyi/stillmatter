@@ -90,10 +90,15 @@ final class WorkspaceSelectionTests: XCTestCase {
         var stateAtIdle: SettingsStore.WorkspaceSelection?
         capture.observe { snapshot in
             store.workspaceChangeHeld = [.starting, .recording, .stopping, .finalizing, .failed, .recovered].contains(snapshot.state)
+                || !snapshot.priorCaptureFinalizations.isEmpty
             if snapshot.state == .idle && snapshot.meetingRelativePath != nil {
                 stateAtIdle = store.workspaceSelection
-                let pendingJob = try? jobs.jobs().first { $0.manifest.metadata["capture_session_id"] != nil }
-                XCTAssertEqual(pendingJob?.manifest.workspaceOwner, old.standardizedFileURL.resolvingSymlinksInPath().path)
+                if snapshot.priorCaptureFinalizations.isEmpty {
+                    let pendingJob = try? jobs.jobs().first { $0.manifest.metadata["capture_session_id"] != nil }
+                    XCTAssertEqual(pendingJob?.manifest.workspaceOwner, old.standardizedFileURL.resolvingSymlinksInPath().path)
+                } else {
+                    XCTAssertTrue(store.workspaceChangeHeld)
+                }
             }
         }
         _ = try capture.startManual()

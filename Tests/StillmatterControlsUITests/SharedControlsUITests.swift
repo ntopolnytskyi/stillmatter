@@ -48,6 +48,48 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
     }
 
+    func testNextCaptureStartsBeforePriorSessionFinalizationAndKeepsNotesOwned() throws {
+        app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "overlap"
+        launch()
+        let start = app.buttons["recording-start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        start.click()
+        let note = app.textFields["recording-note"]
+        note.click()
+        note.typeText("Session A note")
+        note.typeKey(.return, modifierFlags: [])
+        let stop = app.buttons["recording-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        stop.click()
+
+        XCTAssertTrue(start.waitForExistence(timeout: 10), "Record must re-enable as soon as A's source stops")
+        XCTAssertTrue(app.staticTexts["capture-state"].label.contains("Ready for the next capture"))
+        let idleDetail = app.staticTexts["capture-state-detail"]
+        XCTAssertTrue(idleDetail.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue((idleDetail.value as? String ?? "").contains("prior audio source has stopped"), idleDetail.debugDescription)
+
+        start.click()
+        XCTAssertTrue(app.buttons["recording-stop"].waitForExistence(timeout: 10))
+        let priorStatus = app.staticTexts["capture-state-detail"]
+        XCTAssertTrue((priorStatus.value as? String ?? "").contains("prior Meeting's audio is finalizing separately"), "A's status remains visible while B records")
+        note.click()
+        note.typeText("Session B note")
+        note.typeKey(.return, modifierFlags: [])
+        app.buttons["recording-test-release-prior-finalization"].click()
+        expectation(for: NSPredicate { _, _ in
+            !(priorStatus.value as? String ?? "").contains("prior Meeting's audio is finalizing separately")
+        }, evaluatedWith: priorStatus)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(app.buttons["recording-stop"].isEnabled, "A's late completion cannot replace B's controls")
+        app.buttons["recording-stop"].click()
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+
+        let notes = try meetingTexts()
+        XCTAssertEqual(notes.count, 2)
+        XCTAssertTrue(notes.contains { $0.contains("Session A note") && !$0.contains("Session B note") })
+        XCTAssertTrue(notes.contains { $0.contains("Session B note") && !$0.contains("Session A note") })
+    }
+
     func testSettingsFieldPopupAndTogglePersistAfterRelaunch() throws {
         launch()
         app.buttons["controls-nav-settings"].click()
@@ -110,9 +152,14 @@ final class SharedControlsUITests: XCTestCase {
     }
 
     private func meetingText() throws -> String {
+        try XCTUnwrap(meetingTexts().first)
+    }
+
+    private func meetingTexts() throws -> [String] {
         let files = try FileManager.default.subpathsOfDirectory(atPath: root.appendingPathComponent("workspace").path)
-        let path = try XCTUnwrap(files.first(where: { $0.hasSuffix("meeting.md") }))
-        return try String(contentsOf: root.appendingPathComponent("workspace").appendingPathComponent(path))
+        return try files.filter { $0.hasSuffix("meeting.md") }.map {
+            try String(contentsOf: root.appendingPathComponent("workspace").appendingPathComponent($0))
+        }
     }
 
     private func effectiveSettings() throws -> [String: Any] {

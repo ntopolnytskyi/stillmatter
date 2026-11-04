@@ -123,7 +123,6 @@ public final class EchoCancellationSidecarStage: TranscriptionSidecarGenerating 
     private let policy: EchoCancellationQualityPolicy
     private let fileManager: FileManager
     private let now: () -> Date
-    private let encoder: JSONEncoder
 
     public init(
         bundleValidator: RecordingBundleFinalizing,
@@ -137,9 +136,6 @@ public final class EchoCancellationSidecarStage: TranscriptionSidecarGenerating 
         self.policy = policy
         self.fileManager = fileManager
         self.now = now
-        encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
     }
 
     public func generate(from bundle: RecordingBundle) throws -> TranscriptionAudioSidecar {
@@ -299,6 +295,7 @@ public final class EchoCancellationSidecarStage: TranscriptionSidecarGenerating 
               let systemSpans = reference.audioClockSpans, !systemSpans.isEmpty else { return }
         let timing = RecordingAudioTiming(microphone: microphoneSpans, system: systemSpans)
         let timingURL = directory.appendingPathComponent(RecordingAudioTiming.fileName)
+        let encoder = makeEncoder()
         try? encoder.encode(timing).write(to: timingURL, options: .atomic)
     }
 
@@ -314,8 +311,16 @@ public final class EchoCancellationSidecarStage: TranscriptionSidecarGenerating 
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    private func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
     private func persist(_ sidecar: TranscriptionAudioSidecar, at url: URL) throws {
         let temporary = url.deletingLastPathComponent().appendingPathComponent(".transcription-audio-selection.json.tmp")
+        let encoder = makeEncoder()
         try encoder.encode(sidecar).write(to: temporary, options: .atomic)
         if fileManager.fileExists(atPath: url.path) {
             _ = try fileManager.replaceItemAt(url, withItemAt: temporary)

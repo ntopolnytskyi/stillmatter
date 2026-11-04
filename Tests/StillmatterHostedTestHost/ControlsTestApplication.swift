@@ -14,6 +14,7 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
     private var settings: SettingsFormView!
     private var settingsObserver: UUID?
     private var validationAttempts = 0
+    private var heldFinalizer: ControlsTestPausedBundleFinalizer?
 
     init(root: URL, scenario: String) throws {
         self.root = root
@@ -33,8 +34,19 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
             settingsStore.settings = initial
         }
         installer = TranscriptionComponentInstaller(paths: TranscriptionComponentPaths(applicationSupportURL: support), acquirer: ControlsTestNoModelAcquirer())
-        service = MeetingCaptureService(vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support),
-            preflight: { .readyForTesting })
+        if scenario == "overlap" {
+            let finalizer = ControlsTestPausedBundleFinalizer()
+            heldFinalizer = finalizer
+            service = MeetingCaptureService(
+                vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support),
+                micRecorder: ControlsTestMicRecorder(mediaRoot: root.appendingPathComponent("media")),
+                bundleFinalizer: finalizer,
+                preflight: { .readyForTesting }
+            )
+        } else {
+            service = MeetingCaptureService(vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support),
+                preflight: { .readyForTesting })
+        }
         super.init()
         if scenario == "invalid-setting" {
             settingsStore.requestWorkspace(.init(root: root.appendingPathComponent("rejected-destination"), media: nil))
@@ -66,7 +78,13 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
         recordingNavigation.setAccessibilityIdentifier("controls-nav-recording")
         let settingsNavigation = NSButton(title: "Settings", target: self, action: #selector(showSettings(_:)))
         settingsNavigation.setAccessibilityIdentifier("controls-nav-settings")
-        let navigation = NSStackView(views: [recordingNavigation, settingsNavigation])
+        var navigationItems: [NSView] = [recordingNavigation, settingsNavigation]
+        if scenario == "overlap" {
+            let release = NSButton(title: "Release Test Finalization", target: self, action: #selector(releaseHeldFinalization(_:)))
+            release.setAccessibilityIdentifier("recording-test-release-prior-finalization")
+            navigationItems.append(release)
+        }
+        let navigation = NSStackView(views: navigationItems)
         navigation.translatesAutoresizingMaskIntoConstraints = false
         scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -114,6 +132,10 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
         scroll.isHidden = true
     }
 
+    @objc private func releaseHeldFinalization(_ sender: Any?) {
+        heldFinalizer?.resume.signal()
+    }
+
     private func show(_ view: NSView) {
         let document = NSStackView(views: [view])
         document.orientation = .vertical
@@ -128,6 +150,65 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
 
     private func descendants(_ view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + descendants($0) }
+    }
+}
+
+private final class ControlsTestPausedBundleFinalizer: RecordingBundleFinalizing {
+    private let delegate = RecordingBundleFinalizer()
+    private let lock = NSLock()
+    private var didPause = false
+    let resume = DispatchSemaphore(value: 0)
+
+    func finalize(mic: MicTrackRecordingMetadata, system: SystemAudioTrackRecordingMetadata?,
+                  reason: RecordingBundleFinalizationReason) throws -> RecordingBundle {
+        lock.lock()
+        let shouldPause = !didPause
+        didPause = true
+        lock.unlock()
+        if shouldPause { resume.wait() }
+        return try delegate.finalize(mic: mic, system: system, reason: reason)
+    }
+
+    func validate(_ bundle: RecordingBundle) throws { try delegate.validate(bundle) }
+}
+
+private final class ControlsTestMicRecorder: MicTrackRecordingManaging {
+    private let mediaRoot: URL
+    private(set) var activeMetadata: MicTrackRecordingMetadata?
+
+    init(mediaRoot: URL) { self.mediaRoot = mediaRoot }
+
+    func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> MicTrackRecordingMetadata {
+        let directory = mediaRoot.appendingPathComponent("Stillmatter Recordings", isDirectory: true)
+            .appendingPathComponent(sessionID, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let recovery = directory.appendingPathComponent("mic-recovery.caf")
+        let metadataURL = directory.appendingPathComponent("mic-recording.json")
+        try Data("native controls recovery".utf8).write(to: recovery)
+        try Data("{}".utf8).write(to: metadataURL)
+        let metadata = MicTrackRecordingMetadata(
+            captureSessionID: sessionID,
+            meetingRelativePath: meetingRelativePath,
+            recoveryFilePath: recovery.path,
+            finalFilePath: directory.appendingPathComponent("mic.m4a").path,
+            metadataFilePath: metadataURL.path,
+            startedAt: startedAt,
+            sampleRate: 48_000,
+            channelCount: 1
+        )
+        activeMetadata = metadata
+        return metadata
+    }
+
+    func stop(endedAt: Date) throws -> MicTrackRecordingMetadata {
+        guard var metadata = activeMetadata else { throw MicTrackRecordingError.noActiveRecording }
+        metadata.endedAt = endedAt
+        metadata.status = .completed
+        metadata.durationSeconds = 1
+        metadata.codec = "AAC in M4A"
+        try Data("native controls finalized audio".utf8).write(to: URL(fileURLWithPath: metadata.finalFilePath))
+        activeMetadata = nil
+        return metadata
     }
 }
 

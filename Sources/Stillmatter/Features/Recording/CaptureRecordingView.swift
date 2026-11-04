@@ -181,6 +181,14 @@ final class CaptureRecordingView: NSView {
                 artifacts.append(("Processing", status, meaning))
             }
         }
+        for prior in snapshot.priorCaptureFinalizations {
+            switch prior.state {
+            case .finalizing:
+                artifacts.append(("Prior Meeting — Finalizing audio", prior.meetingTitle, .attention))
+            case let .failed(message):
+                artifacts.append(("Prior Meeting — Finalization failed", message, .destructive))
+            }
+        }
         if persistedJobs.isEmpty {
             if snapshot.state == .stopping || snapshot.state == .finalizing {
                 artifacts.append(("Job", "Capture artifacts are being finalized before processing is queued.", .attention))
@@ -192,7 +200,11 @@ final class CaptureRecordingView: NSView {
         return Presentation(
             state: snapshot.state,
             stateTitle: displayName(snapshot.state, snapshot: snapshot),
-            stateDetail: stateDetail(snapshot.state, hasMeeting: snapshot.meetingRelativePath != nil),
+            stateDetail: stateDetail(
+                snapshot.state,
+                hasMeeting: snapshot.meetingRelativePath != nil,
+                isPreviousSessionFinalizing: snapshot.priorCaptureFinalizations.contains { if case .finalizing = $0.state { true } else { false } }
+            ),
             elapsedSeconds: snapshot.elapsedSeconds,
             meetingPath: snapshot.meetingRelativePath,
             preflight: snapshot.preflightReport,
@@ -344,6 +356,7 @@ final class CaptureRecordingView: NSView {
         statusLabel.font = GraphiteFocusPresentation.Typography.sectionHeading
         statusLabel.setAccessibilityIdentifier("capture-state")
         stateDetailLabel.font = GraphiteFocusPresentation.Typography.body
+        stateDetailLabel.setAccessibilityIdentifier("capture-state-detail")
         stateDetailLabel.maximumNumberOfLines = 0
         let labels = NSStackView(views: [statusLabel, stateDetailLabel])
         labels.orientation = .vertical
@@ -834,6 +847,9 @@ final class CaptureRecordingView: NSView {
     private func displayName(_ state: CaptureState, snapshot: CaptureSnapshot) -> String {
         switch state {
         case .idle:
+            if snapshot.priorCaptureFinalizations.contains(where: { if case .finalizing = $0.state { true } else { false } }) {
+                return "Ready for the next capture"
+            }
             return snapshot.meetingRelativePath == nil ? "Ready to capture" : "Capture complete"
         case .detecting: return "Detecting a Meeting signal"
         case .starting: return "Starting Capture Session"
@@ -848,15 +864,25 @@ final class CaptureRecordingView: NSView {
         }
     }
 
-    func stateDetail(_ state: CaptureState, hasMeeting: Bool = false) -> String {
+    func stateDetail(
+        _ state: CaptureState,
+        hasMeeting: Bool = false,
+        isPreviousSessionFinalizing: Bool = false
+    ) -> String {
         switch state {
         case .idle:
+            if isPreviousSessionFinalizing {
+                return "The prior audio source has stopped. Its audio is still being finalized while you can start the next Capture Session."
+            }
             return hasMeeting
                 ? "The last Capture Session was finalized. Its Meeting and processing artifacts remain available below."
                 : "Run Capture Preflight, then create a Meeting and begin recording."
         case .detecting: return "Teams detection is active. Manual Start Capture remains available."
         case .starting: return "Checking prerequisites and preparing durable recording artifacts."
-        case .recording: return "Capture is live. Add notes or Action Item checkboxes, then stop deliberately when the Meeting ends."
+        case .recording:
+            return isPreviousSessionFinalizing
+                ? "Capture is live. A prior Meeting's audio is finalizing separately. Add notes or Action Item checkboxes, then stop deliberately when the Meeting ends."
+                : "Capture is live. Add notes or Action Item checkboxes, then stop deliberately when the Meeting ends."
         case .stopping: return "Stopping recording input and finalizing audio in the background. This may take time for long meetings."
         case .finalizing: return "The Recording Bundle is being validated before Transcript and Summary Jobs begin."
         case .failed: return "Review the blocking finding or failure details before trying again."

@@ -28,6 +28,80 @@ final class SystemAudioTrackRecordingTests: XCTestCase {
         XCTAssertTrue(stored.diagnostics.contains { $0.contains("recovery/preview artifact retained") })
     }
 
+    func testInputReleaseAllowsNextCaptureBeforeSystemTrackEncodingCompletes() throws {
+        let fixture = try SystemAudioRecordingFixture()
+        let backend = SplitSystemAudioBackend()
+        let coordinator = SystemAudioTrackRecordingCoordinator(mediaRootURL: fixture.root, backend: backend)
+        _ = try coordinator.start(sessionID: "system-A", meetingRelativePath: "Meetings/A/meeting.md", startedAt: fixture.startedAt)
+
+        let releasedA = try coordinator.releaseForFinalization(endedAt: fixture.startedAt.addingTimeInterval(3))
+        XCTAssertNil(coordinator.activeMetadata)
+        XCTAssertEqual(releasedA.status, .finalizing)
+        XCTAssertEqual(backend.finalizeCalls, 0)
+
+        _ = try coordinator.start(sessionID: "system-B", meetingRelativePath: "Meetings/B/meeting.md", startedAt: fixture.startedAt.addingTimeInterval(4))
+        let releasedB = try coordinator.releaseForFinalization(endedAt: fixture.startedAt.addingTimeInterval(6))
+        let completedA = try coordinator.finalizeReleased(releasedA)
+        let completedB = try coordinator.finalizeReleased(releasedB)
+        _ = try coordinator.completeHandoff(completedA)
+        _ = try coordinator.completeHandoff(completedB)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: completedA.finalFilePath))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: completedB.finalFilePath))
+        XCTAssertEqual(backend.finalizedRecoveryIDs, ["system-A", "system-B"])
+        XCTAssertEqual(coordinator.latestMetadata?.captureSessionID, "system-B", "A's late handoff cannot replace B's recorder metadata")
+    }
+
+    func testSystemInputReleaseFailurePersistsFailureAndKeepsRecoveryAudio() throws {
+        let fixture = try SystemAudioRecordingFixture()
+        let backend = SplitSystemAudioBackend()
+        backend.stopWriteError = CocoaError(.fileWriteUnknown)
+        let coordinator = SystemAudioTrackRecordingCoordinator(mediaRootURL: fixture.root, backend: backend)
+        let started = try coordinator.start(sessionID: "system-release-failure", meetingRelativePath: "Meetings/failure/meeting.md", startedAt: fixture.startedAt)
+
+        XCTAssertThrowsError(try coordinator.releaseForFinalization(endedAt: fixture.startedAt.addingTimeInterval(2)))
+
+        XCTAssertNil(coordinator.activeMetadata)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: started.recoveryFilePath))
+        let persisted = try fixture.decodeMetadata(at: started.metadataFilePath)
+        XCTAssertEqual(persisted.status, .failed)
+        XCTAssertTrue(persisted.diagnostics.contains { $0.contains("System-audio input stop failed") })
+    }
+
+    func testSystemBackgroundEncodingFailurePersistsFailureAndKeepsRecoveryAudio() throws {
+        let fixture = try SystemAudioRecordingFixture()
+        let backend = SplitSystemAudioBackend()
+        backend.finalizeError = CocoaError(.fileWriteUnknown)
+        let coordinator = SystemAudioTrackRecordingCoordinator(mediaRootURL: fixture.root, backend: backend)
+        let started = try coordinator.start(sessionID: "system-encode-failure", meetingRelativePath: "Meetings/failure/meeting.md", startedAt: fixture.startedAt)
+        let released = try coordinator.releaseForFinalization(endedAt: fixture.startedAt.addingTimeInterval(2))
+
+        XCTAssertThrowsError(try coordinator.finalizeReleased(released))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: started.recoveryFilePath))
+        let persisted = try fixture.decodeMetadata(at: started.metadataFilePath)
+        XCTAssertEqual(persisted.status, .failed)
+        XCTAssertTrue(persisted.diagnostics.contains { $0.contains("System-audio finalization failed") })
+    }
+
+    func testFailedSystemFinalizationRemainsFailedAfterHandoff() throws {
+        let fixture = try SystemAudioRecordingFixture()
+        let backend = SplitSystemAudioBackend()
+        backend.finalizeError = CocoaError(.fileWriteUnknown)
+        let coordinator = SystemAudioTrackRecordingCoordinator(mediaRootURL: fixture.root, backend: backend)
+        let started = try coordinator.start(sessionID: "system-handoff-failure", meetingRelativePath: "Meetings/failure/meeting.md", startedAt: fixture.startedAt)
+        let released = try coordinator.releaseForFinalization(endedAt: fixture.startedAt.addingTimeInterval(2))
+        XCTAssertThrowsError(try coordinator.finalizeReleased(released))
+        let failed = try XCTUnwrap(coordinator.latestMetadata)
+
+        let afterHandoff = try coordinator.completeHandoff(failed)
+
+        XCTAssertEqual(afterHandoff.status, .failed)
+        XCTAssertEqual(coordinator.latestMetadata?.status, .failed)
+        XCTAssertEqual(try fixture.decodeMetadata(at: started.metadataFilePath).status, .failed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: started.recoveryFilePath))
+    }
+
     func testStartFailureIsPersistedForDegradedModeWithoutAnActiveSystemTrack() throws {
         let fixture = try SystemAudioRecordingFixture()
         let backend = FakeSystemAudioBackend()
@@ -67,6 +141,46 @@ final class SystemAudioTrackRecordingTests: XCTestCase {
         XCTAssertEqual(reports.first?.status, .recovered)
         XCTAssertTrue(FileManager.default.fileExists(atPath: reports.first!.finalFilePath))
         XCTAssertTrue(FileManager.default.fileExists(atPath: started.recoveryFilePath))
+    }
+}
+
+private final class SplitSystemAudioBackend: SystemAudioCaptureReleasingBackend {
+    private var activeRecoveryURL: URL?
+    private(set) var finalizeCalls = 0
+    private(set) var finalizedRecoveryIDs: [String] = []
+    var stopWriteError: Error?
+    var finalizeError: Error?
+
+    func startWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo {
+        activeRecoveryURL = recoveryURL
+        try Data("durable system PCM frames".utf8).write(to: recoveryURL)
+        return SystemAudioTrackTechnicalInfo(durationSeconds: 0, codec: "linear PCM recovery", sampleRate: 48_000, channelCount: 2)
+    }
+
+    func stopWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo {
+        guard activeRecoveryURL == recoveryURL else { throw SystemAudioTrackRecordingError.noActiveRecording }
+        if let stopWriteError = stopWriteError { throw stopWriteError }
+        activeRecoveryURL = nil
+        return SystemAudioTrackTechnicalInfo(durationSeconds: 3, codec: "linear PCM recovery", sampleRate: 48_000, channelCount: 2)
+    }
+
+    func finalizeRecovery(from recoveryURL: URL, to finalURL: URL, audioClockSpans: [AudioClockSpan]?) throws -> SystemAudioTrackTechnicalInfo {
+        finalizeCalls += 1
+        finalizedRecoveryIDs.append(recoveryURL.deletingLastPathComponent().lastPathComponent)
+        if let finalizeError = finalizeError { throw finalizeError }
+        try Data("compact system AAC frames".utf8).write(to: finalURL)
+        return SystemAudioTrackTechnicalInfo(durationSeconds: 3, codec: "AAC in M4A", sampleRate: 48_000, channelCount: 2,
+                                             audioClockSpans: audioClockSpans)
+    }
+
+    func stopAndFinalize(recoveryURL: URL, finalURL: URL) throws -> SystemAudioTrackTechnicalInfo {
+        let stopped = try stopWritingRecovery(to: recoveryURL)
+        return try finalizeRecovery(from: recoveryURL, to: finalURL, audioClockSpans: stopped.audioClockSpans)
+    }
+
+    func recover(recoveryURL: URL, finalURL: URL) throws -> SystemAudioTrackTechnicalInfo {
+        try Data("recovered system AAC frames".utf8).write(to: finalURL)
+        return SystemAudioTrackTechnicalInfo(durationSeconds: 3, codec: "AAC in M4A", sampleRate: 48_000, channelCount: 2)
     }
 }
 

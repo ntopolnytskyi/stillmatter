@@ -40,6 +40,80 @@ final class ControlBehaviorRegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testRecordControlCanStartBWhileStoppedSessionAStillFinalizes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-capture-overlap-\(UUID().uuidString)")
+        let workspace = root.appendingPathComponent("workspace")
+        let support = root.appendingPathComponent("support")
+        let media = root.appendingPathComponent("media")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let jobStore = try JobStore(databaseURL: support.appendingPathComponent("jobs.sqlite"))
+        let finalizer = PausedControlBundleFinalizer()
+        let recorder = ControlMicRecorder(mediaRoot: media)
+        let service = MeetingCaptureService(
+            vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support),
+            jobStore: jobStore,
+            micRecorder: recorder,
+            bundleFinalizer: finalizer,
+            preflight: { .readyForTesting }
+        )
+        let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+        view.refresh(isVisible: true)
+
+        view.startButton.performClick(nil)
+        let firstPath = try XCTUnwrap(service.snapshot.meetingRelativePath)
+        view.stopButton.performClick(nil)
+        XCTAssertTrue(view.startButton.isEnabled)
+        XCTAssertEqual(view.statusLabel.stringValue, "Ready for the next capture")
+        await fulfillment(of: [finalizer.firstFinalizationStarted], timeout: 5)
+        XCTAssertTrue(view.renderedArtifactTitles.contains("Prior Meeting — Finalizing audio"))
+
+        view.startButton.performClick(nil)
+        XCTAssertEqual(service.snapshot.state, .recording)
+        let secondPath = try XCTUnwrap(service.snapshot.meetingRelativePath)
+        XCTAssertNotEqual(firstPath, secondPath)
+        XCTAssertTrue(view.stopButton.isEnabled)
+        XCTAssertTrue(view.renderedArtifactTitles.contains("Prior Meeting — Finalizing audio"))
+        XCTAssertTrue(view.stateDetail(.recording, hasMeeting: true, isPreviousSessionFinalizing: true).contains("prior Meeting's audio is finalizing separately"))
+
+        finalizer.resumeFirst.signal()
+        await fulfillment(of: [finalizer.firstFinalizationFinished], timeout: 5)
+        XCTAssertEqual(service.snapshot.state, .recording)
+        XCTAssertEqual(service.snapshot.meetingRelativePath, secondPath)
+        XCTAssertTrue(view.stopButton.isEnabled, "A's completion must not replace B's active Record controls")
+
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    @MainActor
+    func testPriorFinalizationFailureIsVisibleWithoutDisablingNextCapture() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-controls-failed-finalization-\(UUID().uuidString)")
+        let workspace = root.appendingPathComponent("workspace")
+        let media = root.appendingPathComponent("media")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = ControlMicRecorder(mediaRoot: media)
+        let service = MeetingCaptureService(
+            vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: root.appendingPathComponent("support")),
+            micRecorder: recorder,
+            bundleFinalizer: FailedControlBundleFinalizer(),
+            preflight: { .readyForTesting }
+        )
+        _ = try service.startManual()
+        XCTAssertThrowsError(try service.stopManual())
+        let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+
+        view.refresh(isVisible: true)
+
+        XCTAssertTrue(view.startButton.isEnabled)
+        XCTAssertTrue(view.renderedArtifactTitles.contains("Prior Meeting — Finalization failed"))
+        XCTAssertFalse(view.renderedArtifactTitles.contains("Meeting capture failed"))
+    }
+
+    @MainActor
     func testSettingsFieldAndTogglePersistThroughAReopenedStore() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-settings-baseline-\(UUID().uuidString)")
         let suite = "works.stillmatter.controls.baseline.\(UUID().uuidString)"
@@ -68,6 +142,79 @@ final class ControlBehaviorRegressionTests: XCTestCase {
     private func descendants(of view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + descendants(of: $0) }
     }
+}
+
+private final class PausedControlBundleFinalizer: RecordingBundleFinalizing {
+    private let delegate = RecordingBundleFinalizer()
+    private let lock = NSLock()
+    private var didPause = false
+    let resumeFirst = DispatchSemaphore(value: 0)
+    let firstFinalizationStarted = XCTestExpectation(description: "Session A bundle finalization started")
+    let firstFinalizationFinished = XCTestExpectation(description: "Session A bundle finalization finished")
+
+    func finalize(mic: MicTrackRecordingMetadata, system: SystemAudioTrackRecordingMetadata?,
+                  reason: RecordingBundleFinalizationReason) throws -> RecordingBundle {
+        lock.lock()
+        let shouldPause = !didPause
+        didPause = true
+        lock.unlock()
+        if shouldPause {
+            firstFinalizationStarted.fulfill()
+            resumeFirst.wait()
+        }
+        let bundle = try delegate.finalize(mic: mic, system: system, reason: reason)
+        if shouldPause { firstFinalizationFinished.fulfill() }
+        return bundle
+    }
+
+    func validate(_ bundle: RecordingBundle) throws { try delegate.validate(bundle) }
+}
+
+private final class ControlMicRecorder: MicTrackRecordingManaging {
+    private let mediaRoot: URL
+    private(set) var activeMetadata: MicTrackRecordingMetadata?
+
+    init(mediaRoot: URL) { self.mediaRoot = mediaRoot }
+
+    func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> MicTrackRecordingMetadata {
+        let directory = mediaRoot.appendingPathComponent("Stillmatter Recordings", isDirectory: true)
+            .appendingPathComponent(sessionID, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let metadata = MicTrackRecordingMetadata(
+            captureSessionID: sessionID,
+            meetingRelativePath: meetingRelativePath,
+            recoveryFilePath: directory.appendingPathComponent("mic-recovery.caf").path,
+            finalFilePath: directory.appendingPathComponent("mic.m4a").path,
+            metadataFilePath: directory.appendingPathComponent("mic-recording.json").path,
+            startedAt: startedAt,
+            sampleRate: 48_000,
+            channelCount: 1
+        )
+        try Data("synthetic recovery audio".utf8).write(to: URL(fileURLWithPath: metadata.recoveryFilePath))
+        try Data("{}".utf8).write(to: URL(fileURLWithPath: metadata.metadataFilePath))
+        activeMetadata = metadata
+        return metadata
+    }
+
+    func stop(endedAt: Date) throws -> MicTrackRecordingMetadata {
+        var metadata = try XCTUnwrap(activeMetadata)
+        metadata.endedAt = endedAt
+        metadata.status = .completed
+        metadata.durationSeconds = 1
+        metadata.codec = "AAC in M4A"
+        try Data("synthetic finalized audio".utf8).write(to: URL(fileURLWithPath: metadata.finalFilePath))
+        activeMetadata = nil
+        return metadata
+    }
+}
+
+private final class FailedControlBundleFinalizer: RecordingBundleFinalizing {
+    func finalize(mic: MicTrackRecordingMetadata, system: SystemAudioTrackRecordingMetadata?,
+                  reason: RecordingBundleFinalizationReason) throws -> RecordingBundle {
+        throw CocoaError(.fileWriteUnknown)
+    }
+
+    func validate(_ bundle: RecordingBundle) throws {}
 }
 
 private struct NoModelAcquirer: TranscriptionModelAcquiring {

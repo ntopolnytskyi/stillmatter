@@ -18,6 +18,7 @@ public enum CaptureEvent: Equatable {
     case captureStarted
     case stopRequested
     case captureStopped
+    case captureReleased
     case finalized
     case failed(String)
     case recovered
@@ -62,6 +63,7 @@ public struct CaptureStateMachine: Equatable {
         case (.starting, .captureStarted): next = .recording
         case (.recording, .stopRequested): next = .stopping
         case (.stopping, .captureStopped): next = .finalizing
+        case (.stopping, .captureReleased): next = .idle
         case (.finalizing, .finalized): next = .idle
         case (.failed, .recovered): next = .recovered
         case (.recovered, .reset): next = .idle
@@ -94,6 +96,34 @@ public struct MeetingCaptureSession: Equatable {
     }
 }
 
+private struct CaptureFinalizationRequest {
+    let session: MeetingCaptureSession
+    let endedAt: Date
+    let releasedMic: MicTrackRecordingMetadata?
+    let releasedSystem: SystemAudioTrackRecordingMetadata?
+    let preflightReport: AudioCapturePreflightReport?
+    let transcriptionLanguage: TranscriptLanguage
+}
+
+public enum PriorCaptureFinalizationState: Equatable {
+    case finalizing
+    case failed(String)
+}
+
+public struct PriorCaptureFinalization: Equatable {
+    public let sessionID: String
+    public let meetingTitle: String
+    public let meetingRelativePath: String
+    public let state: PriorCaptureFinalizationState
+
+    public init(sessionID: String, meetingTitle: String, meetingRelativePath: String, state: PriorCaptureFinalizationState) {
+        self.sessionID = sessionID
+        self.meetingTitle = meetingTitle
+        self.meetingRelativePath = meetingRelativePath
+        self.state = state
+    }
+}
+
 public struct CaptureSnapshot: Equatable {
     public let state: CaptureState
     public let meetingTitle: String?
@@ -106,6 +136,35 @@ public struct CaptureSnapshot: Equatable {
     public let systemAudioRecording: SystemAudioTrackRecordingMetadata?
     public let recordingBundle: RecordingBundle?
     public let transcriptionAudio: TranscriptionAudioSidecar?
+    public let priorCaptureFinalizations: [PriorCaptureFinalization]
+
+    public init(
+        state: CaptureState,
+        meetingTitle: String?,
+        meetingRelativePath: String?,
+        elapsedSeconds: Int,
+        failureMessage: String?,
+        processingStatus: [String],
+        preflightReport: AudioCapturePreflightReport?,
+        micRecording: MicTrackRecordingMetadata?,
+        systemAudioRecording: SystemAudioTrackRecordingMetadata?,
+        recordingBundle: RecordingBundle?,
+        transcriptionAudio: TranscriptionAudioSidecar?,
+        priorCaptureFinalizations: [PriorCaptureFinalization] = []
+    ) {
+        self.state = state
+        self.meetingTitle = meetingTitle
+        self.meetingRelativePath = meetingRelativePath
+        self.elapsedSeconds = elapsedSeconds
+        self.failureMessage = failureMessage
+        self.processingStatus = processingStatus
+        self.preflightReport = preflightReport
+        self.micRecording = micRecording
+        self.systemAudioRecording = systemAudioRecording
+        self.recordingBundle = recordingBundle
+        self.transcriptionAudio = transcriptionAudio
+        self.priorCaptureFinalizations = priorCaptureFinalizations
+    }
 }
 
 /// Application service for the capture lifecycle. The microphone recorder is injected so the
@@ -124,7 +183,9 @@ public final class MeetingCaptureService {
     private let makeID: () -> String
     private var machine = CaptureStateMachine()
     private var session: MeetingCaptureSession?
+    private var mostRecentSession: MeetingCaptureSession?
     private var observers: [(CaptureSnapshot) -> Void] = []
+    private var priorCaptureFinalizations: [PriorCaptureFinalization] = []
     private var processingStatus: [String] = []
     private var preflightReport: AudioCapturePreflightReport?
     private var micRecording: MicTrackRecordingMetadata?
@@ -162,16 +223,12 @@ public final class MeetingCaptureService {
     }
 
     public var snapshot: CaptureSnapshot {
-        let elapsed: Int
-        if let session = session {
-            elapsed = max(0, Int((session.endedAt ?? now()).timeIntervalSince(session.startedAt)))
-        } else {
-            elapsed = 0
-        }
+        let visibleSession = session ?? mostRecentSession
+        let elapsed = visibleSession.map { max(0, Int(($0.endedAt ?? now()).timeIntervalSince($0.startedAt))) } ?? 0
         return CaptureSnapshot(
             state: machine.state,
-            meetingTitle: session?.title,
-            meetingRelativePath: session?.meetingRelativePath,
+            meetingTitle: visibleSession?.title,
+            meetingRelativePath: visibleSession?.meetingRelativePath,
             elapsedSeconds: elapsed,
             failureMessage: machine.failureMessage,
             processingStatus: processingStatus,
@@ -179,7 +236,8 @@ public final class MeetingCaptureService {
             micRecording: micRecording,
             systemAudioRecording: systemAudioRecording,
             recordingBundle: recordingBundle,
-            transcriptionAudio: transcriptionAudio
+            transcriptionAudio: transcriptionAudio,
+            priorCaptureFinalizations: priorCaptureFinalizations
         )
     }
 
@@ -221,6 +279,7 @@ public final class MeetingCaptureService {
                 expectedVersion: nil
             )
             session = newSession
+            mostRecentSession = newSession
             if let micRecorder = micRecorder {
                 micRecording = try micRecorder.start(
                     sessionID: newSession.id,
@@ -264,32 +323,31 @@ public final class MeetingCaptureService {
         try append(text, prefix: "- [ ] ")
     }
 
-    /// Finalizes the active capture synchronously for callers that do not own a UI thread.
+    /// Finalizes a stopped session synchronously for callers that do not own a UI thread.
     @discardableResult
     public func stopManual() throws -> JobRecord? {
-        let (stoppedSession, endedAt) = try prepareStop()
+        let request: CaptureFinalizationRequest
+        do { request = try prepareStop() }
+        catch {
+            recordCaptureReleaseFailure(error)
+            throw error
+        }
         do {
-            let finalized = try CaptureFinalization.run(
-                endedAt: endedAt,
-                micRecorder: micRecorder,
-                systemAudioRecorder: systemAudioRecorder,
-                priorSystem: systemAudioRecording,
-                bundleFinalizer: bundleFinalizer,
-                generator: transcriptionSidecarGenerator
-            )
-            return try completeStop(stoppedSession, finalized: finalized)
+            let finalized = try runFinalization(request)
+            return try completeStop(request, finalized: finalized)
         } catch {
-            try? transition(.failed(String(describing: error)))
+            recordFinalizationFailure(request, error: error)
             throw error
         }
     }
 
-    /// Finalizes blocking recorder work off the UI thread and delivers state and completion on main.
+    /// Releases capture inputs immediately, then finishes encoding and handoff away from the UI.
+    /// The completion belongs to the stopped session and cannot publish that session as current.
     public func stopManualAsync(completion: @escaping (Result<JobRecord?, Error>) -> Void) {
-        let stoppedSession: MeetingCaptureSession
-        let endedAt: Date
-        do { (stoppedSession, endedAt) = try prepareStop() }
+        let request: CaptureFinalizationRequest
+        do { request = try prepareStop() }
         catch {
+            recordCaptureReleaseFailure(error)
             completion(.failure(error))
             return
         }
@@ -297,57 +355,159 @@ public final class MeetingCaptureService {
         let systemAudioRecorder = self.systemAudioRecorder
         let bundleFinalizer = self.bundleFinalizer
         let generator = transcriptionSidecarGenerator
-        let priorSystem = systemAudioRecording
         Task.detached(priority: .userInitiated) { [self] in
             let result = Result {
                 try CaptureFinalization.run(
-                    endedAt: endedAt,
+                    releasedMic: request.releasedMic,
+                    releasedSystem: request.releasedSystem,
                     micRecorder: micRecorder,
                     systemAudioRecorder: systemAudioRecorder,
-                    priorSystem: priorSystem,
                     bundleFinalizer: bundleFinalizer,
                     generator: generator
                 )
             }
             await MainActor.run {
                 do {
-                    completion(.success(try self.completeStop(stoppedSession, finalized: result.get())))
+                    completion(.success(try self.completeStop(request, finalized: result.get())))
                 } catch {
-                    try? self.transition(.failed(String(describing: error)))
+                    self.recordFinalizationFailure(request, error: error)
                     completion(.failure(error))
                 }
             }
         }
     }
 
-    private func prepareStop() throws -> (MeetingCaptureSession, Date) {
+    private func runFinalization(_ request: CaptureFinalizationRequest) throws -> CaptureFinalization {
+        try CaptureFinalization.run(
+            releasedMic: request.releasedMic,
+            releasedSystem: request.releasedSystem,
+            micRecorder: micRecorder,
+            systemAudioRecorder: systemAudioRecorder,
+            bundleFinalizer: bundleFinalizer,
+            generator: transcriptionSidecarGenerator
+        )
+    }
+
+    private func prepareStop() throws -> CaptureFinalizationRequest {
         guard var activeSession = session else { throw CaptureError.noActiveSession }
         try transition(.stopRequested)
         let endedAt = now()
         activeSession.endedAt = endedAt
-        session = activeSession
-        return (activeSession, endedAt)
+
+        let releasedMic = try micRecorder?.releaseForFinalization(endedAt: endedAt)
+        var releasedSystem = systemAudioRecording
+        if systemAudioRecorder?.activeMetadata != nil {
+            do {
+                releasedSystem = try systemAudioRecorder?.releaseForFinalization(endedAt: endedAt)
+            } catch {
+                releasedSystem = systemAudioRecorder?.latestMetadata ?? releasedSystem
+            }
+        }
+
+        try? markCaptureFinalizing(relativePath: activeSession.meetingRelativePath)
+        let request = CaptureFinalizationRequest(
+            session: activeSession,
+            endedAt: endedAt,
+            releasedMic: releasedMic,
+            releasedSystem: releasedSystem,
+            preflightReport: preflightReport,
+            transcriptionLanguage: transcriptionLanguage
+        )
+        session = nil
+        mostRecentSession = activeSession
+        priorCaptureFinalizations.removeAll { $0.sessionID == activeSession.id }
+        priorCaptureFinalizations.append(PriorCaptureFinalization(
+            sessionID: activeSession.id,
+            meetingTitle: activeSession.title,
+            meetingRelativePath: activeSession.meetingRelativePath,
+            state: .finalizing
+        ))
+        micRecording = releasedMic
+        systemAudioRecording = releasedSystem
+        recordingBundle = nil
+        transcriptionAudio = nil
+        processingStatus = ["Capture source stopped; previous-session audio finalization is continuing"]
+        try transition(.captureReleased)
+        return request
     }
 
-    private func completeStop(_ stoppedSession: MeetingCaptureSession, finalized: CaptureFinalization) throws -> JobRecord? {
-        micRecording = finalized.mic
-        systemAudioRecording = finalized.system
-        recordingBundle = finalized.bundle
-        transcriptionAudio = finalized.selection
-        processingStatus = finalized.statuses
-        try replaceProcessingSection(relativePath: stoppedSession.meetingRelativePath)
-        let job = try enqueueProcessingJob(for: stoppedSession)
-        try transition(.captureStopped)
-        if stoppedSession.title.hasPrefix("Untitled Meeting at ") {
+    private func completeStop(_ request: CaptureFinalizationRequest, finalized: CaptureFinalization) throws -> JobRecord? {
+        try replaceProcessingSection(
+            relativePath: request.session.meetingRelativePath,
+            mic: finalized.mic,
+            system: finalized.system,
+            bundle: finalized.bundle,
+            selection: finalized.selection,
+            preflight: request.preflightReport
+        )
+        let job = try enqueueProcessingJob(
+            for: request.session,
+            bundle: finalized.bundle,
+            selection: finalized.selection,
+            language: request.transcriptionLanguage
+        )
+        if request.session.title.hasPrefix("Untitled Meeting at ") {
             try inbox?.requireTitleReview(
-                id: MeetingTitleReviewService.reviewID(sessionID: stoppedSession.id),
-                title: suggestedReviewTitle(for: stoppedSession),
-                sourceRef: stoppedSession.meetingRelativePath
+                id: MeetingTitleReviewService.reviewID(sessionID: request.session.id),
+                title: suggestedReviewTitle(for: request.session),
+                sourceRef: request.session.meetingRelativePath
             )
         }
-        // Publish idle only after the durable old-workspace Job and title-review handoffs.
-        try transition(.finalized)
+        if let mic = finalized.mic { _ = try micRecorder?.completeHandoff(mic) }
+        if let system = finalized.system { _ = try systemAudioRecorder?.completeHandoff(system) }
+        priorCaptureFinalizations.removeAll { $0.sessionID == request.session.id }
+        if mostRecentSession?.id == request.session.id {
+            micRecording = finalized.mic
+            systemAudioRecording = finalized.system
+            recordingBundle = finalized.bundle
+            transcriptionAudio = finalized.selection
+            processingStatus = finalized.statuses
+            notifyObservers()
+        }
         return job
+    }
+
+    private func recordFinalizationFailure(_ request: CaptureFinalizationRequest, error: Error) {
+        let message = "Capture source stopped; audio evidence retained, but finalization or processing handoff failed: \(error)"
+        try? updateFinalizationFailure(relativePath: request.session.meetingRelativePath, message: message)
+        priorCaptureFinalizations = priorCaptureFinalizations.map { finalization in
+            guard finalization.sessionID == request.session.id else { return finalization }
+            return PriorCaptureFinalization(
+                sessionID: finalization.sessionID,
+                meetingTitle: finalization.meetingTitle,
+                meetingRelativePath: finalization.meetingRelativePath,
+                state: .failed(message)
+            )
+        }
+        if mostRecentSession?.id == request.session.id { processingStatus = [message] }
+        notifyObservers()
+    }
+
+    private func recordCaptureReleaseFailure(_ error: Error) {
+        guard var failedSession = session else { return }
+        failedSession.endedAt = failedSession.endedAt ?? now()
+        let message = "Capture input could not be confirmed stopped; recovery evidence is retained: \(error)"
+        try? updateFinalizationFailure(relativePath: failedSession.meetingRelativePath, message: message)
+        mostRecentSession = failedSession
+        priorCaptureFinalizations.removeAll { $0.sessionID == failedSession.id }
+        priorCaptureFinalizations.append(PriorCaptureFinalization(
+            sessionID: failedSession.id,
+            meetingTitle: failedSession.title,
+            meetingRelativePath: failedSession.meetingRelativePath,
+            state: .failed(message)
+        ))
+        if var mic = micRecording, mic.captureSessionID == failedSession.id {
+            mic.status = .failed
+            mic.diagnostics.append(message)
+            micRecording = mic
+        }
+        if let system = systemAudioRecorder?.latestMetadata, system.captureSessionID == failedSession.id {
+            systemAudioRecording = system
+        }
+        processingStatus = [message]
+        session = nil
+        try? machine.apply(.failed(message))
+        notifyObservers()
     }
 
     /// Selects the only two first-class languages. The next capture uses this language.
@@ -415,7 +575,35 @@ public final class MeetingCaptureService {
         notifyObservers()
     }
 
-    private func replaceProcessingSection(relativePath: String) throws {
+    private func markCaptureFinalizing(relativePath: String) throws {
+        let current = try vault.readMarkdown(relativePath: relativePath)
+        guard let markdown = String(data: current.data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        let updated = markdown.replacingOccurrences(of: "capture: placeholder", with: "capture: finalizing")
+        _ = try vault.writeMarkdown(Data(updated.utf8), relativePath: relativePath, expectedVersion: current.version)
+    }
+
+    private func updateFinalizationFailure(relativePath: String, message: String) throws {
+        let current = try vault.readMarkdown(relativePath: relativePath)
+        guard var markdown = String(data: current.data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        let marker = "## Processing\n"
+        if let range = markdown.range(of: marker) {
+            markdown.insert(contentsOf: "\n- [!] \(message)\n", at: range.upperBound)
+        }
+        _ = try vault.writeMarkdown(Data(markdown.utf8), relativePath: relativePath, expectedVersion: current.version)
+    }
+
+    private func replaceProcessingSection(
+        relativePath: String,
+        mic: MicTrackRecordingMetadata?,
+        system: SystemAudioTrackRecordingMetadata?,
+        bundle: RecordingBundle?,
+        selection: TranscriptionAudioSidecar?,
+        preflight: AudioCapturePreflightReport?
+    ) throws {
         let current = try vault.readMarkdown(relativePath: relativePath)
         guard let markdown = String(data: current.data, encoding: .utf8) else {
             throw CocoaError(.fileReadInapplicableStringEncoding)
@@ -426,7 +614,7 @@ public final class MeetingCaptureService {
             return
         }
         var audioLines: [String] = []
-        if let mic = micRecording {
+        if let mic = mic {
             audioLines += [
                 "- [x] Microphone track finalized: `\(mic.finalFilePath)`",
                 "- [x] Microphone recovery/preview retained: `\(mic.recoveryFilePath)`",
@@ -438,13 +626,13 @@ public final class MeetingCaptureService {
                 "- [ ] Audio finalization (available in a later capture ticket)"
             ]
         }
-        if let bundle = recordingBundle {
+        if let bundle = bundle {
             audioLines += [
                 "- [x] Recording bundle (`\(bundle.state.rawValue)`): `\(bundle.bundleFilePath)`",
                 "- [x] Recording bundle validated for downstream processing"
             ]
         }
-        if let selection = transcriptionAudio {
+        if let selection = selection {
             if selection.selection == .echoCancelledSidecar {
                 audioLines += [
                     "- [x] Echo-cancelled transcription sidecar: `\(selection.selectedAudioFilePath)`",
@@ -457,7 +645,7 @@ public final class MeetingCaptureService {
                 ]
             }
         }
-        if let system = systemAudioRecording {
+        if let system = system {
             if system.status == .completed || system.status == .recovered {
                 audioLines += [
                     "- [x] System audio track finalized: `\(system.finalFilePath)`",
@@ -470,7 +658,7 @@ public final class MeetingCaptureService {
                     "- [x] System audio diagnostic metadata: `\(system.metadataFilePath)`"
                 ]
             }
-        } else if let systemItem = preflightReport?.items.first(where: { $0.id == "system-audio" }), systemItem.status != .ready {
+        } else if let systemItem = preflight?.items.first(where: { $0.id == "system-audio" }), systemItem.status != .ready {
             audioLines.append("- [!] System audio unavailable; microphone-only capture retained: \(systemItem.detail)")
         }
         let replacement = """
@@ -480,25 +668,34 @@ public final class MeetingCaptureService {
         - [ ] Transcription and summary
         """
         var updated = markdown.replacingCharacters(in: markerRange.lowerBound..<liveNotesRange.lowerBound, with: replacement)
-        if let bundle = recordingBundle {
+        if let bundle = bundle {
             updated = updated.replacingOccurrences(
-                of: "capture: placeholder",
+                of: "capture: finalizing",
                 with: "capture: \(bundle.state == .ready ? "finalized" : bundle.state.rawValue)\nrecording_bundle: \(bundle.bundleFilePath)"
             )
+        } else {
+            updated = updated.replacingOccurrences(of: "capture: finalizing", with: "capture: finalized")
         }
         _ = try vault.writeMarkdown(Data(updated.utf8), relativePath: relativePath, expectedVersion: current.version)
     }
 
-    private func enqueueProcessingJob(for session: MeetingCaptureSession) throws -> JobRecord? {
+    private func enqueueProcessingJob(
+        for session: MeetingCaptureSession,
+        bundle: RecordingBundle?,
+        selection: TranscriptionAudioSidecar?,
+        language: TranscriptLanguage
+    ) throws -> JobRecord? {
         guard let jobStore = jobStore else { return nil }
-        if let bundle = recordingBundle {
+        let jobID = MeetingWorkflowJob.captureProcessingJobID(sessionID: session.id)
+        if let existing = try jobStore.job(id: jobID) { return existing }
+        if let bundle = bundle {
             let manifest = try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(
                 title: session.title,
                 bundle: bundle,
-                selection: transcriptionAudio,
-                language: transcriptionLanguage
+                selection: selection,
+                language: language
             ))
-            return try jobStore.enqueue(manifest: manifest.owned(by: vault.rootURL))
+            return try enqueueOnce(id: jobID, manifest: manifest.owned(by: vault.rootURL))
         }
         let manifest = JobManifest(
             type: "meeting-capture-placeholder",
@@ -514,7 +711,17 @@ public final class MeetingCaptureService {
             metadata: ["capture_session_id": session.id],
             maxAutomaticRetries: 1
         )
-        return try jobStore.enqueue(manifest: manifest.owned(by: vault.rootURL))
+        return try enqueueOnce(id: jobID, manifest: manifest.owned(by: vault.rootURL))
+    }
+
+    private func enqueueOnce(id: String, manifest: JobManifest) throws -> JobRecord? {
+        guard let jobStore = jobStore else { return nil }
+        do {
+            return try jobStore.enqueue(id: id, manifest: manifest)
+        } catch {
+            if let existing = try jobStore.job(id: id) { return existing }
+            throw error
+        }
     }
 
     private func availableMeetingPath(title: String, at date: Date) throws -> String {

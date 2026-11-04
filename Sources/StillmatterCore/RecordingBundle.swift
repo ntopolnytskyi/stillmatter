@@ -89,14 +89,10 @@ public protocol RecordingBundleFinalizing: AnyObject {
 public final class RecordingBundleFinalizer: RecordingBundleFinalizing {
     private let fileManager: FileManager
     private let now: () -> Date
-    private let encoder: JSONEncoder
 
     public init(fileManager: FileManager = .default, now: @escaping () -> Date = Date.init) {
         self.fileManager = fileManager
         self.now = now
-        encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
     }
 
     public func finalize(
@@ -139,6 +135,9 @@ public final class RecordingBundleFinalizer: RecordingBundleFinalizing {
         try validateRequiredAudio(bundle)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let temporaryURL = directory.appendingPathComponent(".recording-bundle.json.tmp")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(bundle).write(to: temporaryURL, options: .atomic)
         if fileManager.fileExists(atPath: bundleURL.path) {
             _ = try fileManager.replaceItemAt(bundleURL, withItemAt: temporaryURL)

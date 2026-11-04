@@ -212,6 +212,36 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("- [ ] Send the revised export"))
     }
 
+    func testLiveNotesRejectMalformedMeetingMarkdown() throws {
+        let fixture = try CaptureFixture()
+        let service = fixture.service()
+        let session = try service.startManual()
+        let meetingURL = fixture.workspaceRoot.appendingPathComponent(session.meetingRelativePath)
+        try Data([0xFF, 0xFE]).write(to: meetingURL)
+
+        XCTAssertThrowsError(try service.appendLiveNote("note"))
+        XCTAssertThrowsError(try service.appendActionItem("action"))
+    }
+
+    func testMicrophoneInputReleaseFailureLeavesCaptureRecoverableAndOutOfStopping() throws {
+        let fixture = try CaptureFixture()
+        let recorder = SpyMicRecorder(mediaRoot: fixture.appSupportRoot)
+        recorder.stopError = CocoaError(.fileWriteUnknown)
+        let service = fixture.service(micRecorder: recorder)
+        let session = try service.startManual()
+
+        XCTAssertThrowsError(try service.stopManual())
+
+        XCTAssertEqual(service.snapshot.state, .failed)
+        XCTAssertEqual(service.snapshot.meetingRelativePath, session.meetingRelativePath)
+        XCTAssertEqual(service.snapshot.micRecording?.status, .failed)
+        XCTAssertEqual(service.snapshot.priorCaptureFinalizations.map(\.sessionID), [session.id])
+        guard case .failed = service.snapshot.priorCaptureFinalizations[0].state else {
+            return XCTFail("Failed source release must remain visible for the original session")
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: service.snapshot.micRecording!.recoveryFilePath))
+    }
+
     func testStopCreatesPlaceholderProcessingJobAndPublishesStoppingAndFinalizingStates() throws {
         let fixture = try CaptureFixture()
         let service = fixture.service()
@@ -221,7 +251,7 @@ final class MeetingCaptureServiceTests: XCTestCase {
 
         let job = try service.stopManual()
 
-        XCTAssertEqual(observedStates.suffix(3), [.stopping, .finalizing, .idle])
+        XCTAssertEqual(observedStates.suffix(3), [.stopping, .idle, .idle])
         XCTAssertEqual(service.snapshot.state, .idle)
         XCTAssertEqual(job?.manifest.type, "meeting-capture-placeholder")
         XCTAssertEqual(job?.manifest.stages.map(\.id), ["finalize-placeholder", "prepare-processing"])
@@ -245,13 +275,14 @@ final class MeetingCaptureServiceTests: XCTestCase {
             if case let .failure(error) = result { XCTFail("Stop failed: \(error)") }
             finished.fulfill()
         }
-        XCTAssertEqual(service.snapshot.state, .stopping)
+        XCTAssertEqual(service.snapshot.state, .idle)
         service.stopManualAsync { result in
             if case .success = result { XCTFail("Duplicate stop succeeded") }
         }
         recorder.resume.signal()
         wait(for: [finished], timeout: 5)
-        XCTAssertEqual(observedStates.suffix(3), [.stopping, .finalizing, .idle])
+        XCTAssertTrue(observedStates.contains(.stopping))
+        XCTAssertEqual(observedStates.last, .idle)
         XCTAssertEqual(service.snapshot.state, .idle)
     }
 
@@ -310,7 +341,7 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertEqual(service.snapshot.state, .idle)
         XCTAssertEqual(service.snapshot.micRecording?.status, .completed)
         XCTAssertEqual(service.snapshot.systemAudioRecording?.status, .failed)
-        XCTAssertTrue(service.snapshot.processingStatus.contains { $0.contains("microphone track remains available") })
+        XCTAssertTrue(service.snapshot.processingStatus.contains { $0.contains("microphone-only capture retained") })
         let markdown = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(session.meetingRelativePath))
         XCTAssertTrue(markdown.contains("System audio unavailable"))
     }
@@ -332,6 +363,36 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("System audio track finalized"))
         XCTAssertTrue(markdown.contains("system-recovery.caf"))
         XCTAssertTrue(markdown.contains("system-recording.json"))
+    }
+
+    func testBackgroundSystemAudioFinalizationFailureIsReportedWithoutLosingMicrophone() throws {
+        let fixture = try CaptureFixture()
+        let micRecorder = SpyMicRecorder()
+        let systemRecorder = SpySystemAudioRecorder()
+        systemRecorder.splitFinalization = true
+        systemRecorder.finalizeError = CocoaError(.fileWriteUnknown)
+        let service = fixture.service(micRecorder: micRecorder, systemAudioRecorder: systemRecorder)
+        _ = try service.startManual()
+
+        _ = try service.stopManual()
+
+        XCTAssertEqual(service.snapshot.micRecording?.status, .completed)
+        XCTAssertEqual(service.snapshot.systemAudioRecording?.status, .failed)
+        XCTAssertTrue(service.snapshot.processingStatus.contains { $0.contains("microphone track remains available") })
+    }
+
+    func testBackgroundSystemAudioSuccessPublishesFinalizedTrackStatus() throws {
+        let fixture = try CaptureFixture()
+        let systemRecorder = SpySystemAudioRecorder()
+        systemRecorder.splitFinalization = true
+        let service = fixture.service(micRecorder: SpyMicRecorder(), systemAudioRecorder: systemRecorder)
+        _ = try service.startManual()
+
+        _ = try service.stopManual()
+
+        XCTAssertEqual(service.snapshot.systemAudioRecording?.status, .completed)
+        XCTAssertTrue(service.snapshot.processingStatus.contains("Separate system audio finalized (AAC)"))
+        XCTAssertTrue(service.snapshot.processingStatus.contains("System-audio recovery/preview retained"))
     }
 
     func testStopPublishesCanonicalBundleAndQueuesItForProcessing() throws {
@@ -372,6 +433,18 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("capture: finalized"))
         XCTAssertTrue(markdown.contains("Recording bundle (`ready`)"))
         XCTAssertTrue(markdown.contains(bundle.bundleFilePath))
+
+        let recovery = RecordingRecoveryService(
+            vault: WorkspaceVault(workspaceRootURL: fixture.workspaceRoot, appSupportRootURL: fixture.appSupportRoot),
+            jobStore: fixture.jobStoreForTests,
+            bundleFinalizer: finalizer
+        )
+        let mic = try XCTUnwrap(service.snapshot.micRecording)
+        let recoveredOnce = try recovery.finalizeRecovered(mic: mic, system: nil)
+        let recoveredAgain = try recovery.finalizeRecovered(mic: mic, system: nil)
+        XCTAssertEqual(recoveredOnce.job?.id, recoveredAgain.job?.id)
+        XCTAssertEqual(try fixture.jobStoreForTests.jobs().filter { $0.id == recoveredOnce.job?.id }.count, 1,
+                       "Restart recovery reuses the normal capture handoff's durable Job intent")
     }
 
     func testStateMachineCoversDetectionFailureAndRecovery() throws {
@@ -392,6 +465,90 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertEqual(machine.state, .idle)
     }
 
+    func testNextCaptureStartsWhilePriorBundleFinalizationIsHeldAndLateCallbacksStayOwned() throws {
+        let fixture = try CaptureFixture()
+        let micRecorder = SpyMicRecorder(mediaRoot: fixture.root.appendingPathComponent("Media"))
+        let bundleFinalizer = BlockingBundleFinalizer(blockFirstCall: true)
+        let service = fixture.service(micRecorder: micRecorder, bundleFinalizer: bundleFinalizer)
+        let first = try service.startManual(titleHint: "Session A")
+        try service.appendLiveNote("A note")
+        let firstStopped = DispatchSemaphore(value: 0)
+        service.stopManualAsync { _ in firstStopped.signal() }
+
+        XCTAssertEqual(service.snapshot.state, .idle, "Capture controls become available as soon as the source has stopped")
+        XCTAssertEqual(bundleFinalizer.entered.wait(timeout: .now() + 5), .success)
+        let second = try service.startManual(titleHint: "Session B")
+        try service.appendLiveNote("B note")
+        let secondStopped = DispatchSemaphore(value: 0)
+        var secondStopSucceeded = false
+        service.stopManualAsync { result in
+            if case .success = result { secondStopSucceeded = true }
+            secondStopped.signal()
+        }
+
+        XCTAssertTrue(waitForMainCallback(secondStopped))
+        XCTAssertTrue(secondStopSucceeded)
+        XCTAssertEqual(service.snapshot.state, .idle)
+        XCTAssertEqual(service.snapshot.meetingRelativePath, second.meetingRelativePath)
+        XCTAssertEqual(service.snapshot.micRecording?.captureSessionID, second.id)
+
+        bundleFinalizer.resume.signal()
+        XCTAssertTrue(waitForMainCallback(firstStopped))
+
+        let firstText = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(first.meetingRelativePath))
+        let secondText = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(second.meetingRelativePath))
+        XCTAssertTrue(firstText.contains("A note"))
+        XCTAssertFalse(firstText.contains("B note"))
+        XCTAssertTrue(secondText.contains("B note"))
+        XCTAssertFalse(secondText.contains("A note"))
+        XCTAssertEqual(try fixture.jobStoreForTests.jobs().filter { $0.manifest.metadata["capture_session_id"] == first.id }.count, 1)
+        XCTAssertEqual(try fixture.jobStoreForTests.jobs().filter { $0.manifest.metadata["capture_session_id"] == second.id }.count, 1)
+        XCTAssertEqual(service.snapshot.meetingRelativePath, second.meetingRelativePath, "A late A callback cannot replace B's current session")
+    }
+
+    func testLateFinalizationFailureIsRecordedForAWithoutFailingActiveB() throws {
+        let fixture = try CaptureFixture()
+        let mediaRoot = fixture.root.appendingPathComponent("Media")
+        let micRecorder = SpyMicRecorder(mediaRoot: mediaRoot)
+        let bundleFinalizer = BlockingBundleFinalizer(blockFirstCall: true, failFirstCall: true)
+        let service = fixture.service(micRecorder: micRecorder, bundleFinalizer: bundleFinalizer)
+        let first = try service.startManual(titleHint: "Session A")
+        try service.appendLiveNote("A note survives")
+        let firstCompletion = DispatchSemaphore(value: 0)
+        var firstFailed = false
+        service.stopManualAsync { result in
+            if case .failure = result { firstFailed = true }
+            firstCompletion.signal()
+        }
+        XCTAssertEqual(bundleFinalizer.entered.wait(timeout: .now() + 5), .success)
+
+        let second = try service.startManual(titleHint: "Session B")
+        XCTAssertEqual(service.snapshot.state, .recording)
+        try service.appendLiveNote("B remains active")
+        bundleFinalizer.resume.signal()
+
+        XCTAssertTrue(waitForMainCallback(firstCompletion))
+        XCTAssertTrue(firstFailed)
+        XCTAssertEqual(service.snapshot.state, .recording)
+        XCTAssertNil(service.snapshot.failureMessage, "A's late failure must not become B's failure")
+        XCTAssertEqual(service.snapshot.meetingRelativePath, second.meetingRelativePath)
+
+        let firstText = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(first.meetingRelativePath))
+        XCTAssertTrue(firstText.contains("A note survives"))
+        XCTAssertTrue(firstText.contains("audio evidence retained"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: mediaRoot.appendingPathComponent("Stillmatter Recordings/\(first.id)/mic-recovery.caf").path))
+        XCTAssertTrue(try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(second.meetingRelativePath)).contains("B remains active"))
+    }
+
+    private func waitForMainCallback(_ semaphore: DispatchSemaphore, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if semaphore.wait(timeout: .now()) == .success { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        return semaphore.wait(timeout: .now()) == .success
+    }
+
     func testElapsedTimeStopsAdvancingWhenCaptureStops() throws {
         let fixture = try CaptureFixture()
         var now = fixture.now
@@ -404,6 +561,43 @@ final class MeetingCaptureServiceTests: XCTestCase {
         now = now.addingTimeInterval(60)
 
         XCTAssertEqual(service.snapshot.elapsedSeconds, 125)
+    }
+}
+
+private final class BlockingBundleFinalizer: RecordingBundleFinalizing {
+    private let delegate = RecordingBundleFinalizer()
+    private let lock = NSLock()
+    private var shouldBlockFirstCall: Bool
+    private var shouldFailFirstCall: Bool
+    let entered = DispatchSemaphore(value: 0)
+    let resume = DispatchSemaphore(value: 0)
+
+    init(blockFirstCall: Bool, failFirstCall: Bool = false) {
+        shouldBlockFirstCall = blockFirstCall
+        shouldFailFirstCall = failFirstCall
+    }
+
+    func finalize(
+        mic: MicTrackRecordingMetadata,
+        system: SystemAudioTrackRecordingMetadata?,
+        reason: RecordingBundleFinalizationReason
+    ) throws -> RecordingBundle {
+        lock.lock()
+        let shouldBlock = shouldBlockFirstCall
+        let shouldFail = shouldFailFirstCall
+        shouldBlockFirstCall = false
+        shouldFailFirstCall = false
+        lock.unlock()
+        if shouldBlock {
+            entered.signal()
+            resume.wait()
+        }
+        if shouldFail { throw CocoaError(.fileWriteUnknown) }
+        return try delegate.finalize(mic: mic, system: system, reason: reason)
+    }
+
+    func validate(_ bundle: RecordingBundle) throws {
+        try delegate.validate(bundle)
     }
 }
 
@@ -426,6 +620,8 @@ private final class CaptureFixture {
     deinit {
         try? FileManager.default.removeItem(at: root)
     }
+
+    var jobStoreForTests: JobStore { jobStore }
 
     func service(
         now suppliedNow: (() -> Date)? = nil,
@@ -455,6 +651,8 @@ private final class SpySystemAudioRecorder: SystemAudioTrackRecordingManaging {
     private(set) var latestMetadata: SystemAudioTrackRecordingMetadata?
     var startError: Error?
     var stopError: Error?
+    var splitFinalization = false
+    var finalizeError: Error?
     private(set) var startCalls = 0
     private(set) var stopCalls = 0
 
@@ -512,6 +710,30 @@ private final class SpySystemAudioRecorder: SystemAudioTrackRecordingManaging {
         latestMetadata = metadata
         return metadata
     }
+
+    func releaseForFinalization(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+        guard splitFinalization else { return try stop(endedAt: endedAt) }
+        stopCalls += 1
+        var metadata = activeMetadata!
+        metadata.endedAt = endedAt
+        metadata.status = .finalizing
+        activeMetadata = nil
+        latestMetadata = metadata
+        return metadata
+    }
+
+    func finalizeReleased(_ released: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata {
+        if let finalizeError = finalizeError { throw finalizeError }
+        var metadata = released
+        metadata.status = .completed
+        metadata.durationSeconds = 2
+        metadata.codec = "AAC in M4A"
+        if mediaRoot != nil {
+            try Data("system final".utf8).write(to: URL(fileURLWithPath: metadata.finalFilePath))
+        }
+        latestMetadata = metadata
+        return metadata
+    }
 }
 
 private final class PausedMicRecorder: MicTrackRecordingManaging {
@@ -525,8 +747,16 @@ private final class PausedMicRecorder: MicTrackRecordingManaging {
     }
 
     func stop(endedAt: Date) throws -> MicTrackRecordingMetadata {
-        resume.wait()
         return try underlying.stop(endedAt: endedAt)
+    }
+
+    func releaseForFinalization(endedAt: Date) throws -> MicTrackRecordingMetadata {
+        try underlying.stop(endedAt: endedAt)
+    }
+
+    func finalizeReleased(_ metadata: MicTrackRecordingMetadata) throws -> MicTrackRecordingMetadata {
+        resume.wait()
+        return metadata
     }
 }
 
@@ -535,6 +765,7 @@ private final class SpyMicRecorder: MicTrackRecordingManaging {
     private(set) var activeMetadata: MicTrackRecordingMetadata?
     private(set) var startSessionID: String?
     private(set) var stopCalls = 0
+    var stopError: Error?
 
     init(mediaRoot: URL? = nil) {
         self.mediaRoot = mediaRoot
@@ -566,6 +797,12 @@ private final class SpyMicRecorder: MicTrackRecordingManaging {
         stopCalls += 1
         var metadata = activeMetadata!
         metadata.endedAt = endedAt
+        if let stopError = stopError {
+            metadata.status = .failed
+            metadata.diagnostics.append("Synthetic microphone input stop failure: \(stopError)")
+            activeMetadata = nil
+            throw stopError
+        }
         metadata.status = .completed
         metadata.durationSeconds = 2
         metadata.codec = "AAC in M4A"

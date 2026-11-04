@@ -3,7 +3,7 @@ import AVFoundation
 import StillmatterCore
 #endif
 
-final class MacMicTrackRecorder: MicTrackRecordingBackend {
+final class MacMicTrackRecorder: MicTrackCaptureReleasingBackend {
     private let engine = AVAudioEngine()
     private var recoveryFile: AVAudioFile?
     private var writeError: Error?
@@ -70,19 +70,32 @@ final class MacMicTrackRecorder: MicTrackRecordingBackend {
     }
 
     func stopAndFinalize(recoveryURL: URL, finalURL: URL) throws -> MicTrackTechnicalInfo {
+        let stopped = try stopWritingRecovery(to: recoveryURL)
+        return try finalizeRecovery(from: recoveryURL, to: finalURL, audioClockSpans: stopped.audioClockSpans)
+    }
+
+    func stopWritingRecovery(to recoveryURL: URL) throws -> MicTrackTechnicalInfo {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        let file = recoveryFile
         recoveryFile = nil
         lock.lock()
         let recordedError = writeError
         writeError = nil
         lock.unlock()
         if let recordedError = recordedError { throw recordedError }
-        return try exportRecovery(
-            recoveryURL,
-            to: finalURL,
+        let format = file?.processingFormat
+        return MicTrackTechnicalInfo(
+            durationSeconds: format.map { $0.sampleRate > 0 ? Double(writtenFrames) / $0.sampleRate : 0 } ?? 0,
+            codec: "linear PCM recovery",
+            sampleRate: format?.sampleRate ?? 0,
+            channelCount: format.map { Int($0.channelCount) } ?? 0,
             audioClockSpans: audioClock.archive()
         )
+    }
+
+    func finalizeRecovery(from recoveryURL: URL, to finalURL: URL, audioClockSpans: [AudioClockSpan]?) throws -> MicTrackTechnicalInfo {
+        try exportRecovery(recoveryURL, to: finalURL, audioClockSpans: audioClockSpans)
     }
 
     func recover(recoveryURL: URL, finalURL: URL) throws -> MicTrackTechnicalInfo {

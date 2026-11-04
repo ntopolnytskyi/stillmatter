@@ -6,6 +6,11 @@ public enum MeetingWorkflowJob {
     public static let type = "meeting.workflow"
     public static let supportedTypes: Set<String> = [type, TranscriptionJob.type, MeetingSummaryJob.type]
 
+    /// Stable idempotency key shared by normal capture handoff and startup recovery.
+    public static func captureProcessingJobID(sessionID: String) -> String {
+        "capture-session-\(sessionID)"
+    }
+
     public static func manifest(transcription: JobManifest, summary: JobManifest? = nil) throws -> JobManifest {
         guard transcription.type == TranscriptionJob.type,
               transcription.stages.map(\.id) == [TranscriptionJob.stageID],

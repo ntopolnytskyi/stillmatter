@@ -108,7 +108,14 @@ public final class RecordingRecoveryService {
             bundle: bundle,
             selection: transcriptionAudio,
             language: .english
-        ))
-        return try jobStore.enqueue(manifest: manifest.owned(by: vault.rootURL))
+        )).owned(by: vault.rootURL)
+        let id = MeetingWorkflowJob.captureProcessingJobID(sessionID: bundle.captureSessionID)
+        if let existing = try jobStore.job(id: id) { return existing }
+        do {
+            return try jobStore.enqueue(id: id, manifest: manifest)
+        } catch {
+            if let existing = try jobStore.job(id: id) { return existing }
+            throw error
+        }
     }
 }
