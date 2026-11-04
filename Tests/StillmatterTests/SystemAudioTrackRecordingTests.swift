@@ -2,6 +2,15 @@ import XCTest
 @testable import StillmatterCore
 
 final class SystemAudioTrackRecordingTests: XCTestCase {
+    func testLegacySystemRecorderUsesDefaultReleasedFinalizationHandoff() throws {
+        let recorder: SystemAudioTrackRecordingManaging = LegacySystemAudioTrackRecorder()
+        let released = try recorder.releaseForFinalization(endedAt: Date(timeIntervalSince1970: 10))
+
+        XCTAssertEqual(released.captureSessionID, "legacy-system")
+        XCTAssertEqual(try recorder.finalizeReleased(released), released)
+        XCTAssertEqual(try recorder.completeHandoff(released), released)
+    }
+
     func testStopProducesSeparateFinalRecoveryAndMetadataArtifacts() throws {
         let fixture = try SystemAudioRecordingFixture()
         let backend = FakeSystemAudioBackend()
@@ -141,6 +150,29 @@ final class SystemAudioTrackRecordingTests: XCTestCase {
         XCTAssertEqual(reports.first?.status, .recovered)
         XCTAssertTrue(FileManager.default.fileExists(atPath: reports.first!.finalFilePath))
         XCTAssertTrue(FileManager.default.fileExists(atPath: started.recoveryFilePath))
+    }
+}
+
+private final class LegacySystemAudioTrackRecorder: SystemAudioTrackRecordingManaging {
+    var activeMetadata: SystemAudioTrackRecordingMetadata? { nil }
+    var latestMetadata: SystemAudioTrackRecordingMetadata? { nil }
+
+    func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+        throw SystemAudioTrackRecordingError.alreadyRecording
+    }
+
+    func stop(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+        var metadata = SystemAudioTrackRecordingMetadata(
+            captureSessionID: "legacy-system",
+            meetingRelativePath: "Meetings/legacy/meeting.md",
+            recoveryFilePath: "media/legacy/system.caf",
+            finalFilePath: "media/legacy/system.m4a",
+            metadataFilePath: "media/legacy/system.json",
+            startedAt: Date(timeIntervalSince1970: 0),
+            status: .completed
+        )
+        metadata.endedAt = endedAt
+        return metadata
     }
 }
 

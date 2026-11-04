@@ -2,6 +2,15 @@ import XCTest
 @testable import StillmatterCore
 
 final class MicTrackRecordingTests: XCTestCase {
+    func testLegacyRecorderUsesDefaultReleasedFinalizationHandoff() throws {
+        let recorder: MicTrackRecordingManaging = LegacyMicTrackRecorder()
+        let released = try recorder.releaseForFinalization(endedAt: Date(timeIntervalSince1970: 10))
+
+        XCTAssertEqual(released.captureSessionID, "legacy-mic")
+        XCTAssertEqual(try recorder.finalizeReleased(released), released)
+        XCTAssertEqual(try recorder.completeHandoff(released), released)
+    }
+
     func testStopProducesFinalRecoveryAndDurableTechnicalMetadata() throws {
         let fixture = try MicRecordingFixture()
         let backend = FakeMicBackend()
@@ -159,6 +168,28 @@ final class MicTrackRecordingTests: XCTestCase {
 
         XCTAssertEqual(reports.first?.status, .partial)
         XCTAssertTrue(reports.first?.diagnostics.contains { $0.contains("recovery artifact is missing") } == true)
+    }
+}
+
+private final class LegacyMicTrackRecorder: MicTrackRecordingManaging {
+    var activeMetadata: MicTrackRecordingMetadata? { nil }
+
+    func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> MicTrackRecordingMetadata {
+        throw MicTrackRecordingError.alreadyRecording
+    }
+
+    func stop(endedAt: Date) throws -> MicTrackRecordingMetadata {
+        var metadata = MicTrackRecordingMetadata(
+            captureSessionID: "legacy-mic",
+            meetingRelativePath: "Meetings/legacy/meeting.md",
+            recoveryFilePath: "media/legacy/mic.caf",
+            finalFilePath: "media/legacy/mic.m4a",
+            metadataFilePath: "media/legacy/mic.json",
+            startedAt: Date(timeIntervalSince1970: 0),
+            status: .completed
+        )
+        metadata.endedAt = endedAt
+        return metadata
     }
 }
 

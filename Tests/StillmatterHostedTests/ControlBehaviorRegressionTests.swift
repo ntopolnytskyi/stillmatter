@@ -16,11 +16,36 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         XCTAssertEqual(released.codec, "linear PCM recovery")
         XCTAssertEqual(released.durationSeconds, 0)
         XCTAssertThrowsError(try microphone.finalizeRecovery(from: recovery, to: root.appendingPathComponent("missing-mic.m4a"), audioClockSpans: nil))
+        XCTAssertThrowsError(try MacMicTrackRecorder().stopAndFinalize(
+            recoveryURL: recovery,
+            finalURL: root.appendingPathComponent("convenience-mic.m4a")
+        ))
+        XCTAssertThrowsError(try microphone.recover(
+            recoveryURL: recovery,
+            finalURL: root.appendingPathComponent("recovered-mic.m4a")
+        ))
+        let existingMicOutput = root.appendingPathComponent("existing-mic.m4a")
+        XCTAssertTrue(FileManager.default.createFile(atPath: existingMicOutput.path, contents: Data()))
+        XCTAssertThrowsError(try microphone.recover(recoveryURL: recovery, finalURL: existingMicOutput))
 
         if #available(macOS 13.0, *) {
             let system = MacSystemAudioTrackRecorder()
             XCTAssertThrowsError(try system.stopWritingRecovery(to: root.appendingPathComponent("missing-system.caf")))
             XCTAssertThrowsError(try system.finalizeRecovery(from: root.appendingPathComponent("missing-system.caf"), to: root.appendingPathComponent("missing-system.m4a"), audioClockSpans: nil))
+            XCTAssertThrowsError(try system.stopAndFinalize(
+                recoveryURL: root.appendingPathComponent("missing-system.caf"),
+                finalURL: root.appendingPathComponent("convenience-system.m4a")
+            ))
+            XCTAssertThrowsError(try system.recover(
+                recoveryURL: root.appendingPathComponent("missing-system.caf"),
+                finalURL: root.appendingPathComponent("recovered-system.m4a")
+            ))
+            let existingSystemOutput = root.appendingPathComponent("existing-system.m4a")
+            XCTAssertTrue(FileManager.default.createFile(atPath: existingSystemOutput.path, contents: Data()))
+            XCTAssertThrowsError(try system.recover(
+                recoveryURL: root.appendingPathComponent("missing-system.caf"),
+                finalURL: existingSystemOutput
+            ))
         }
     }
 
