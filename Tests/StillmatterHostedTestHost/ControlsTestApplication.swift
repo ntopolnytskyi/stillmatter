@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import StillmatterCore
 
 /// Test-only window containing actual form consumers. It never constructs an OS recorder.
@@ -14,6 +15,7 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
     private var settings: SettingsFormView!
     private var settingsObserver: UUID?
     private var validationAttempts = 0
+    private var fakeTeamsAccessibilityGranted = false
     private var releaseFinalization: (() -> Void)?
     private var sourceLossRecorder: ControlsTestSystemAudioRecorder?
 
@@ -95,6 +97,14 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
                     throw NSError(domain: "ControlsTestValidation", code: self.validationAttempts,
                         userInfo: [NSLocalizedDescriptionKey: "Controlled validation failure \(self.validationAttempts)"])
                 }
+            },
+            accessibilityPermissionGranted: { [weak self] in
+                guard let self, self.scenario == "teams-permission" else { return AXIsProcessTrusted() }
+                return self.fakeTeamsAccessibilityGranted
+            },
+            requestAccessibilityPermission: { [weak self] _ in
+                guard let self, self.scenario == "teams-permission" else { return }
+                self.fakeTeamsAccessibilityGranted = true
             })
         let rootView = NSView()
         let recordingNavigation = NSButton(title: "Recording", target: self, action: #selector(showRecording(_:)))

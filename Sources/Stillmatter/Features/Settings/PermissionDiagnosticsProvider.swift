@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import AVFoundation
 import EventKit
 import UserNotifications
@@ -7,21 +8,35 @@ import StillmatterCore
 #endif
 
 final class PermissionDiagnosticsProvider {
+    static func isTeamsAccessibilityPermissionGranted() -> Bool { AXIsProcessTrusted() }
+
+    static func requestTeamsAccessibilityPermission(prompt: Bool = true) {
+        _ = AXIsProcessTrustedWithOptions([
+            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt
+        ] as CFDictionary)
+    }
+
     private let settingsStore: SettingsStore
     private let piIntegration: PiIntegration
     private let transcriptionComponentInstaller: TranscriptionComponentInstaller
     private let hardwareModel: String
+    private let accessibilityPermissionGranted: () -> Bool
+    private let requestAccessibilityPermission: (Bool) -> Void
 
     init(
         settingsStore: SettingsStore,
         transcriptionComponentInstaller: TranscriptionComponentInstaller,
         hardwareModel: String,
-        piIntegration: PiIntegration = PiIntegration()
+        piIntegration: PiIntegration = PiIntegration(),
+        accessibilityPermissionGranted: @escaping () -> Bool,
+        requestAccessibilityPermission: @escaping (Bool) -> Void
     ) {
         self.settingsStore = settingsStore
         self.transcriptionComponentInstaller = transcriptionComponentInstaller
         self.hardwareModel = hardwareModel
         self.piIntegration = piIntegration
+        self.accessibilityPermissionGranted = accessibilityPermissionGranted
+        self.requestAccessibilityPermission = requestAccessibilityPermission
     }
 
     func refresh(completion: @escaping (DiagnosticsSnapshot) -> Void) {
@@ -44,6 +59,11 @@ final class PermissionDiagnosticsProvider {
                     completion(granted ? "Microphone access is granted." : "Microphone access is missing. Enable it in System Settings > Privacy & Security > Microphone.")
                 }
             }
+        case "teamsAccessibility":
+            requestAccessibilityPermission(true)
+            completion(accessibilityPermissionGranted()
+                ? "Accessibility access is granted for Teams call detection."
+                : "macOS was asked to grant Accessibility access. Enable Stillmatter in System Settings > Privacy & Security > Accessibility, then return here.")
         case "calendar":
             let selection = settingsStore.settings.calendarSourceSelection
             let env = ProcessInfo.processInfo.environment
@@ -132,12 +152,27 @@ final class PermissionDiagnosticsProvider {
     private func permissionItems(notificationAuthorizationStatus: UNAuthorizationStatus) -> [DiagnosticItem] {
         [
             microphoneItem(),
+            teamsAccessibilityItem(),
             calendarItem(),
             notificationItem(notificationAuthorizationStatus),
             directoryItem(id: "vaultAccess", title: "Stillmatter root folder access", url: settingsStore.settings.stillmatterRootURL, feature: "vault-backed workspace", actionTitle: "Test Vault"),
             directoryItem(id: "mediaAccess", title: "Recording media folder access", url: settingsStore.settings.recordingMediaURL, feature: "meeting recording storage", actionTitle: "Test Media"),
             launchAtLoginItem()
         ]
+    }
+
+    private func teamsAccessibilityItem() -> DiagnosticItem {
+        let isGranted = accessibilityPermissionGranted()
+        return DiagnosticItem(
+            id: "teamsAccessibility",
+            title: "Teams call detection",
+            status: isGranted ? .granted : .missing,
+            explanation: isGranted
+                ? "Stillmatter can inspect Teams call controls to start and stop automatic recording."
+                : "Automatic Teams recording needs Accessibility access to recognize the native call controls.",
+            affectedFeatures: isGranted ? [] : ["automatic Teams recording"],
+            actionTitle: isGranted ? nil : "Request Access"
+        )
     }
 
     private func componentItems() -> [DiagnosticItem] {

@@ -28,6 +28,7 @@ final class SettingsFormView: NSView {
     private let onRetryPendingWorkspace: (() -> Void)?
     private var transcriptionComponentObserver: UUID?
     private var settingsObserver: UUID?
+    private var applicationActivationObserver: NSObjectProtocol?
 
     private let rootPathLabel = NSTextField(labelWithString: "Not selected")
     private let mediaPathLabel = NSTextField(labelWithString: "Not selected")
@@ -68,7 +69,9 @@ final class SettingsFormView: NSView {
         settingsStore: SettingsStore,
         transcriptionComponentInstaller: TranscriptionComponentInstaller,
         onRebuildIndex: ((@escaping (Result<Void, Error>) -> Void) -> Void)? = nil,
-        onRetryPendingWorkspace: (() -> Void)? = nil
+        onRetryPendingWorkspace: (() -> Void)? = nil,
+        accessibilityPermissionGranted: @escaping () -> Bool = { PermissionDiagnosticsProvider.isTeamsAccessibilityPermissionGranted() },
+        requestAccessibilityPermission: @escaping (Bool) -> Void = PermissionDiagnosticsProvider.requestTeamsAccessibilityPermission
     ) {
         self.controls = controls
         cancelPendingButton = controls.button("Cancel pending change", identifier: "settings-cancel-workspace")
@@ -84,7 +87,9 @@ final class SettingsFormView: NSView {
         self.diagnosticsProvider = PermissionDiagnosticsProvider(
             settingsStore: settingsStore,
             transcriptionComponentInstaller: transcriptionComponentInstaller,
-            hardwareModel: FasterWhisperRuntimeSupport.deviceName()
+            hardwareModel: FasterWhisperRuntimeSupport.deviceName(),
+            accessibilityPermissionGranted: accessibilityPermissionGranted,
+            requestAccessibilityPermission: requestAccessibilityPermission
         )
         self.onRebuildIndex = onRebuildIndex
         self.onRetryPendingWorkspace = onRetryPendingWorkspace
@@ -98,12 +103,22 @@ final class SettingsFormView: NSView {
         transcriptionComponentObserver = transcriptionComponentInstaller.observe { [weak self] state in
             self?.renderTranscriptionDiagnostic(state)
         }
+        applicationActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshDiagnostics()
+        }
     }
 
     deinit {
         if let settingsObserver { settingsStore.removeObserver(settingsObserver) }
         if let observer = transcriptionComponentObserver {
             transcriptionComponentInstaller.removeObserver(observer)
+        }
+        if let applicationActivationObserver {
+            NotificationCenter.default.removeObserver(applicationActivationObserver)
         }
     }
 
@@ -177,6 +192,7 @@ final class SettingsFormView: NSView {
         stack.addArrangedSubview(diagnosticsSummaryLabel)
         stack.addArrangedSubview(diagnosticsActionLabel)
         stack.addArrangedSubview(diagnosticsRow(id: "microphone", title: "Microphone", buttonTitle: "Test Mic"))
+        stack.addArrangedSubview(diagnosticsRow(id: "teamsAccessibility", title: "Teams call detection", buttonTitle: "Request Access"))
         stack.addArrangedSubview(diagnosticsRow(id: "calendar", title: "Calendar", buttonTitle: "Test Calendar"))
         stack.addArrangedSubview(diagnosticsRow(id: "notifications", title: "Notifications", buttonTitle: "Test Notifications"))
         stack.addArrangedSubview(diagnosticsRow(id: "vaultAccess", title: "Stillmatter root folder access", buttonTitle: "Test Vault"))
@@ -247,6 +263,7 @@ final class SettingsFormView: NSView {
         titleLabel.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
         let statusLabel = GraphiteFocusStatusLabel()
+        statusLabel.setAccessibilityIdentifier("settings-status-\(id)")
         statusLabel.setStatus("Checking", meaning: .informational, colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
         statusLabel.widthAnchor.constraint(equalToConstant: 130).isActive = true
 

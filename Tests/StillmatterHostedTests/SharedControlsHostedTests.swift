@@ -5,6 +5,64 @@ import StillmatterCore
 
 final class SharedControlsHostedTests: XCTestCase {
     @MainActor
+    func testSystemTeamsPermissionAdapterCanReadStatusWithoutOpeningPrompt() throws {
+        let fixture = try ControlsHostedFixture()
+        defer { fixture.cleanup() }
+        let expectedPermission = PermissionDiagnosticsProvider.isTeamsAccessibilityPermissionGranted()
+        PermissionDiagnosticsProvider.requestTeamsAccessibilityPermission(prompt: false)
+        XCTAssertEqual(PermissionDiagnosticsProvider.isTeamsAccessibilityPermissionGranted(), expectedPermission)
+        let settings = SettingsFormView(settingsStore: fixture.store, transcriptionComponentInstaller: fixture.installer)
+        let status: GraphiteFocusStatusLabel = try control("settings-status-teamsAccessibility", in: settings)
+        let loadedStatus = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            status.statusText == "Missing" || status.statusText == "Granted"
+        }, object: nil)
+        wait(for: [loadedStatus], timeout: 5)
+        XCTAssertEqual(status.statusText, expectedPermission ? "Granted" : "Missing")
+    }
+
+    @MainActor
+    func testTeamsAccessibilityStatusRefreshesWhenAppReturnsFromSystemSettings() throws {
+        let fixture = try ControlsHostedFixture()
+        defer { fixture.cleanup() }
+        var accessibilityGranted = false
+        let settings = fixture.settings(accessibilityPermissionGranted: { accessibilityGranted })
+        let status: GraphiteFocusStatusLabel = try control("settings-status-teamsAccessibility", in: settings)
+        let missingStatus = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in status.statusText == "Missing" }, object: nil)
+        wait(for: [missingStatus], timeout: 5)
+        accessibilityGranted = true
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        let grantedStatus = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in status.statusText == "Granted" }, object: nil)
+        wait(for: [grantedStatus], timeout: 5)
+        XCTAssertEqual(status.statusText, "Granted")
+    }
+
+    @MainActor
+    func testTeamsAutomationExplainsDeniedAccessibilityAndRequestsItFromSettings() throws {
+        let fixture = try ControlsHostedFixture()
+        defer { fixture.cleanup() }
+        var accessibilityGranted = false
+        var requestCount = 0
+        let settings = fixture.settings(
+            accessibilityPermissionGranted: { accessibilityGranted },
+            requestAccessibilityPermission: { _ in
+                requestCount += 1
+                accessibilityGranted = true
+            }
+        )
+        let status: GraphiteFocusStatusLabel = try control("settings-status-teamsAccessibility", in: settings)
+        let missingStatus = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in status.statusText == "Missing" }, object: nil)
+        wait(for: [missingStatus], timeout: 5)
+        XCTAssertEqual(status.statusText, "Missing")
+        let request: NSButton = try control("settings-diagnostic-teamsAccessibility", in: settings)
+        XCTAssertEqual(request.title, "Request Access")
+        request.performClick(nil)
+        XCTAssertEqual(requestCount, 1)
+        let grantedStatus = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in status.statusText == "Granted" }, object: nil)
+        wait(for: [grantedStatus], timeout: 5)
+        XCTAssertEqual(status.statusText, "Granted")
+    }
+
+    @MainActor
     func testOneSharedStyleReachesBothRealConsumersAndPreservesTheirState() throws {
         let fixture = try ControlsHostedFixture()
         defer { fixture.cleanup() }
@@ -134,8 +192,13 @@ private final class ControlsHostedFixture {
             teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: { self.settingsOpens += 1 })
     }
 
-    func settings(controls: GraphiteFocusControls = GraphiteFocusControls(), onRetry: (() -> Void)? = nil) -> SettingsFormView {
-        SettingsFormView(controls: controls, settingsStore: store, transcriptionComponentInstaller: installer, onRetryPendingWorkspace: onRetry)
+    func settings(controls: GraphiteFocusControls = GraphiteFocusControls(), onRetry: (() -> Void)? = nil,
+                  accessibilityPermissionGranted: @escaping () -> Bool = { true },
+                  requestAccessibilityPermission: @escaping (Bool) -> Void = { _ in }) -> SettingsFormView {
+        SettingsFormView(controls: controls, settingsStore: store, transcriptionComponentInstaller: installer,
+                         onRetryPendingWorkspace: onRetry,
+                         accessibilityPermissionGranted: accessibilityPermissionGranted,
+                         requestAccessibilityPermission: requestAccessibilityPermission)
     }
 
     func cleanup() {

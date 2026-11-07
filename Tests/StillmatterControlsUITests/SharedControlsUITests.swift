@@ -220,6 +220,23 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertEqual(try effectiveSettings()["launchAtLoginEnabled"] as? Bool, changed["launchAtLoginEnabled"] as? Bool)
     }
 
+    func testTeamsAutomationShowsAccessibilitySetupAndRunsItsPermissionAction() throws {
+        app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "teams-permission"
+        launch()
+        app.buttons["controls-nav-settings"].click()
+        let status = app.staticTexts["settings-status-teamsAccessibility"]
+        let request = app.buttons["settings-diagnostic-teamsAccessibility"]
+        XCTAssertTrue(request.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue((status.value as? String ?? status.label).contains("Missing"))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "automatic Teams recording")).firstMatch.exists)
+        app.popUpButtons["settings-teams-recording"].click()
+        app.menuItems["Record automatically"].click()
+        XCTAssertEqual(try effectiveSettings()["teamsRecordingMode"] as? String, "automatic")
+        request.click()
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue((status.value as? String ?? status.label).contains("Granted"))
+    }
+
     func testUnavailableCaptureIgnoresReturnAndLeavesWorkspaceUntouched() throws {
         app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "unconfigured"
         launch()
