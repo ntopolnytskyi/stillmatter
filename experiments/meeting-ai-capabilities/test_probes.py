@@ -8,6 +8,7 @@ import unittest
 import wave
 
 from scope_probe import measure, write_tone
+from speech_scope_probe import inspect as inspect_speech
 from rpc_probe import ProbeFailure, run_child
 from asr_probe import wer
 
@@ -48,6 +49,16 @@ class ScopeTests(unittest.TestCase):
         write_tone(path, 0, seconds=0)
         with self.assertRaisesRegex(ValueError, 'No retained samples'):
             measure(path)
+
+    def test_speech_diagnostic_never_claims_source_scope_without_manual_phrase_review(self):
+        path = self.root / 'speech.wav'
+        write_tone(path, 997, seconds=.1)
+        result = inspect_speech(path)
+        self.assertIsNone(result['scopePassed'])
+        self.assertTrue(result['manualSpeechConfirmationRequired'])
+        self.assertGreater(result['channels'][0]['peak997HzAmplitude'], .02)
+        write_tone(path, 0, seconds=.1)
+        self.assertLess(inspect_speech(path)['channels'][0]['peak997HzAmplitude'], .001)
 
     def test_cli_returns_failure_for_unrelated_audio(self):
         path = self.root / 'other.wav'

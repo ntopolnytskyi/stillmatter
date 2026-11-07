@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+import CoreMedia
 import XCTest
 import StillmatterCore
 @testable import StillmatterHostedTestHost
@@ -47,6 +49,184 @@ final class ControlBehaviorRegressionTests: XCTestCase {
                 finalURL: existingSystemOutput
             ))
         }
+    }
+
+    func testOfflineMicCaptureKeepsConsecutiveSyntheticSessionsInTheirOwnFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-offline-mic-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = AVAudioEngine()
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let signalLock = NSLock()
+        var signal: Float = 0.125
+        let source = AVAudioSourceNode(format: format) { _, _, frames, buffers in
+            signalLock.lock()
+            let sample = signal
+            signalLock.unlock()
+            for buffer in UnsafeMutableAudioBufferListPointer(buffers) {
+                buffer.mData?.initializeMemory(as: Float.self, repeating: sample, count: Int(frames))
+            }
+            return noErr
+        }
+        let mixer = AVAudioMixerNode()
+        engine.attach(source)
+        engine.attach(mixer)
+        engine.connect(source, to: mixer, format: format)
+        engine.connect(mixer, to: engine.mainMixerNode, format: format)
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4_096)
+        let recorder = MacMicTrackRecorder(engine: engine, captureInput: { (mixer, mixer.outputFormat(forBus: 0)) })
+        let rendered = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: 4_096))
+
+        func capture(_ name: String, amplitude: Float) throws -> URL {
+            signalLock.lock()
+            signal = amplitude
+            signalLock.unlock()
+            let url = root.appendingPathComponent("\(name).caf")
+            let started = try recorder.startWritingRecovery(to: url)
+            XCTAssertEqual(started.sampleRate, 48_000)
+            for _ in 0..<10 { _ = try engine.renderOffline(4_096, to: rendered) }
+            let deadline = Date().addingTimeInterval(3)
+            while Date() < deadline {
+                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+                if size > 4_096 { break }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            let released = try recorder.stopWritingRecovery(to: url)
+            XCTAssertGreaterThan(released.durationSeconds, 0, "Offline audio must actually reach the recorder's tap")
+            XCTAssertGreaterThan(try AVAudioFile(forReading: url).length, 0)
+            return url
+        }
+        let first = try capture("A", amplitude: 0.125)
+        let second = try capture("B", amplitude: 0.5)
+        for (url, expected) in [(first, Float(0.125)), (second, Float(0.5))] {
+            let file = try AVAudioFile(forReading: url)
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4_096))
+            try file.read(into: pcm)
+            XCTAssertGreaterThan(pcm.frameLength, 0)
+            let sample = try XCTUnwrap(pcm.floatChannelData?[0].pointee)
+            XCTAssertEqual(sample, expected, accuracy: 0.01, "A's frames must never be written to B's recovery file")
+        }
+    }
+
+    @available(macOS 13.0, *)
+    func testSystemRecorderRejectsLateASamplesAndErrorsDuringB() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-system-stream-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let factory = SyntheticSystemAudioStreamFactory()
+        let recorder = MacSystemAudioTrackRecorder(streamFactory: factory)
+        let first = root.appendingPathComponent("A.caf")
+        let second = root.appendingPathComponent("B.caf")
+        _ = try recorder.startWritingRecovery(to: first, scope: .teamsApplication)
+        let streamA = try XCTUnwrap(factory.streams.last)
+        streamA.deliver(try syntheticSystemSample(0.125))
+        XCTAssertGreaterThan(try recorder.stopWritingRecovery(to: first).durationSeconds, 0)
+
+        _ = try recorder.startWritingRecovery(to: second, scope: .allSystemAudio)
+        let streamB = try XCTUnwrap(factory.streams.last)
+        streamA.deliver(try syntheticSystemSample(0.875)) // Delayed A callback must never enter B.
+        streamA.fail(CocoaError(.fileReadUnknown))
+        streamB.deliver(try syntheticSystemSample(0.5))
+        XCTAssertGreaterThan(try recorder.stopWritingRecovery(to: second).durationSeconds, 0)
+        XCTAssertEqual(factory.scopes, [.teamsApplication, .allSystemAudio])
+        for (url, expected) in [(first, Float(0.125)), (second, Float(0.5))] {
+            let file = try AVAudioFile(forReading: url)
+            XCTAssertEqual(file.length, 1_024, "A's delayed frames must not change B's retained sample count")
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1_024))
+            try file.read(into: pcm)
+            XCTAssertEqual(try XCTUnwrap(pcm.floatChannelData?[0].pointee), expected, accuracy: 0.01)
+        }
+    }
+
+    @available(macOS 13.0, *)
+    func testSystemRecorderRefusesBUntilFailedStopCanBeConfirmed() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-uncertain-stop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let factory = SyntheticSystemAudioStreamFactory()
+        let recorder = MacSystemAudioTrackRecorder(streamFactory: factory)
+        let first = root.appendingPathComponent("A.caf")
+        _ = try recorder.startWritingRecovery(to: first, scope: .teamsApplication)
+        let streamA = try XCTUnwrap(factory.streams.last)
+        streamA.deliver(try syntheticSystemSample(0.125))
+        streamA.stopError = CocoaError(.fileWriteUnknown)
+
+        XCTAssertThrowsError(try recorder.stopWritingRecovery(to: first))
+        XCTAssertThrowsError(try recorder.startWritingRecovery(to: root.appendingPathComponent("B.caf"), scope: .allSystemAudio))
+        XCTAssertEqual(factory.scopes, [.teamsApplication], "B must not bypass an unconfirmed OS stop")
+        streamA.stopError = nil
+        XCTAssertGreaterThan(try recorder.stopWritingRecovery(to: first).durationSeconds, 0)
+        _ = try recorder.startWritingRecovery(to: root.appendingPathComponent("B.caf"), scope: .allSystemAudio)
+        XCTAssertEqual(factory.scopes, [.teamsApplication, .allSystemAudio])
+        _ = try recorder.stopWritingRecovery(to: root.appendingPathComponent("B.caf"))
+    }
+
+    @available(macOS 13.0, *)
+    func testUnavailableTeamsStreamNeverFallsBackAndFailedStartCanRetry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-stream-start-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let factory = SyntheticSystemAudioStreamFactory()
+        let recorder = MacSystemAudioTrackRecorder(streamFactory: factory)
+        let teamsFile = root.appendingPathComponent("teams.caf")
+        factory.makeError = CocoaError(.fileNoSuchFile)
+        XCTAssertThrowsError(try recorder.startWritingRecovery(to: teamsFile, scope: .teamsApplication))
+        XCTAssertEqual(factory.scopes, [.teamsApplication])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: teamsFile.path))
+
+        factory.makeError = nil
+        factory.nextStartError = CocoaError(.fileWriteUnknown)
+        XCTAssertThrowsError(try recorder.startWritingRecovery(to: teamsFile, scope: .teamsApplication))
+        factory.nextStartError = nil
+        let manual = root.appendingPathComponent("manual.caf")
+        _ = try recorder.startWritingRecovery(to: manual, scope: .allSystemAudio)
+        XCTAssertEqual(factory.scopes, [.teamsApplication, .teamsApplication, .allSystemAudio])
+        _ = try recorder.stopWritingRecovery(to: manual)
+    }
+
+    @available(macOS 13.0, *)
+    func testFailedStartMustConfirmStopBeforeAnotherSession() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-uncertain-start-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let factory = SyntheticSystemAudioStreamFactory()
+        let recorder = MacSystemAudioTrackRecorder(streamFactory: factory)
+        factory.nextStartError = CocoaError(.fileWriteUnknown)
+        _ = try? recorder.startWritingRecovery(to: root.appendingPathComponent("A.caf"), scope: .teamsApplication)
+        let streamA = try XCTUnwrap(factory.streams.last)
+        XCTAssertEqual(streamA.stopCount, 1, "A failed start must attempt to release the OS stream")
+
+        factory.nextStartError = CocoaError(.fileWriteUnknown)
+        factory.nextStopError = CocoaError(.fileReadUnknown)
+        XCTAssertThrowsError(try recorder.startWritingRecovery(to: root.appendingPathComponent("uncertain.caf"), scope: .teamsApplication))
+        let uncertainStream = try XCTUnwrap(factory.streams.last)
+        XCTAssertEqual(uncertainStream.stopCount, 1)
+        factory.nextStartError = nil
+        factory.nextStopError = nil
+        XCTAssertThrowsError(try recorder.startWritingRecovery(to: root.appendingPathComponent("B.caf"), scope: .allSystemAudio))
+        XCTAssertEqual(factory.streams.count, 2, "B must not start while A's release is unconfirmed")
+        uncertainStream.stopError = nil
+        _ = try recorder.stopWritingRecovery(to: root.appendingPathComponent("uncertain.caf"))
+        _ = try recorder.startWritingRecovery(to: root.appendingPathComponent("B.caf"), scope: .allSystemAudio)
+        _ = try recorder.stopWritingRecovery(to: root.appendingPathComponent("B.caf"))
+    }
+
+    @available(macOS 13.0, *)
+    func testCurrentStreamFailureIsReportedAfterSafeStopWithoutLosingRecoveryAudio() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-stream-error-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let factory = SyntheticSystemAudioStreamFactory()
+        let recorder = MacSystemAudioTrackRecorder(streamFactory: factory)
+        let first = root.appendingPathComponent("failed.caf")
+        _ = try recorder.startWritingRecovery(to: first, scope: .teamsApplication)
+        let stream = try XCTUnwrap(factory.streams.last)
+        stream.deliver(try syntheticSystemSample(0.25))
+        stream.fail(CocoaError(.fileReadUnknown))
+        XCTAssertThrowsError(try recorder.stopWritingRecovery(to: first))
+        XCTAssertEqual(try AVAudioFile(forReading: first).length, 1_024)
+        _ = try recorder.startWritingRecovery(to: root.appendingPathComponent("next.caf"), scope: .allSystemAudio)
+        _ = try recorder.stopWritingRecovery(to: root.appendingPathComponent("next.caf"))
     }
 
     @MainActor
@@ -189,6 +369,79 @@ final class ControlBehaviorRegressionTests: XCTestCase {
     private func descendants(of view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + descendants(of: $0) }
     }
+}
+
+@available(macOS 13.0, *)
+private final class SyntheticSystemAudioStreamFactory: SystemAudioStreamCreating {
+    private(set) var scopes: [CaptureAudioScope] = []
+    private(set) var streams: [SyntheticSystemAudioStream] = []
+    var makeError: Error?
+    var nextStartError: Error?
+    var nextStopError: Error?
+
+    func make(scope: CaptureAudioScope, sampleQueue: DispatchQueue,
+              onSample: @escaping (CMSampleBuffer) -> Void,
+              onError: @escaping (Error) -> Void) throws -> SystemAudioInputStream {
+        scopes.append(scope)
+        if let makeError { throw makeError }
+        let stream = SyntheticSystemAudioStream(queue: sampleQueue, onSample: onSample, onError: onError)
+        stream.startError = nextStartError
+        stream.stopError = nextStopError
+        streams.append(stream)
+        return stream
+    }
+}
+
+@available(macOS 13.0, *)
+private final class SyntheticSystemAudioStream: SystemAudioInputStream {
+    private let queue: DispatchQueue
+    private let onSample: (CMSampleBuffer) -> Void
+    private let onError: (Error) -> Void
+    var startError: Error?
+    var stopError: Error?
+    private(set) var stopCount = 0
+
+    init(queue: DispatchQueue, onSample: @escaping (CMSampleBuffer) -> Void, onError: @escaping (Error) -> Void) {
+        self.queue = queue
+        self.onSample = onSample
+        self.onError = onError
+    }
+
+    func start() throws { if let startError { throw startError } }
+    func stop() throws {
+        stopCount += 1
+        if let stopError { throw stopError }
+    }
+    func deliver(_ buffer: CMSampleBuffer) { queue.sync { onSample(buffer) } }
+    func fail(_ error: Error) { onError(error) }
+}
+
+@available(macOS 13.0, *)
+private func syntheticSystemSample(_ value: Float) throws -> CMSampleBuffer {
+    let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000,
+        channels: 1, interleaved: true))
+    var asbd = format.streamDescription.pointee
+    var description: CMAudioFormatDescription?
+    XCTAssertEqual(CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &asbd,
+        layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil,
+        formatDescriptionOut: &description), noErr)
+    let frames = [Float](repeating: value, count: 1_024)
+    var block: CMBlockBuffer?
+    XCTAssertEqual(CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+        blockLength: frames.count * MemoryLayout<Float>.size, blockAllocator: kCFAllocatorDefault,
+        customBlockSource: nil, offsetToData: 0, dataLength: frames.count * MemoryLayout<Float>.size,
+        flags: 0, blockBufferOut: &block), noErr)
+    let bytesStatus = frames.withUnsafeBytes { bytes in
+        CMBlockBufferReplaceDataBytes(with: bytes.baseAddress!, blockBuffer: block!,
+            offsetIntoDestination: 0, dataLength: bytes.count)
+    }
+    XCTAssertEqual(bytesStatus, noErr)
+    var buffer: CMSampleBuffer?
+    XCTAssertEqual(CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: kCFAllocatorDefault,
+        dataBuffer: try XCTUnwrap(block), formatDescription: try XCTUnwrap(description), sampleCount: frames.count,
+        presentationTimeStamp: CMTime(value: 0, timescale: 48_000), packetDescriptions: nil,
+        sampleBufferOut: &buffer), noErr)
+    return try XCTUnwrap(buffer)
 }
 
 private final class PausedControlBundleFinalizer: RecordingBundleFinalizing {

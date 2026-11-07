@@ -28,6 +28,7 @@ public enum CaptureEvent: Equatable {
 public enum CaptureError: Error, Equatable, CustomStringConvertible {
     case invalidTransition(state: CaptureState, event: CaptureEvent)
     case noActiveSession
+    case sourceStopUnconfirmed
     case emptyLiveNote
     case preflightFailed(AudioCapturePreflightReport)
 
@@ -37,6 +38,8 @@ public enum CaptureError: Error, Equatable, CustomStringConvertible {
             return "Capture cannot apply \(event) while \(state.rawValue)"
         case .noActiveSession:
             return "There is no active capture session"
+        case .sourceStopUnconfirmed:
+            return "The previous audio source has not been confirmed stopped; restart recovery before another capture"
         case .emptyLiveNote:
             return "Live notes cannot be empty"
         case let .preflightFailed(report):
@@ -84,13 +87,16 @@ public struct MeetingCaptureSession: Equatable {
     public let id: String
     public let title: String
     public let meetingRelativePath: String
+    public let source: CaptureAudioSource
     public let startedAt: Date
     public var endedAt: Date?
 
-    public init(id: String, title: String, meetingRelativePath: String, startedAt: Date, endedAt: Date? = nil) {
+    public init(id: String, title: String, meetingRelativePath: String, source: CaptureAudioSource = .teams,
+                startedAt: Date, endedAt: Date? = nil) {
         self.id = id
         self.title = title
         self.meetingRelativePath = meetingRelativePath
+        self.source = source
         self.startedAt = startedAt
         self.endedAt = endedAt
     }
@@ -128,6 +134,7 @@ public struct CaptureSnapshot: Equatable {
     public let state: CaptureState
     public let meetingTitle: String?
     public let meetingRelativePath: String?
+    public let source: CaptureAudioSource?
     public let elapsedSeconds: Int
     public let failureMessage: String?
     public let processingStatus: [String]
@@ -142,6 +149,7 @@ public struct CaptureSnapshot: Equatable {
         state: CaptureState,
         meetingTitle: String?,
         meetingRelativePath: String?,
+        source: CaptureAudioSource? = nil,
         elapsedSeconds: Int,
         failureMessage: String?,
         processingStatus: [String],
@@ -155,6 +163,7 @@ public struct CaptureSnapshot: Equatable {
         self.state = state
         self.meetingTitle = meetingTitle
         self.meetingRelativePath = meetingRelativePath
+        self.source = source
         self.elapsedSeconds = elapsedSeconds
         self.failureMessage = failureMessage
         self.processingStatus = processingStatus
@@ -182,6 +191,7 @@ public final class MeetingCaptureService {
     private let timeZone: TimeZone
     private let makeID: () -> String
     private var machine = CaptureStateMachine()
+    private var sourceStopUnconfirmed = false
     private var session: MeetingCaptureSession?
     private var mostRecentSession: MeetingCaptureSession?
     private var observers: [(CaptureSnapshot) -> Void] = []
@@ -222,6 +232,10 @@ public final class MeetingCaptureService {
         self.makeID = makeID
     }
 
+    public var canStartCapture: Bool {
+        !sourceStopUnconfirmed && micRecorder?.activeMetadata == nil && systemAudioRecorder?.activeMetadata == nil
+    }
+
     public var snapshot: CaptureSnapshot {
         let visibleSession = session ?? mostRecentSession
         let elapsed = visibleSession.map { max(0, Int(($0.endedAt ?? now()).timeIntervalSince($0.startedAt))) } ?? 0
@@ -229,6 +243,7 @@ public final class MeetingCaptureService {
             state: machine.state,
             meetingTitle: visibleSession?.title,
             meetingRelativePath: visibleSession?.meetingRelativePath,
+            source: visibleSession?.source,
             elapsedSeconds: elapsed,
             failureMessage: machine.failureMessage,
             processingStatus: processingStatus,
@@ -247,7 +262,9 @@ public final class MeetingCaptureService {
     }
 
     @discardableResult
-    public func startManual(titleHint: String? = nil) throws -> MeetingCaptureSession {
+    public func startManual(titleHint: String? = nil, source: CaptureAudioSource = .teams) throws -> MeetingCaptureSession {
+        guard !sourceStopUnconfirmed, micRecorder?.activeMetadata == nil,
+              systemAudioRecorder?.activeMetadata == nil else { throw CaptureError.sourceStopUnconfirmed }
         try transition(.startRequested)
         let report = preflight()
         preflightReport = report
@@ -269,6 +286,7 @@ public final class MeetingCaptureService {
                 id: makeID(),
                 title: title,
                 meetingRelativePath: relativePath,
+                source: source,
                 startedAt: startedAt
             )
             let directory = (relativePath as NSString).deletingLastPathComponent
@@ -297,9 +315,10 @@ public final class MeetingCaptureService {
                     systemAudioRecording = try systemAudioRecorder.start(
                         sessionID: newSession.id,
                         meetingRelativePath: newSession.meetingRelativePath,
-                        startedAt: startedAt
+                        startedAt: startedAt,
+                        source: source
                     )
-                    processingStatus.append("Separate system-audio recovery/preview recording active")
+                    processingStatus.append("\(source.scope == .teamsApplication ? "Teams application" : "All system") audio recovery/preview recording active")
                 } catch {
                     systemAudioRecording = systemAudioRecorder.latestMetadata
                     processingStatus.append("System audio unavailable; capture is continuing microphone-only: \(error)")
@@ -400,7 +419,8 @@ public final class MeetingCaptureService {
             do {
                 releasedSystem = try systemAudioRecorder?.releaseForFinalization(endedAt: endedAt)
             } catch {
-                releasedSystem = systemAudioRecorder?.latestMetadata ?? releasedSystem
+                // A failed stop can leave the OS stream live. Never offer B until recovery.
+                throw error
             }
         }
 
@@ -485,6 +505,7 @@ public final class MeetingCaptureService {
 
     private func recordCaptureReleaseFailure(_ error: Error) {
         guard var failedSession = session else { return }
+        sourceStopUnconfirmed = true
         failedSession.endedAt = failedSession.endedAt ?? now()
         let message = "Capture input could not be confirmed stopped; recovery evidence is retained: \(error)"
         try? updateFinalizationFailure(relativePath: failedSession.meetingRelativePath, message: message)
@@ -538,7 +559,7 @@ public final class MeetingCaptureService {
     public func titleReviewAccepted(meetingRelativePath: String, title: String, newPath: String) {
         guard let current = session, current.meetingRelativePath == meetingRelativePath else { return }
         session = MeetingCaptureSession(
-            id: current.id, title: title, meetingRelativePath: newPath,
+            id: current.id, title: title, meetingRelativePath: newPath, source: current.source,
             startedAt: current.startedAt, endedAt: current.endedAt
         )
         notifyObservers()
@@ -774,6 +795,8 @@ public final class MeetingCaptureService {
         title: \(session.title)
         started_at: \(timestamp)
         capture_session_id: \(session.id)
+        meeting_source: \(session.source.rawValue)
+        audio_scope: \(session.source.scope.rawValue)
         capture: placeholder
         ---
         # \(session.title)

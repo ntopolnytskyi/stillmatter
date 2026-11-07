@@ -1,5 +1,18 @@
 import Foundation
 
+public enum CaptureAudioSource: String, Codable, CaseIterable {
+    case teams
+    case zoom
+    case meet
+
+    public var scope: CaptureAudioScope { self == .teams ? .teamsApplication : .allSystemAudio }
+}
+
+public enum CaptureAudioScope: String, Codable {
+    case teamsApplication
+    case allSystemAudio
+}
+
 public enum SystemAudioTrackRecordingStatus: String, Codable, Equatable {
     case recording
     case finalizing
@@ -35,6 +48,8 @@ public struct SystemAudioTrackRecordingMetadata: Codable, Equatable {
     public let schemaVersion: Int
     public let captureSessionID: String
     public let meetingRelativePath: String
+    public let source: CaptureAudioSource?
+    public let scope: CaptureAudioScope?
     public let recoveryFilePath: String
     public let finalFilePath: String
     public let metadataFilePath: String
@@ -51,6 +66,8 @@ public struct SystemAudioTrackRecordingMetadata: Codable, Equatable {
     public init(
         captureSessionID: String,
         meetingRelativePath: String,
+        source: CaptureAudioSource? = nil,
+        scope: CaptureAudioScope? = nil,
         recoveryFilePath: String,
         finalFilePath: String,
         metadataFilePath: String,
@@ -66,6 +83,8 @@ public struct SystemAudioTrackRecordingMetadata: Codable, Equatable {
         schemaVersion = 1
         self.captureSessionID = captureSessionID
         self.meetingRelativePath = meetingRelativePath
+        self.source = source
+        self.scope = scope
         self.recoveryFilePath = recoveryFilePath
         self.finalFilePath = finalFilePath
         self.metadataFilePath = metadataFilePath
@@ -81,7 +100,7 @@ public struct SystemAudioTrackRecordingMetadata: Codable, Equatable {
 }
 
 public protocol SystemAudioTrackRecordingBackend: AnyObject {
-    func startWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo
+    func startWritingRecovery(to recoveryURL: URL, scope: CaptureAudioScope) throws -> SystemAudioTrackTechnicalInfo
     func stopAndFinalize(recoveryURL: URL, finalURL: URL) throws -> SystemAudioTrackTechnicalInfo
     func recover(recoveryURL: URL, finalURL: URL) throws -> SystemAudioTrackTechnicalInfo
 }
@@ -95,7 +114,8 @@ public protocol SystemAudioCaptureReleasingBackend: SystemAudioTrackRecordingBac
 public protocol SystemAudioTrackRecordingManaging: AnyObject {
     var activeMetadata: SystemAudioTrackRecordingMetadata? { get }
     var latestMetadata: SystemAudioTrackRecordingMetadata? { get }
-    func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> SystemAudioTrackRecordingMetadata
+    func start(sessionID: String, meetingRelativePath: String, startedAt: Date,
+               source: CaptureAudioSource) throws -> SystemAudioTrackRecordingMetadata
     func stop(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata
     func releaseForFinalization(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata
     func finalizeReleased(_ metadata: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata
@@ -149,7 +169,8 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
     }
 
     @discardableResult
-    public func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+    public func start(sessionID: String, meetingRelativePath: String, startedAt: Date,
+                      source: CaptureAudioSource = .teams) throws -> SystemAudioTrackRecordingMetadata {
         guard activeMetadata == nil else { throw SystemAudioTrackRecordingError.alreadyRecording }
         let directory = mediaRootURL
             .appendingPathComponent("Stillmatter Recordings", isDirectory: true)
@@ -161,6 +182,8 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
         var metadata = SystemAudioTrackRecordingMetadata(
             captureSessionID: sessionID,
             meetingRelativePath: meetingRelativePath,
+            source: source,
+            scope: source.scope,
             recoveryFilePath: recoveryURL.path,
             finalFilePath: finalURL.path,
             metadataFilePath: metadataURL.path,
@@ -171,7 +194,7 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
         activeMetadata = metadata
         latestMetadata = metadata
         do {
-            let info = try backend.startWritingRecovery(to: recoveryURL)
+            let info = try backend.startWritingRecovery(to: recoveryURL, scope: source.scope)
             apply(info, to: &metadata)
             metadata.diagnostics.append("Separate system-audio capture started.")
             try write(metadata)

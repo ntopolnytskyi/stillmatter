@@ -45,7 +45,12 @@ public final class CaptureSessionRuntime {
     }
 
     private var isActive: Bool {
-        guard let state = service?.snapshot.state else { return false }
+        guard let snapshot = service?.snapshot else { return false }
+        if snapshot.priorCaptureFinalizations.contains(where: {
+            if case .finalizing = $0.state { return true }
+            return false
+        }) { return true }
+        let state = snapshot.state
         return state == .starting || state == .recording || state == .stopping || state == .finalizing
     }
 }

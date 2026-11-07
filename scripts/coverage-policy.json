@@ -73,6 +73,10 @@
       "reason": "Validation-only executable declarations are guarded by DEBUG or STILLMATTER_NATIVE_PROBES, neither defined by shipping release configuration.",
       "sha256": "843df77932240bacf72aa07ea278b569c77160b085e74c00406bf319278d7a6c"
     },
+    "Sources/Stillmatter/App/Validation/TeamsCallAudioProbe.swift": {
+      "reason": "Disposable synthetic-call validation CLI is entirely guarded by STILLMATTER_CAPTURE_PROBE, absent from the shipping Release build; its separate signed probe must not count as shipped app coverage.",
+      "sha256": "c4df2f15061f5e2b08e171c8d0fd24b13d7f97dc6c1c917acdc0b595d2d8cd99"
+    },
     "Sources/Stillmatter/App/Validation/Task05NativeFixture.swift": {
       "reason": "Validation-only executable declarations are guarded by DEBUG or STILLMATTER_NATIVE_PROBES, neither defined by shipping release configuration.",
       "sha256": "f28025609f9e1e64d99a608d80761c7a761d24292f98cf98bd383cde24afd2c0"

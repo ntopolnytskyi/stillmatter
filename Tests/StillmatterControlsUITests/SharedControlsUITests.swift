@@ -48,6 +48,29 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
     }
 
+    func testManualSourceShowsActualScopeAndPersistsMeetWithoutChangingMicrophone() throws {
+        launch()
+        let source = app.popUpButtons["recording-source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10))
+        let scope = app.staticTexts["recording-audio-scope"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue((scope.value as? String ?? scope.label).contains("Teams application audio only"), scope.debugDescription)
+        source.click()
+        app.menuItems["Zoom"].click()
+        XCTAssertTrue((scope.value as? String ?? scope.label).contains("ALL SYSTEM AUDIO"), scope.debugDescription)
+        source.click()
+        app.menuItems["Google Meet"].click()
+        XCTAssertTrue((scope.value as? String ?? scope.label).contains("not Zoom-only or Meet-tab-only"), scope.debugDescription)
+        app.buttons["recording-start"].click()
+        XCTAssertFalse(source.isEnabled)
+        XCTAssertTrue((scope.value as? String ?? scope.label).contains("Recording ALL SYSTEM AUDIO"), scope.debugDescription)
+        let markdown = try meetingText()
+        XCTAssertTrue(markdown.contains("meeting_source: meet"))
+        XCTAssertTrue(markdown.contains("audio_scope: allSystemAudio"))
+        app.buttons["recording-stop"].click()
+        XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
+    }
+
     func testNextCaptureStartsBeforePriorSessionFinalizationAndKeepsNotesOwned() throws {
         app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "overlap"
         launch()

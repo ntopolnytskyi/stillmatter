@@ -223,6 +223,29 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertThrowsError(try service.appendActionItem("action"))
     }
 
+    func testCorruptDoorwayOnStopRetainsOriginalBytesAndReleasedAudioForRecovery() throws {
+        let fixture = try CaptureFixture()
+        let recorder = SpyMicRecorder(mediaRoot: fixture.root.appendingPathComponent("Media"))
+        let service = fixture.service(micRecorder: recorder)
+        let first = try service.startManual(titleHint: "Session A")
+        let doorway = fixture.workspaceRoot.appendingPathComponent(first.meetingRelativePath)
+        let invalidMarkdown = Data([0xFF, 0xFE])
+        try invalidMarkdown.write(to: doorway)
+
+        XCTAssertThrowsError(try service.stopManual())
+
+        XCTAssertEqual(try Data(contentsOf: doorway), invalidMarkdown)
+        XCTAssertEqual(service.snapshot.state, .idle, "The source stopped even though the doorway cannot be updated")
+        XCTAssertEqual(service.snapshot.priorCaptureFinalizations.map(\.sessionID), [first.id])
+        guard case .failed = service.snapshot.priorCaptureFinalizations[0].state else {
+            return XCTFail("The first Meeting's finalization failure must remain visible")
+        }
+        let recovery = fixture.root.appendingPathComponent("Media/Stillmatter Recordings/\(first.id)/mic-recovery.caf")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recovery.path))
+        let second = try service.startManual(titleHint: "Session B")
+        XCTAssertNotEqual(second.meetingRelativePath, first.meetingRelativePath)
+    }
+
     func testMicrophoneInputReleaseFailureLeavesCaptureRecoverableAndOutOfStopping() throws {
         let fixture = try CaptureFixture()
         let recorder = SpyMicRecorder(mediaRoot: fixture.appSupportRoot)
@@ -305,6 +328,21 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("mic-recording.json"))
     }
 
+    func testManualMeetSelectionPersistsAllSystemScopeWithoutChangingMicrophone() throws {
+        let fixture = try CaptureFixture()
+        let mic = SpyMicRecorder()
+        let system = SpySystemAudioRecorder()
+        let service = fixture.service(micRecorder: mic, systemAudioRecorder: system)
+        let session = try service.startManual(titleHint: "Meet", source: .meet)
+        XCTAssertEqual(service.snapshot.source, .meet)
+        XCTAssertEqual(mic.startSessionID, session.id)
+        XCTAssertEqual(service.snapshot.systemAudioRecording?.scope, .allSystemAudio)
+        let markdown = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(session.meetingRelativePath))
+        XCTAssertTrue(markdown.contains("meeting_source: meet"))
+        XCTAssertTrue(markdown.contains("audio_scope: allSystemAudio"))
+        _ = try service.stopManual()
+    }
+
     func testSystemAudioFailureDegradesCaptureWhileMicrophoneStillStartsAndFinalizes() throws {
         let fixture = try CaptureFixture()
         let micRecorder = SpyMicRecorder()
@@ -328,7 +366,7 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("system-recording.json"))
     }
 
-    func testSystemAudioFinalizationFailureDoesNotPreventMicrophoneFinalization() throws {
+    func testUnconfirmedSystemStopPreventsAnotherCaptureAndRetainsFailureEvidence() throws {
         let fixture = try CaptureFixture()
         let micRecorder = SpyMicRecorder()
         let systemRecorder = SpySystemAudioRecorder()
@@ -336,14 +374,16 @@ final class MeetingCaptureServiceTests: XCTestCase {
         let service = fixture.service(micRecorder: micRecorder, systemAudioRecorder: systemRecorder)
         let session = try service.startManual()
 
-        _ = try service.stopManual()
-
-        XCTAssertEqual(service.snapshot.state, .idle)
-        XCTAssertEqual(service.snapshot.micRecording?.status, .completed)
+        XCTAssertThrowsError(try service.stopManual())
+        XCTAssertEqual(micRecorder.stopCalls, 1)
+        XCTAssertEqual(service.snapshot.state, .failed)
         XCTAssertEqual(service.snapshot.systemAudioRecording?.status, .failed)
-        XCTAssertTrue(service.snapshot.processingStatus.contains { $0.contains("microphone-only capture retained") })
+        XCTAssertThrowsError(try service.startManual()) { error in
+            XCTAssertEqual(error as? CaptureError, .sourceStopUnconfirmed)
+            XCTAssertTrue(String(describing: error).contains("previous audio source has not been confirmed stopped"))
+        }
         let markdown = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(session.meetingRelativePath))
-        XCTAssertTrue(markdown.contains("System audio unavailable"))
+        XCTAssertTrue(markdown.contains("Capture input could not be confirmed stopped"))
     }
 
     func testSeparateSystemAudioTrackStartsStopsAndIsLinkedFromMeeting() throws {
@@ -463,6 +503,44 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertEqual(machine.state, .recovered)
         try machine.apply(.reset)
         XCTAssertEqual(machine.state, .idle)
+    }
+
+    func testLateTitleReviewForPriorMeetingCannotRenameCurrentCapture() throws {
+        let fixture = try CaptureFixture()
+        let service = fixture.service()
+        let first = try service.startManual(titleHint: "Session A")
+        _ = try service.stopManual()
+        let second = try service.startManual(titleHint: "Session B")
+
+        service.titleReviewAccepted(meetingRelativePath: first.meetingRelativePath,
+            title: "Renamed A", newPath: "Meetings/2026/09/16/renamed-a/meeting.md")
+        try service.appendLiveNote("B note after A's late title review")
+
+        XCTAssertEqual(service.snapshot.meetingRelativePath, second.meetingRelativePath)
+        XCTAssertEqual(service.snapshot.meetingTitle, second.title)
+        let secondMarkdown = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(second.meetingRelativePath))
+        XCTAssertTrue(secondMarkdown.contains("B note after A's late title review"))
+        let firstMarkdown = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(first.meetingRelativePath))
+        XCTAssertFalse(firstMarkdown.contains("B note after A's late title review"))
+    }
+
+    func testAcceptedTitleReviewFollowsRenamedActiveMeetingForSubsequentNotes() throws {
+        let fixture = try CaptureFixture()
+        let service = fixture.service()
+        let session = try service.startManual(titleHint: "Original")
+        let renamedPath = session.meetingRelativePath.replacingOccurrences(of: "original/meeting.md", with: "renamed/meeting.md")
+        let oldFolder = fixture.workspaceRoot.appendingPathComponent(session.meetingRelativePath).deletingLastPathComponent()
+        let newFolder = fixture.workspaceRoot.appendingPathComponent(renamedPath).deletingLastPathComponent()
+        try FileManager.default.moveItem(at: oldFolder, to: newFolder)
+
+        service.titleReviewAccepted(meetingRelativePath: session.meetingRelativePath,
+            title: "Renamed", newPath: renamedPath)
+        try service.appendLiveNote("Note after accepted rename")
+
+        XCTAssertEqual(service.snapshot.meetingTitle, "Renamed")
+        XCTAssertEqual(service.snapshot.meetingRelativePath, renamedPath)
+        XCTAssertTrue(try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(renamedPath))
+            .contains("Note after accepted rename"))
     }
 
     func testNextCaptureStartsWhilePriorBundleFinalizationIsHeldAndLateCallbacksStayOwned() throws {
@@ -660,7 +738,8 @@ private final class SpySystemAudioRecorder: SystemAudioTrackRecordingManaging {
         self.mediaRoot = mediaRoot
     }
 
-    func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+    func start(sessionID: String, meetingRelativePath: String, startedAt: Date,
+               source: CaptureAudioSource) throws -> SystemAudioTrackRecordingMetadata {
         startCalls += 1
         let directory = mediaRoot?.appendingPathComponent("Stillmatter Recordings/\(sessionID)", isDirectory: true)
         if let directory = directory {
@@ -671,6 +750,7 @@ private final class SpySystemAudioRecorder: SystemAudioTrackRecordingManaging {
         var metadata = SystemAudioTrackRecordingMetadata(
             captureSessionID: sessionID,
             meetingRelativePath: meetingRelativePath,
+            source: source, scope: source.scope,
             recoveryFilePath: directory?.appendingPathComponent("system-recovery.caf").path ?? "/media/\(sessionID)/system-recovery.caf",
             finalFilePath: directory?.appendingPathComponent("system.m4a").path ?? "/media/\(sessionID)/system.m4a",
             metadataFilePath: directory?.appendingPathComponent("system-recording.json").path ?? "/media/\(sessionID)/system-recording.json",

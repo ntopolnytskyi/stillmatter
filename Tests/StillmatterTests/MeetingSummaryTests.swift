@@ -133,17 +133,23 @@ final class MeetingSummaryTests: XCTestCase {
         _ = try store.enqueue(id: "A", manifest: manifest)
         _ = try store.enqueue(id: "B", manifest: manifest)
         let scheduler = JobScheduler(store: store, executor: executor, workspaceRootURL: fixture.workspaceURL,
-            executionTimeout: 0.15)
+            executionTimeout: 1)
         defer { scheduler.stop() }
         scheduler.start()
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(12)
         while Date() < deadline, (try store.job(id: "A")?.status != .failed || store.job(id: "B")?.status != .succeeded) {
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
         }
 
-        XCTAssertEqual(try store.job(id: "A")?.status, .failed)
-        XCTAssertEqual(try store.job(id: "A")?.stages.first?.attemptCount, 2)
-        XCTAssertEqual(try store.job(id: "B")?.status, .succeeded)
+        let jobA = try store.job(id: "A")
+        XCTAssertEqual(jobA?.status, .failed)
+        XCTAssertEqual(jobA?.stages.first?.attemptCount, 2)
+        let failure = jobA?.failureDetails?.lowercased() ?? ""
+        XCTAssertTrue(failure.contains("timed out") || failure.contains("exceeded its"),
+            "A must fail because its worker exceeded the execution limit, not because of an unrelated error: \(jobA?.failureDetails ?? "none")")
+        let jobB = try store.job(id: "B")
+        XCTAssertEqual(jobB?.status, .succeeded,
+            "B failed: \(jobB?.failureDetails ?? "none"); stage: \(jobB?.stages.first?.lastError ?? "none")")
         XCTAssertEqual(try String(contentsOf: countURL), "3", "Both timed-out workers must be stopped before the next attempt starts")
         XCTAssertTrue(try fixture.contents(fixture.summaryPath).contains("Completed after retry."))
     }

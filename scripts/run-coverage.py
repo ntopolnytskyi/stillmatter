@@ -52,7 +52,10 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True, help="New output directory; never reuses old profiles")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--only-testing", action="append", default=[])
+    parser.add_argument("--controls", action="store_true", help="Run the separate native Controls UI scheme and instrument its hosted app")
     args = parser.parse_args(argv)
+    if args.controls and args.lane != "native":
+        parser.error("--controls is only valid for native UI coverage")
     root, output = args.root.resolve(), args.output.resolve()
     status = {"lane": args.lane, "status": "not-run"}
     created = False
@@ -73,12 +76,15 @@ def main(argv=None):
             binary = binary_dir / "StillmatterPackageTests.xctest/Contents/MacOS/StillmatterPackageTests"
             lcov = export_lcov(binary_dir / "codecov/default.profdata", [binary])
         else:
-            scheme = "Stillmatter" if args.lane == "native" else "StillmatterHostedTests"
+            scheme = "StillmatterControlsUITests" if args.controls else (
+                "Stillmatter" if args.lane == "native" else "StillmatterHostedTests")
             bundle = output / "results.xcresult"
             derived = output / "derived"
             test_args = ["xcodebuild", "test", "-project", str(root / "Stillmatter.xcodeproj"), "-scheme", scheme,
                          "-configuration", "Release", "-destination", "platform=macOS", "-derivedDataPath", str(derived),
                          "-resultBundlePath", str(bundle), "-enableCodeCoverage", "YES", "SWIFT_OPTIMIZATION_LEVEL=-Onone"]
+            if args.controls:
+                test_args += ["-parallel-testing-enabled", "NO"]
             test_args += [f"-only-testing:{name}" for name in args.only_testing]
             run(test_args, output / "tests.log", root)
             summary = json.loads(coverage.command(["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(bundle)]))
@@ -87,7 +93,7 @@ def main(argv=None):
             profiles = sorted(derived.glob("Build/ProfileData/*/Coverage.profdata"))
             if not profiles:
                 raise coverage.CoverageError("Tests produced no instrumented profile")
-            product = "Stillmatter" if args.lane == "native" else "StillmatterHostedTestHost"
+            product = "Stillmatter" if args.lane == "native" and not args.controls else "StillmatterHostedTestHost"
             macos = derived / f"Build/Products/Release/{product}.app/Contents/MacOS"
             binaries = [macos / product]
             dylib = macos / f"{product}.debug.dylib"

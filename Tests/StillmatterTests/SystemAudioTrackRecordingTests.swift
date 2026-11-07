@@ -37,6 +37,23 @@ final class SystemAudioTrackRecordingTests: XCTestCase {
         XCTAssertTrue(stored.diagnostics.contains { $0.contains("recovery/preview artifact retained") })
     }
 
+    func testLegacySystemBackendFinishesAudioBeforeReleasingNextCapture() throws {
+        let fixture = try SystemAudioRecordingFixture()
+        let backend = FakeSystemAudioBackend()
+        let coordinator = SystemAudioTrackRecordingCoordinator(mediaRootURL: fixture.root, backend: backend)
+        _ = try coordinator.start(sessionID: "legacy-A", meetingRelativePath: "Meetings/A/meeting.md", startedAt: fixture.startedAt)
+
+        let released = try coordinator.releaseForFinalization(endedAt: fixture.startedAt.addingTimeInterval(3))
+
+        XCTAssertEqual(released.status, .completed)
+        XCTAssertNil(coordinator.activeMetadata)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: released.finalFilePath))
+        let next = try coordinator.start(sessionID: "legacy-B", meetingRelativePath: "Meetings/B/meeting.md",
+            startedAt: fixture.startedAt.addingTimeInterval(4))
+        XCTAssertEqual(next.captureSessionID, "legacy-B")
+        XCTAssertEqual(coordinator.latestMetadata?.captureSessionID, "legacy-B")
+    }
+
     func testInputReleaseAllowsNextCaptureBeforeSystemTrackEncodingCompletes() throws {
         let fixture = try SystemAudioRecordingFixture()
         let backend = SplitSystemAudioBackend()
@@ -111,6 +128,40 @@ final class SystemAudioTrackRecordingTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: started.recoveryFilePath))
     }
 
+    func testPreviousSystemMetadataWithoutScopeStillDecodes() throws {
+        let fixture = try SystemAudioRecordingFixture()
+        let original = SystemAudioTrackRecordingMetadata(captureSessionID: "legacy", meetingRelativePath: "Meetings/legacy/meeting.md",
+            recoveryFilePath: "media/legacy/system.caf", finalFilePath: "media/legacy/system.m4a",
+            metadataFilePath: "media/legacy/system.json", startedAt: fixture.startedAt)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var data = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(original)) as? [String: Any])
+        data.removeValue(forKey: "source")
+        data.removeValue(forKey: "scope")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let legacy = try decoder.decode(SystemAudioTrackRecordingMetadata.self,
+            from: JSONSerialization.data(withJSONObject: data))
+        XCTAssertNil(legacy.source)
+        XCTAssertNil(legacy.scope)
+    }
+
+    func testSelectedCaptureScopeIsPersistedAndPassedToBackend() throws {
+        let fixture = try SystemAudioRecordingFixture()
+        let backend = FakeSystemAudioBackend()
+        let coordinator = SystemAudioTrackRecordingCoordinator(mediaRootURL: fixture.root, backend: backend)
+        for source: CaptureAudioSource in [.teams, .zoom, .meet] {
+            let metadata = try coordinator.start(sessionID: source.rawValue,
+                meetingRelativePath: "Meetings/\(source.rawValue)/meeting.md", startedAt: fixture.startedAt,
+                source: source)
+            XCTAssertEqual(metadata.source, source)
+            XCTAssertEqual(metadata.scope, source.scope)
+            XCTAssertEqual(backend.lastScope, source.scope)
+            XCTAssertEqual(try fixture.decodeMetadata(at: metadata.metadataFilePath).scope, source.scope)
+            _ = try coordinator.stop(endedAt: fixture.startedAt.addingTimeInterval(2))
+        }
+    }
+
     func testStartFailureIsPersistedForDegradedModeWithoutAnActiveSystemTrack() throws {
         let fixture = try SystemAudioRecordingFixture()
         let backend = FakeSystemAudioBackend()
@@ -157,7 +208,8 @@ private final class LegacySystemAudioTrackRecorder: SystemAudioTrackRecordingMan
     var activeMetadata: SystemAudioTrackRecordingMetadata? { nil }
     var latestMetadata: SystemAudioTrackRecordingMetadata? { nil }
 
-    func start(sessionID: String, meetingRelativePath: String, startedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+    func start(sessionID: String, meetingRelativePath: String, startedAt: Date,
+               source: CaptureAudioSource) throws -> SystemAudioTrackRecordingMetadata {
         throw SystemAudioTrackRecordingError.alreadyRecording
     }
 
@@ -183,7 +235,7 @@ private final class SplitSystemAudioBackend: SystemAudioCaptureReleasingBackend 
     var stopWriteError: Error?
     var finalizeError: Error?
 
-    func startWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo {
+    func startWritingRecovery(to recoveryURL: URL, scope: CaptureAudioScope) throws -> SystemAudioTrackTechnicalInfo {
         activeRecoveryURL = recoveryURL
         try Data("durable system PCM frames".utf8).write(to: recoveryURL)
         return SystemAudioTrackTechnicalInfo(durationSeconds: 0, codec: "linear PCM recovery", sampleRate: 48_000, channelCount: 2)
@@ -219,8 +271,10 @@ private final class SplitSystemAudioBackend: SystemAudioCaptureReleasingBackend 
 private final class FakeSystemAudioBackend: SystemAudioTrackRecordingBackend {
     var startError: Error?
     var stopError: Error?
+    var lastScope: CaptureAudioScope?
 
-    func startWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo {
+    func startWritingRecovery(to recoveryURL: URL, scope: CaptureAudioScope) throws -> SystemAudioTrackTechnicalInfo {
+        lastScope = scope
         if let startError = startError { throw startError }
         try Data("durable system PCM frames".utf8).write(to: recoveryURL)
         return SystemAudioTrackTechnicalInfo(durationSeconds: 0, codec: "linear PCM recovery", sampleRate: 48_000, channelCount: 2)

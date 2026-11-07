@@ -26,6 +26,24 @@ final class RecordingRecoveryServiceTests: XCTestCase {
         XCTAssertTrue(meeting.contains("Recovered recording bundle (`ready`)"))
         XCTAssertTrue(meeting.contains(result.bundle.bundleFilePath))
     }
+
+    func testRestartedRecoveryReusesProcessingIntentAndRetainsOriginalLiveNotes() throws {
+        let fixture = try RecordingRecoveryFixture()
+        func recover() throws -> RecordingRecoveryResult {
+            let service = RecordingRecoveryService(vault: fixture.vault, jobStore: fixture.jobStore,
+                bundleFinalizer: RecordingBundleFinalizer(now: { fixture.recoveredAt }))
+            return try service.finalizeRecovered(mic: fixture.mic, system: fixture.system)
+        }
+
+        let first = try recover()
+        let afterRestart = try recover()
+
+        XCTAssertEqual(afterRestart.job?.id, first.job?.id)
+        XCTAssertEqual(try fixture.jobStore.jobs().filter { $0.id == first.job?.id }.count, 1)
+        let meeting = try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(fixture.meetingPath))
+        XCTAssertEqual(meeting.components(separatedBy: "- note retained").count - 1, 1)
+        XCTAssertTrue(meeting.contains("recording_bundle: \(first.bundle.bundleFilePath)"))
+    }
 }
 
 private final class RecordingRecoveryFixture {

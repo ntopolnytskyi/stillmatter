@@ -43,6 +43,8 @@ final class CaptureRecordingView: NSView {
     let stopButton: NSButton
     private let openFolderButton: NSButton
     private let languagePopup: NSPopUpButton
+    private let sourcePopup: NSPopUpButton
+    private let scopeLabel = NSTextField(wrappingLabelWithString: "")
     private let regenerateButton: NSButton
     let noteField: NSTextField
     private let addNoteButton: NSButton
@@ -81,6 +83,7 @@ final class CaptureRecordingView: NSView {
         artifactsDisclosure = controls.disclosure("Show Processing & Artifacts", identifier: "recording-artifacts")
         teamsDisclosure = controls.disclosure("Show Teams Detection Signals", identifier: "recording-teams")
         languagePopup = controls.popup(identifier: "recording-language")
+        sourcePopup = controls.popup(identifier: "recording-source")
         noteField = controls.textField(identifier: "recording-note")
         self.serviceProvider = serviceProvider
         self.rootURLProvider = rootURLProvider
@@ -125,7 +128,12 @@ final class CaptureRecordingView: NSView {
             return
         }
 
-        render(presentation(for: service.snapshot))
+        let snapshot = service.snapshot
+        render(presentation(for: snapshot))
+        if snapshot.state == .recording, let source = snapshot.source {
+            sourcePopup.selectItem(withTag: source == .teams ? 0 : (source == .zoom ? 1 : 2))
+        }
+        updateScopeLabel(active: snapshot.state == .recording)
         languagePopup.selectItem(withTag: service.transcriptionLanguage == .english ? 0 : 1)
         renderTeamsDetection()
     }
@@ -394,6 +402,21 @@ final class CaptureRecordingView: NSView {
     }
 
     private func makeCaptureControls() -> NSView {
+        for (title, tag, symbol) in [("Microsoft Teams", 0, "person.2.fill"),
+                                     ("Zoom", 1, "video.fill"),
+                                     ("Google Meet", 2, "video")] {
+            sourcePopup.addItem(withTitle: title)
+            sourcePopup.lastItem?.tag = tag
+            sourcePopup.lastItem?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        }
+        sourcePopup.selectItem(withTag: 0)
+        sourcePopup.target = self
+        sourcePopup.action = #selector(sourceChanged(_:))
+        sourcePopup.setAccessibilityLabel("Meeting source")
+        scopeLabel.font = GraphiteFocusPresentation.Typography.metadata
+        scopeLabel.maximumNumberOfLines = 0
+        scopeLabel.setAccessibilityIdentifier("recording-audio-scope")
+        updateScopeLabel(active: false)
         openFolderButton.target = self
         openFolderButton.action = #selector(openMeetingFolder(_:))
 
@@ -429,6 +452,14 @@ final class CaptureRecordingView: NSView {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = GraphiteFocusPresentation.Space.dense
+        let sourceLabel = NSTextField(labelWithString: "Meeting source")
+        sourceLabel.font = GraphiteFocusPresentation.Typography.control
+        let sourceRow = NSStackView(views: [sourceLabel, sourcePopup])
+        sourceRow.orientation = .horizontal
+        sourceRow.alignment = .centerY
+        sourceRow.spacing = GraphiteFocusPresentation.Space.compact
+        stack.addArrangedSubview(sourceRow)
+        addFullWidth(scopeLabel, to: stack)
         stack.addArrangedSubview(transcription)
         addFullWidth(meetingPathLabel, to: stack)
         stack.addArrangedSubview(meetingActions)
@@ -527,7 +558,8 @@ final class CaptureRecordingView: NSView {
         meetingPathLabel.stringValue = presentation.meetingPath.map { "Meeting doorway: \($0)" } ?? "No active Meeting folder"
         meetingPathLabel.textColor = palette.textMetadata
 
-        let canStart = presentation.isConfigured && (state == .idle || state == .detecting || state == .failed || state == .recovered)
+        let canStart = presentation.isConfigured && (serviceProvider()?.canStartCapture ?? false) &&
+            (state == .idle || state == .detecting || state == .failed || state == .recovered)
         let isRecording = state == .recording
         startButton.isHidden = !canStart
         startButton.isEnabled = canStart
@@ -539,6 +571,7 @@ final class CaptureRecordingView: NSView {
         meetingActions.isHidden = presentation.meetingPath == nil
         openFolderButton.isEnabled = presentation.meetingPath != nil
         languagePopup.isEnabled = presentation.isConfigured && !isRecording
+        sourcePopup.isEnabled = presentation.isConfigured && !isRecording
         regenerateButton.isEnabled = presentation.canRegenerateTranscript && !isRecording
         noteField.isEnabled = isRecording
         addNoteButton.isEnabled = isRecording
@@ -793,10 +826,24 @@ final class CaptureRecordingView: NSView {
         sender.title = sender.state == .on ? "▾  Teams Detection Signals" : "▸  Teams Detection Signals"
     }
 
+    @objc private func sourceChanged(_ sender: NSPopUpButton) {
+        updateScopeLabel(active: false)
+    }
+
+    private func updateScopeLabel(active: Bool) {
+        let teams = sourcePopup.selectedTag() == 0
+        scopeLabel.stringValue = teams
+            ? "\(active ? "Recording" : "Will record") Microsoft Teams application audio only; microphone remains separate."
+            : "\(active ? "Recording" : "Will record") ALL SYSTEM AUDIO (not Zoom-only or Meet-tab-only); microphone remains separate."
+        scopeLabel.textColor = teams ? colors.textSecondary : colors.attention
+    }
+
     @objc private func startCapture(_ sender: NSButton) {
         perform { service in
             onManualCapture()
-            _ = try service.startManual()
+            let source: CaptureAudioSource = sourcePopup.selectedTag() == 1 ? .zoom
+                : (sourcePopup.selectedTag() == 2 ? .meet : .teams)
+            _ = try service.startManual(source: source)
         }
     }
 

@@ -7,30 +7,43 @@ import StillmatterCore
 #endif
 
 @available(macOS 13.0, *)
-final class MacSystemAudioTrackRecorder: NSObject, SystemAudioCaptureReleasingBackend, SCStreamOutput, SCStreamDelegate {
-    private let sampleQueue = DispatchQueue(label: "Stillmatter.SystemAudioCapture")
-    private let lock = NSLock()
-    private var stream: SCStream?
-    private var recoveryFile: AVAudioFile?
-    private var recoveryURL: URL?
-    private var writeError: Error?
-    private var audioClock = RecordingAudioClock()
-    private var writtenFrames: Int64 = 0
+protocol SystemAudioInputStream: AnyObject {
+    func start() throws
+    func stop() throws
+}
 
-    func startWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo {
-        guard stream == nil else {
-            throw NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 1, userInfo: [NSLocalizedDescriptionKey: "System audio capture is already active."])
-        }
+@available(macOS 13.0, *)
+protocol SystemAudioStreamCreating {
+    func make(scope: CaptureAudioScope, sampleQueue: DispatchQueue,
+              onSample: @escaping (CMSampleBuffer) -> Void,
+              onError: @escaping (Error) -> Void) throws -> SystemAudioInputStream
+}
+
+@available(macOS 13.0, *)
+final class ScreenCaptureKitAudioStreamFactory: SystemAudioStreamCreating {
+    func make(scope: CaptureAudioScope, sampleQueue: DispatchQueue,
+              onSample: @escaping (CMSampleBuffer) -> Void,
+              onError: @escaping (Error) -> Void) throws -> SystemAudioInputStream {
         let content = try shareableContent()
         guard let display = content.displays.first else {
-            throw NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 2, userInfo: [NSLocalizedDescriptionKey: "No display is available for system-audio capture."])
+            throw NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "No display is available for system-audio capture."])
         }
-        let currentApplication = content.applications.first { $0.processID == ProcessInfo.processInfo.processIdentifier }
-        let filter = SCContentFilter(
-            display: display,
-            excludingApplications: currentApplication.map { [$0] } ?? [],
-            exceptingWindows: []
-        )
+        let filter: SCContentFilter
+        switch scope {
+        case .teamsApplication:
+            let teamsIDs: Set<String> = ["com.microsoft.teams2", "com.microsoft.teams"]
+            let teams = content.applications.filter { teamsIDs.contains($0.bundleIdentifier.lowercased()) }
+            guard !teams.isEmpty else {
+                throw NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 6,
+                    userInfo: [NSLocalizedDescriptionKey: "Teams is unavailable for application-only audio capture. Microphone recording can continue; no broader system audio will be captured."])
+            }
+            filter = SCContentFilter(display: display, including: teams, exceptingWindows: [])
+        case .allSystemAudio:
+            let currentApplication = content.applications.first { $0.processID == ProcessInfo.processInfo.processIdentifier }
+            filter = SCContentFilter(display: display,
+                excludingApplications: currentApplication.map { [$0] } ?? [], exceptingWindows: [])
+        }
         let configuration = SCStreamConfiguration()
         configuration.width = 2
         configuration.height = 2
@@ -41,18 +54,114 @@ final class MacSystemAudioTrackRecorder: NSObject, SystemAudioCaptureReleasingBa
         configuration.excludesCurrentProcessAudio = true
         configuration.sampleRate = 48_000
         configuration.channelCount = 2
+        let callbacks = ScreenCaptureKitAudioCallbacks(onSample: onSample, onError: onError)
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: callbacks)
+        try stream.addStreamOutput(callbacks, type: .audio, sampleHandlerQueue: sampleQueue)
+        return ScreenCaptureKitAudioStream(stream: stream, callbacks: callbacks)
+    }
 
-        self.recoveryURL = recoveryURL
-        writeError = nil
-        audioClock = RecordingAudioClock()
-        writtenFrames = 0
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
+    private func shareableContent() throws -> SCShareableContent {
+        var result: Result<SCShareableContent, Error>?
+        let semaphore = DispatchSemaphore(value: 0)
+        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { content, error in
+            if let content {
+                result = .success(content)
+            } else {
+                result = .failure(error ?? NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 5,
+                    userInfo: [NSLocalizedDescriptionKey: "macOS did not return shareable content. Check Screen Recording permission."]))
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return try result!.get()
+    }
+}
+
+@available(macOS 13.0, *)
+private final class ScreenCaptureKitAudioCallbacks: NSObject, SCStreamOutput, SCStreamDelegate {
+    let onSample: (CMSampleBuffer) -> Void
+    let onError: (Error) -> Void
+
+    init(onSample: @escaping (CMSampleBuffer) -> Void, onError: @escaping (Error) -> Void) {
+        self.onSample = onSample
+        self.onError = onError
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer buffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .audio else { return }
+        onSample(buffer)
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) { onError(error) }
+}
+
+@available(macOS 13.0, *)
+private final class ScreenCaptureKitAudioStream: SystemAudioInputStream {
+    private let stream: SCStream
+    private let callbacks: ScreenCaptureKitAudioCallbacks
+
+    init(stream: SCStream, callbacks: ScreenCaptureKitAudioCallbacks) {
+        self.stream = stream
+        self.callbacks = callbacks // SCStream delegate/output may not retain its observer.
+    }
+
+    func start() throws { try waitForCallback { stream.startCapture(completionHandler: $0) } }
+    func stop() throws { try waitForCallback { stream.stopCapture(completionHandler: $0) } }
+
+    private func waitForCallback(_ operation: (@escaping (Error?) -> Void) -> Void) throws {
+        var callbackError: Error?
+        let semaphore = DispatchSemaphore(value: 0)
+        operation { error in
+            callbackError = error
+            semaphore.signal()
+        }
+        semaphore.wait()
+        if let callbackError { throw callbackError }
+    }
+}
+
+@available(macOS 13.0, *)
+final class MacSystemAudioTrackRecorder: SystemAudioCaptureReleasingBackend {
+    private let sampleQueue = DispatchQueue(label: "Stillmatter.SystemAudioCapture")
+    private let streamFactory: SystemAudioStreamCreating
+    private let lock = NSLock()
+    private var stream: SystemAudioInputStream?
+    private var generation: UInt64 = 0
+    private var recoveryFile: AVAudioFile?
+    private var recoveryURL: URL?
+    private var writeError: Error?
+    private var audioClock = RecordingAudioClock()
+    private var writtenFrames: Int64 = 0
+
+    init(streamFactory: SystemAudioStreamCreating = ScreenCaptureKitAudioStreamFactory()) {
+        self.streamFactory = streamFactory
+    }
+
+    func startWritingRecovery(to recoveryURL: URL, scope: CaptureAudioScope) throws -> SystemAudioTrackTechnicalInfo {
+        guard sampleQueue.sync(execute: { stream == nil }) else {
+            throw NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 1, userInfo: [NSLocalizedDescriptionKey: "System audio capture is already active."])
+        }
+        let nextGeneration = generation &+ 1
+        let input = try streamFactory.make(scope: scope, sampleQueue: sampleQueue,
+            onSample: { [weak self] buffer in self?.accept(buffer, generation: nextGeneration) },
+            onError: { [weak self] error in self?.fail(error, generation: nextGeneration) })
+        sampleQueue.sync {
+            generation = nextGeneration
+            stream = input
+            self.recoveryURL = recoveryURL
+            recoveryFile = nil
+            writeError = nil
+            audioClock = RecordingAudioClock()
+            writtenFrames = 0
+        }
         do {
-            try waitForCallback { completion in stream.startCapture(completionHandler: completion) }
-            self.stream = stream
+            try input.start()
         } catch {
-            self.recoveryURL = nil
+            // A failed start callback does not prove the OS released the stream.
+            // If cleanup also fails, retain ownership and refuse a second capture.
+            if (try? input.stop()) != nil {
+                sampleQueue.sync { stream = nil; self.recoveryURL = nil; recoveryFile = nil }
+            }
             throw error
         }
         return SystemAudioTrackTechnicalInfo(
@@ -69,30 +178,32 @@ final class MacSystemAudioTrackRecorder: NSObject, SystemAudioCaptureReleasingBa
     }
 
     func stopWritingRecovery(to recoveryURL: URL) throws -> SystemAudioTrackTechnicalInfo {
-        guard let activeStream = stream else {
+        guard let activeStream = sampleQueue.sync(execute: { stream }) else {
             throw NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 3, userInfo: [NSLocalizedDescriptionKey: "There is no active system-audio stream."])
         }
-        defer {
+        // A failed OS stop is not proof that the input was released: never offer B.
+        try activeStream.stop()
+        let (file, frames, spans) = sampleQueue.sync { () -> (AVAudioFile?, Int64, [AudioClockSpan]) in
+            let file = recoveryFile
+            let frames = writtenFrames
+            let spans = audioClock.archive()
             stream = nil
             self.recoveryURL = nil
             recoveryFile = nil
+            return (file, frames, spans)
         }
-        try waitForCallback { completion in activeStream.stopCapture(completionHandler: completion) }
-        sampleQueue.sync {}
         lock.lock()
         let recordedError = writeError
         writeError = nil
         lock.unlock()
-        if let recordedError = recordedError { throw recordedError }
-        let file = recoveryFile
-        recoveryFile = nil
+        if let recordedError { throw recordedError }
         let format = file?.processingFormat
         return SystemAudioTrackTechnicalInfo(
-            durationSeconds: format.map { $0.sampleRate > 0 ? Double(writtenFrames) / $0.sampleRate : 0 } ?? 0,
+            durationSeconds: format.map { $0.sampleRate > 0 ? Double(frames) / $0.sampleRate : 0 } ?? 0,
             codec: "linear PCM recovery",
             sampleRate: format?.sampleRate ?? 48_000,
             channelCount: format.map { Int($0.channelCount) } ?? 2,
-            audioClockSpans: audioClock.archive()
+            audioClockSpans: spans
         )
     }
 
@@ -107,8 +218,10 @@ final class MacSystemAudioTrackRecorder: NSObject, SystemAudioCaptureReleasingBa
         return try exportRecovery(recoveryURL, to: finalURL)
     }
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-        guard outputType == .audio, sampleBuffer.isValid, CMSampleBufferDataIsReady(sampleBuffer) else { return }
+    private func accept(_ sampleBuffer: CMSampleBuffer, generation expected: UInt64) {
+        // Stream output is delivered on sampleQueue; an old A callback cannot write B's file.
+        guard stream != nil, generation == expected,
+              sampleBuffer.isValid, CMSampleBufferDataIsReady(sampleBuffer) else { return }
         do {
             try write(sampleBuffer)
         } catch {
@@ -118,11 +231,15 @@ final class MacSystemAudioTrackRecorder: NSObject, SystemAudioCaptureReleasingBa
         }
     }
 
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        audioClock.discontinuity()
-        lock.lock()
-        if writeError == nil { writeError = error }
-        lock.unlock()
+    private func fail(_ error: Error, generation expected: UInt64) {
+        // The delegate may run on sampleQueue. Never synchronously wait on that queue here.
+        sampleQueue.async { [self] in
+            guard stream != nil, generation == expected else { return }
+            audioClock.discontinuity()
+            lock.lock()
+            if writeError == nil { writeError = error }
+            lock.unlock()
+        }
     }
 
     private func write(_ sampleBuffer: CMSampleBuffer) throws {
@@ -185,36 +302,6 @@ final class MacSystemAudioTrackRecorder: NSObject, SystemAudioCaptureReleasingBa
         )
         writtenFrames += Int64(frameCount)
         _ = retainedBlockBuffer
-    }
-
-    private func shareableContent() throws -> SCShareableContent {
-        var result: Result<SCShareableContent, Error>?
-        let semaphore = DispatchSemaphore(value: 0)
-        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { content, error in
-            if let content = content {
-                result = .success(content)
-            } else {
-                result = .failure(error ?? NSError(
-                    domain: "Stillmatter.SystemAudioTrackRecorder",
-                    code: 5,
-                    userInfo: [NSLocalizedDescriptionKey: "macOS did not return shareable content. Check Screen Recording permission."]
-                ))
-            }
-            semaphore.signal()
-        }
-        semaphore.wait()
-        return try result!.get()
-    }
-
-    private func waitForCallback(_ operation: (@escaping (Error?) -> Void) -> Void) throws {
-        var callbackError: Error?
-        let semaphore = DispatchSemaphore(value: 0)
-        operation { error in
-            callbackError = error
-            semaphore.signal()
-        }
-        semaphore.wait()
-        if let callbackError = callbackError { throw callbackError }
     }
 
     private func exportRecovery(

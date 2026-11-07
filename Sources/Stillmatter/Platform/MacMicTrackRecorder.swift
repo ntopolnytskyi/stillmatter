@@ -4,16 +4,26 @@ import StillmatterCore
 #endif
 
 final class MacMicTrackRecorder: MicTrackCaptureReleasingBackend {
-    private let engine = AVAudioEngine()
+    private let engine: AVAudioEngine
+    private let captureInput: () -> (AVAudioNode, AVAudioFormat)
+    private var activeInput: AVAudioNode?
     private var recoveryFile: AVAudioFile?
     private var writeError: Error?
     private let lock = NSLock()
+    private var generation: UInt64 = 0
     private var audioClock = RecordingAudioClock()
     private var writtenFrames: Int64 = 0
 
+    init(engine: AVAudioEngine = AVAudioEngine(), captureInput: (() -> (AVAudioNode, AVAudioFormat))? = nil) {
+        self.engine = engine
+        self.captureInput = captureInput ?? {
+            let input = engine.inputNode
+            return (input, input.inputFormat(forBus: 0))
+        }
+    }
+
     func startWritingRecovery(to recoveryURL: URL) throws -> MicTrackTechnicalInfo {
-        let input = engine.inputNode
-        let format = input.inputFormat(forBus: 0)
+        let (input, format) = captureInput()
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw NSError(
                 domain: "Stillmatter.MicTrackRecorder",
@@ -30,14 +40,22 @@ final class MacMicTrackRecorder: MicTrackCaptureReleasingBackend {
             AVLinearPCMIsNonInterleaved: false
         ]
         let file = try AVAudioFile(forWriting: recoveryURL, settings: settings)
+        activeInput = input
+        lock.lock()
+        generation &+= 1
+        let startedGeneration = generation
         recoveryFile = file
         writeError = nil
         audioClock = RecordingAudioClock()
         writtenFrames = 0
+        lock.unlock()
         input.installTap(onBus: 0, bufferSize: 4_096, format: format) { [weak self] buffer, time in
             guard let self = self else { return }
+            self.lock.lock()
+            defer { self.lock.unlock() }
+            guard self.generation == startedGeneration, let recoveryFile = self.recoveryFile else { return }
             do {
-                try self.recoveryFile?.write(from: buffer)
+                try recoveryFile.write(from: buffer)
                 let frames = Int64(buffer.frameLength)
                 self.audioClock.record(
                     hostTime: time.hostTime,
@@ -48,9 +66,7 @@ final class MacMicTrackRecorder: MicTrackCaptureReleasingBackend {
                 )
                 self.writtenFrames += frames
             } catch {
-                self.lock.lock()
                 if self.writeError == nil { self.writeError = error }
-                self.lock.unlock()
             }
         }
         do {
@@ -58,7 +74,10 @@ final class MacMicTrackRecorder: MicTrackCaptureReleasingBackend {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            activeInput = nil
+            lock.lock()
             recoveryFile = nil
+            lock.unlock()
             throw error
         }
         return MicTrackTechnicalInfo(
@@ -75,22 +94,25 @@ final class MacMicTrackRecorder: MicTrackCaptureReleasingBackend {
     }
 
     func stopWritingRecovery(to recoveryURL: URL) throws -> MicTrackTechnicalInfo {
-        engine.inputNode.removeTap(onBus: 0)
+        activeInput?.removeTap(onBus: 0)
+        activeInput = nil
         engine.stop()
+        lock.lock()
         let file = recoveryFile
         recoveryFile = nil
-        lock.lock()
         let recordedError = writeError
         writeError = nil
+        let frames = writtenFrames
+        let spans = audioClock.archive()
         lock.unlock()
         if let recordedError = recordedError { throw recordedError }
         let format = file?.processingFormat
         return MicTrackTechnicalInfo(
-            durationSeconds: format.map { $0.sampleRate > 0 ? Double(writtenFrames) / $0.sampleRate : 0 } ?? 0,
+            durationSeconds: format.map { $0.sampleRate > 0 ? Double(frames) / $0.sampleRate : 0 } ?? 0,
             codec: "linear PCM recovery",
             sampleRate: format?.sampleRate ?? 0,
             channelCount: format.map { Int($0.channelCount) } ?? 0,
-            audioClockSpans: audioClock.archive()
+            audioClockSpans: spans
         )
     }
 
