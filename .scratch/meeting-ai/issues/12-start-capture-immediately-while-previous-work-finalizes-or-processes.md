@@ -4,7 +4,7 @@
 
 **Blocked by:** [02: Verify Teams-only scope and explicit manual system-audio scope](02-verify-teams-zoom-and-google-meet-source-isolation.md); [09: Run one durable staged Meeting workflow through reusable Jobs](09-run-one-durable-staged-meeting-workflow-through-reusable-jobs.md)
 
-**Status:** claimed
+**Status:** resolved
 
 **Type:** task
 
@@ -145,3 +145,7 @@ Fresh compatible `--base f890bcb` report: `.build/coverage/ticket12-request-incr
 ### Product-owner acceptance exceptions for ticket 12
 
 The owner explicitly waives a kill-and-relaunch crash-boundary evidence matrix for ticket 12 and accepts the current **632/708 (89.27%)** changed-line coverage level despite the unchanged 95% gate reporting **FAIL**. These are ticket-specific acceptance exceptions, recorded separately in [ticket-12-acceptance-exceptions.md](../../../docs/meeting_ai_handoff/ticket-12-acceptance-exceptions.md); do not claim the gate passed or apply this waiver to another ticket. Existing synthetic recovery tests cover only their exercised paths. If a crash-boundary failure emerges later, track and fix it as a bug. The owner's real-call A→B continuity result remains accepted; do not request another run in ticket 12. ScreenCaptureKit/permission claims and ticket 02 remain separate, unresolved questions.
+
+## Answer
+
+Resolved as the capture-handoff implementation and owner-accepted ticket-12 disposition after prerequisites [02](02-verify-teams-zoom-and-google-meet-source-isolation.md) and [09](09-run-one-durable-staged-meeting-workflow-through-reusable-jobs.md) were marked resolved. The owner reports real-call A→B continuity as working and explicitly accepts the measured **632/708 (89.27%)** incremental coverage for this ticket despite the automated 95% gate failing; the owner also defers the additional kill-and-relaunch crash matrix. Those exceptions are recorded in [ticket-12-acceptance-exceptions.md](../../../docs/meeting_ai_handoff/ticket-12-acceptance-exceptions.md). Tests and evidence above cover synthetic A/B ownership, notes, Job reuse, recovery and UI interaction, not every crash boundary. Outstanding human/device Teams/Zoom/Meet scope, permission, reconnect and inference measurements are assigned to [ticket 51](51-verify-real-device-meeting-source-scope-and-permission.md). Resolution does **not** assert that those measurements or the unchanged 95% gate passed, and it does not waive ticket 13's own tests or coverage contract.
