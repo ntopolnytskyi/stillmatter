@@ -133,7 +133,12 @@ final class CaptureRecordingView: NSView {
         if snapshot.state == .recording, let source = snapshot.source {
             sourcePopup.selectItem(withTag: source == .teams ? 0 : (source == .zoom ? 1 : 2))
         }
-        updateScopeLabel(active: snapshot.state == .recording)
+        updateScopeLabel(
+            active: snapshot.state == .recording,
+            warning: snapshot.systemAudioRecording?.status == .failed || snapshot.systemAudioRecording?.status == .partial
+                ? snapshot.systemAudioRecording?.diagnostics.last
+                : nil
+        )
         languagePopup.selectItem(withTag: service.transcriptionLanguage == .english ? 0 : 1)
         renderTeamsDetection()
     }
@@ -830,12 +835,18 @@ final class CaptureRecordingView: NSView {
         updateScopeLabel(active: false)
     }
 
-    private func updateScopeLabel(active: Bool) {
+    private func updateScopeLabel(active: Bool, warning: String? = nil) {
         let teams = sourcePopup.selectedTag() == 0
-        scopeLabel.stringValue = teams
+        let scope = teams
             ? "\(active ? "Recording" : "Will record") Microsoft Teams application audio only; microphone remains separate."
             : "\(active ? "Recording" : "Will record") ALL SYSTEM AUDIO (not Zoom-only or Meet-tab-only); microphone remains separate."
-        scopeLabel.textColor = teams ? colors.textSecondary : colors.attention
+        if let warning {
+            scopeLabel.stringValue = "⚠ System audio degraded; microphone capture continues. \(scope) \(warning)"
+            scopeLabel.textColor = colors.attention
+        } else {
+            scopeLabel.stringValue = scope
+            scopeLabel.textColor = teams ? colors.textSecondary : colors.attention
+        }
     }
 
     @objc private func startCapture(_ sender: NSButton) {

@@ -121,17 +121,25 @@ private final class ScreenCaptureKitAudioStream: SystemAudioInputStream {
 }
 
 @available(macOS 13.0, *)
-final class MacSystemAudioTrackRecorder: SystemAudioCaptureReleasingBackend {
+final class MacSystemAudioTrackRecorder: SystemAudioCaptureReleasingBackend, SystemAudioCaptureFailureReportingBackend {
     private let sampleQueue = DispatchQueue(label: "Stillmatter.SystemAudioCapture")
     private let streamFactory: SystemAudioStreamCreating
     private let lock = NSLock()
+    private var captureFailureHandler: ((Error) -> Void)?
     private var stream: SystemAudioInputStream?
     private var generation: UInt64 = 0
+    private var sourceStoppedGeneration: UInt64?
     private var recoveryFile: AVAudioFile?
     private var recoveryURL: URL?
     private var writeError: Error?
     private var audioClock = RecordingAudioClock()
     private var writtenFrames: Int64 = 0
+
+    func setCaptureFailureHandler(_ handler: ((Error) -> Void)?) {
+        lock.lock()
+        captureFailureHandler = handler
+        lock.unlock()
+    }
 
     init(streamFactory: SystemAudioStreamCreating = ScreenCaptureKitAudioStreamFactory()) {
         self.streamFactory = streamFactory
@@ -147,6 +155,7 @@ final class MacSystemAudioTrackRecorder: SystemAudioCaptureReleasingBackend {
             onError: { [weak self] error in self?.fail(error, generation: nextGeneration) })
         sampleQueue.sync {
             generation = nextGeneration
+            sourceStoppedGeneration = nil
             stream = input
             self.recoveryURL = recoveryURL
             recoveryFile = nil
@@ -182,12 +191,14 @@ final class MacSystemAudioTrackRecorder: SystemAudioCaptureReleasingBackend {
             throw NSError(domain: "Stillmatter.SystemAudioTrackRecorder", code: 3, userInfo: [NSLocalizedDescriptionKey: "There is no active system-audio stream."])
         }
         // A failed OS stop is not proof that the input was released: never offer B.
-        try activeStream.stop()
+        let sourceAlreadyStopped = sampleQueue.sync { sourceStoppedGeneration == generation }
+        if !sourceAlreadyStopped { try activeStream.stop() }
         let (file, frames, spans) = sampleQueue.sync { () -> (AVAudioFile?, Int64, [AudioClockSpan]) in
             let file = recoveryFile
             let frames = writtenFrames
             let spans = audioClock.archive()
             stream = nil
+            sourceStoppedGeneration = nil
             self.recoveryURL = nil
             recoveryFile = nil
             return (file, frames, spans)
@@ -236,9 +247,11 @@ final class MacSystemAudioTrackRecorder: SystemAudioCaptureReleasingBackend {
         sampleQueue.async { [self] in
             guard stream != nil, generation == expected else { return }
             audioClock.discontinuity()
+            sourceStoppedGeneration = expected
             lock.lock()
-            if writeError == nil { writeError = error }
+            let failureHandler = captureFailureHandler
             lock.unlock()
+            failureHandler?(error)
         }
     }
 

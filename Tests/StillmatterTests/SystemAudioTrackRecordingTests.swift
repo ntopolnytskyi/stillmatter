@@ -94,6 +94,27 @@ final class SystemAudioTrackRecordingTests: XCTestCase {
         XCTAssertTrue(persisted.diagnostics.contains { $0.contains("System-audio input stop failed") })
     }
 
+    func testRuntimeSourceFailureIsReportedAndRetainedAsPartialAfterStop() throws {
+        let fixture = try SystemAudioRecordingFixture()
+        let backend = FakeSystemAudioBackend()
+        let coordinator = SystemAudioTrackRecordingCoordinator(mediaRootURL: fixture.root, backend: backend)
+        var reported: SystemAudioTrackRecordingMetadata?
+        coordinator.setCaptureFailureHandler { reported = $0 }
+        let started = try coordinator.start(sessionID: "system-source-loss", meetingRelativePath: "Meetings/loss/meeting.md", startedAt: fixture.startedAt, source: .teams)
+
+        backend.reportFailure(CocoaError(.fileReadNoSuchFile))
+
+        XCTAssertEqual(reported?.captureSessionID, started.captureSessionID)
+        XCTAssertEqual(reported?.scope, .teamsApplication)
+        XCTAssertEqual(reported?.status, .failed)
+        let stopped = try coordinator.stop(endedAt: fixture.startedAt.addingTimeInterval(4))
+        XCTAssertEqual(stopped.status, .partial)
+        XCTAssertEqual(stopped.source, .teams)
+        XCTAssertEqual(stopped.scope, .teamsApplication)
+        XCTAssertTrue(stopped.diagnostics.contains { $0.contains("source was lost") })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stopped.recoveryFilePath))
+    }
+
     func testSystemBackgroundEncodingFailurePersistsFailureAndKeepsRecoveryAudio() throws {
         let fixture = try SystemAudioRecordingFixture()
         let backend = SplitSystemAudioBackend()
@@ -268,7 +289,11 @@ private final class SplitSystemAudioBackend: SystemAudioCaptureReleasingBackend 
     }
 }
 
-private final class FakeSystemAudioBackend: SystemAudioTrackRecordingBackend {
+private final class FakeSystemAudioBackend: SystemAudioTrackRecordingBackend, SystemAudioCaptureFailureReportingBackend {
+    private var captureFailureHandler: ((Error) -> Void)?
+
+    func setCaptureFailureHandler(_ handler: ((Error) -> Void)?) { captureFailureHandler = handler }
+    func reportFailure(_ error: Error) { captureFailureHandler?(error) }
     var startError: Error?
     var stopError: Error?
     var lastScope: CaptureAudioScope?

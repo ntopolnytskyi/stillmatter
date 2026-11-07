@@ -111,6 +111,10 @@ public protocol SystemAudioCaptureReleasingBackend: SystemAudioTrackRecordingBac
     func finalizeRecovery(from recoveryURL: URL, to finalURL: URL, audioClockSpans: [AudioClockSpan]?) throws -> SystemAudioTrackTechnicalInfo
 }
 
+public protocol SystemAudioCaptureFailureReportingBackend: AnyObject {
+    func setCaptureFailureHandler(_ handler: ((Error) -> Void)?)
+}
+
 public protocol SystemAudioTrackRecordingManaging: AnyObject {
     var activeMetadata: SystemAudioTrackRecordingMetadata? { get }
     var latestMetadata: SystemAudioTrackRecordingMetadata? { get }
@@ -120,9 +124,12 @@ public protocol SystemAudioTrackRecordingManaging: AnyObject {
     func releaseForFinalization(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata
     func finalizeReleased(_ metadata: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata
     func completeHandoff(_ metadata: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata
+    func setCaptureFailureHandler(_ handler: ((SystemAudioTrackRecordingMetadata) -> Void)?)
 }
 
 public extension SystemAudioTrackRecordingManaging {
+    func setCaptureFailureHandler(_ handler: ((SystemAudioTrackRecordingMetadata) -> Void)?) {}
+
     func releaseForFinalization(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
         try stop(endedAt: endedAt)
     }
@@ -159,6 +166,7 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
     private let decoder: JSONDecoder
     public private(set) var activeMetadata: SystemAudioTrackRecordingMetadata?
     public private(set) var latestMetadata: SystemAudioTrackRecordingMetadata?
+    private var captureFailureHandler: ((SystemAudioTrackRecordingMetadata) -> Void)?
 
     public init(mediaRootURL: URL, backend: SystemAudioTrackRecordingBackend, fileManager: FileManager = .default) {
         self.mediaRootURL = mediaRootURL
@@ -166,6 +174,13 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
         self.fileManager = fileManager
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        (backend as? SystemAudioCaptureFailureReportingBackend)?.setCaptureFailureHandler { [weak self] error in
+            self?.recordCaptureFailure(error)
+        }
+    }
+
+    public func setCaptureFailureHandler(_ handler: ((SystemAudioTrackRecordingMetadata) -> Void)?) {
+        captureFailureHandler = handler
     }
 
     @discardableResult
@@ -216,6 +231,7 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
             return try stop(endedAt: endedAt)
         }
         guard var metadata = activeMetadata else { throw SystemAudioTrackRecordingError.noActiveRecording }
+        let hadCaptureFailure = metadata.status == .failed
         metadata.status = .finalizing
         metadata.endedAt = endedAt
         try write(metadata)
@@ -223,6 +239,7 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
         do {
             let info = try splitBackend.stopWritingRecovery(to: URL(fileURLWithPath: metadata.recoveryFilePath))
             apply(info, to: &metadata)
+            metadata.status = hadCaptureFailure ? .partial : .finalizing
             metadata.diagnostics.append("System-audio input stopped; retained recovery audio awaits background encoding.")
             try write(metadata)
             activeMetadata = nil
@@ -241,6 +258,7 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
     public func finalizeReleased(_ released: SystemAudioTrackRecordingMetadata) throws -> SystemAudioTrackRecordingMetadata {
         guard let splitBackend = backend as? SystemAudioCaptureReleasingBackend else { return released }
         var metadata = released
+        let hadCaptureFailure = metadata.status == .partial
         do {
             let info = try splitBackend.finalizeRecovery(
                 from: URL(fileURLWithPath: metadata.recoveryFilePath),
@@ -248,7 +266,7 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
                 audioClockSpans: metadata.audioClockSpans
             )
             apply(info, to: &metadata)
-            metadata.status = .completed
+            metadata.status = hadCaptureFailure ? .partial : .completed
             metadata.diagnostics.append("Compact separate system-audio track finalized; recovery/preview artifact retained.")
             var pendingHandoff = metadata
             pendingHandoff.status = .finalizing
@@ -288,6 +306,7 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
     @discardableResult
     public func stop(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
         guard var metadata = activeMetadata else { throw SystemAudioTrackRecordingError.noActiveRecording }
+        let hadCaptureFailure = metadata.status == .failed
         metadata.status = .finalizing
         metadata.endedAt = endedAt
         try write(metadata)
@@ -299,7 +318,7 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
                 finalURL: URL(fileURLWithPath: metadata.finalFilePath)
             )
             apply(info, to: &metadata)
-            metadata.status = .completed
+            metadata.status = hadCaptureFailure ? .partial : .completed
             metadata.diagnostics.append("Compact separate system-audio track finalized; recovery/preview artifact retained.")
             try write(metadata)
             activeMetadata = nil
@@ -358,6 +377,17 @@ public final class SystemAudioTrackRecordingCoordinator: SystemAudioTrackRecordi
         metadata.sampleRate = info.sampleRate
         metadata.channelCount = info.channelCount
         if let spans = info.audioClockSpans { metadata.audioClockSpans = spans }
+    }
+
+    private func recordCaptureFailure(_ error: Error) {
+        guard var metadata = activeMetadata else { return }
+        metadata.status = .failed
+        let detail = "System audio source was lost; continuing with microphone audio only: \(error)"
+        if !metadata.diagnostics.contains(detail) { metadata.diagnostics.append(detail) }
+        try? write(metadata)
+        activeMetadata = metadata
+        latestMetadata = metadata
+        captureFailureHandler?(metadata)
     }
 
     private func write(_ metadata: SystemAudioTrackRecordingMetadata) throws {

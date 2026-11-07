@@ -212,6 +212,31 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("- [ ] Send the revised export"))
     }
 
+    func testSystemSourceFailureDuringCapturePublishesDegradedSnapshotAndRetainsMicrophone() throws {
+        let fixture = try CaptureFixture()
+        let mic = SpyMicRecorder()
+        let system = SpySystemAudioRecorder()
+        let service = fixture.service(micRecorder: mic, systemAudioRecorder: system)
+        var snapshots: [CaptureSnapshot] = []
+        let degradedExpectation = expectation(description: "degraded capture snapshot")
+        service.observe {
+            snapshots.append($0)
+            if $0.systemAudioRecording?.status == .failed { degradedExpectation.fulfill() }
+        }
+
+        let session = try service.startManual(source: .zoom)
+        system.reportFailure("source device disconnected")
+        wait(for: [degradedExpectation], timeout: 2)
+
+        let degraded = try XCTUnwrap(snapshots.last)
+        XCTAssertEqual(degraded.state, .recording)
+        XCTAssertEqual(degraded.source, .zoom)
+        XCTAssertEqual(degraded.micRecording?.captureSessionID, session.id)
+        XCTAssertEqual(degraded.systemAudioRecording?.status, .failed)
+        XCTAssertTrue(degraded.systemAudioRecording?.diagnostics.contains(where: { $0.contains("source device disconnected") }) == true)
+        XCTAssertTrue(degraded.processingStatus.contains(where: { $0.contains("microphone-only") }))
+    }
+
     func testLiveNotesRejectMalformedMeetingMarkdown() throws {
         let fixture = try CaptureFixture()
         let service = fixture.service()
@@ -341,6 +366,25 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("meeting_source: meet"))
         XCTAssertTrue(markdown.contains("audio_scope: allSystemAudio"))
         _ = try service.stopManual()
+    }
+
+    func testSelectedMicrophoneAndSystemTracksShareSessionIdentityAndTiming() throws {
+        let fixture = try CaptureFixture()
+        let service = fixture.service(micRecorder: SpyMicRecorder(), systemAudioRecorder: SpySystemAudioRecorder())
+        let session = try service.startManual(source: .teams)
+        let activeMic = try XCTUnwrap(service.snapshot.micRecording)
+        let activeSystem = try XCTUnwrap(service.snapshot.systemAudioRecording)
+
+        XCTAssertEqual(activeMic.captureSessionID, session.id)
+        XCTAssertEqual(activeSystem.captureSessionID, session.id)
+        XCTAssertEqual(activeMic.meetingRelativePath, session.meetingRelativePath)
+        XCTAssertEqual(activeSystem.meetingRelativePath, session.meetingRelativePath)
+        XCTAssertEqual(activeMic.startedAt, activeSystem.startedAt)
+        XCTAssertEqual(activeSystem.source, .teams)
+        XCTAssertEqual(activeSystem.scope, .teamsApplication)
+
+        _ = try service.stopManual()
+        XCTAssertEqual(service.snapshot.micRecording?.endedAt, service.snapshot.systemAudioRecording?.endedAt)
     }
 
     func testSystemAudioFailureDegradesCaptureWhileMicrophoneStillStartsAndFinalizes() throws {
@@ -733,6 +777,19 @@ private final class SpySystemAudioRecorder: SystemAudioTrackRecordingManaging {
     var finalizeError: Error?
     private(set) var startCalls = 0
     private(set) var stopCalls = 0
+    private var failureHandler: ((SystemAudioTrackRecordingMetadata) -> Void)?
+
+    func setCaptureFailureHandler(_ handler: ((SystemAudioTrackRecordingMetadata) -> Void)?) {
+        failureHandler = handler
+    }
+
+    func reportFailure(_ message: String) {
+        guard var metadata = activeMetadata else { return }
+        metadata.status = .failed
+        metadata.diagnostics.append(message)
+        latestMetadata = metadata
+        failureHandler?(metadata)
+    }
 
     init(mediaRoot: URL? = nil) {
         self.mediaRoot = mediaRoot

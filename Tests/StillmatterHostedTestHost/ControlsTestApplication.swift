@@ -15,6 +15,7 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
     private var settingsObserver: UUID?
     private var validationAttempts = 0
     private var releaseFinalization: (() -> Void)?
+    private var sourceLossRecorder: ControlsTestSystemAudioRecorder?
 
     init(root: URL, scenario: String) throws {
         self.root = root
@@ -34,7 +35,16 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
             settingsStore.settings = initial
         }
         installer = TranscriptionComponentInstaller(paths: TranscriptionComponentPaths(applicationSupportURL: support), acquirer: ControlsTestNoModelAcquirer())
-        if scenario == "overlap" {
+        if scenario == "source-loss" {
+            let recorder = ControlsTestSystemAudioRecorder()
+            sourceLossRecorder = recorder
+            service = MeetingCaptureService(
+                vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support),
+                micRecorder: ControlsTestMicRecorder(mediaRoot: root.appendingPathComponent("media")),
+                systemAudioRecorder: recorder,
+                preflight: { .readyForTesting }
+            )
+        } else if scenario == "overlap" {
             let finalizer = ControlsTestPausedBundleFinalizer()
             releaseFinalization = { finalizer.resume.signal() }
             service = MeetingCaptureService(
@@ -97,6 +107,11 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
             release.setAccessibilityIdentifier("recording-test-release-prior-finalization")
             navigationItems.append(release)
         }
+        if scenario == "source-loss" {
+            let loseSource = NSButton(title: "Simulate Source Loss", target: self, action: #selector(simulateSourceLoss(_:)))
+            loseSource.setAccessibilityIdentifier("recording-test-source-loss")
+            navigationItems.append(loseSource)
+        }
         let navigation = NSStackView(views: navigationItems)
         navigation.translatesAutoresizingMaskIntoConstraints = false
         scroll = NSScrollView()
@@ -147,6 +162,10 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
 
     @objc private func releaseHeldFinalization(_ sender: Any?) {
         releaseFinalization?()
+    }
+
+    @objc private func simulateSourceLoss(_ sender: Any?) {
+        sourceLossRecorder?.reportFailure("synthetic source disconnected")
     }
 
     private func show(_ view: NSView) {
@@ -244,6 +263,48 @@ private final class ControlsTestMicRecorder: MicTrackRecordingManaging {
         metadata.codec = "AAC in M4A"
         try Data("native controls finalized audio".utf8).write(to: URL(fileURLWithPath: metadata.finalFilePath))
         activeMetadata = nil
+        return metadata
+    }
+}
+
+private final class ControlsTestSystemAudioRecorder: SystemAudioTrackRecordingManaging {
+    private(set) var activeMetadata: SystemAudioTrackRecordingMetadata?
+    private(set) var latestMetadata: SystemAudioTrackRecordingMetadata?
+    private var failureHandler: ((SystemAudioTrackRecordingMetadata) -> Void)?
+
+    func setCaptureFailureHandler(_ handler: ((SystemAudioTrackRecordingMetadata) -> Void)?) {
+        failureHandler = handler
+    }
+
+    func start(sessionID: String, meetingRelativePath: String, startedAt: Date,
+               source: CaptureAudioSource) throws -> SystemAudioTrackRecordingMetadata {
+        let metadata = SystemAudioTrackRecordingMetadata(
+            captureSessionID: sessionID, meetingRelativePath: meetingRelativePath, source: source, scope: source.scope,
+            recoveryFilePath: "/synthetic/\(sessionID)/system.caf", finalFilePath: "/synthetic/\(sessionID)/system.m4a",
+            metadataFilePath: "/synthetic/\(sessionID)/system.json", startedAt: startedAt, sampleRate: 48_000, channelCount: 2
+        )
+        activeMetadata = metadata
+        latestMetadata = metadata
+        return metadata
+    }
+
+    func reportFailure(_ message: String) {
+        guard var metadata = activeMetadata else { return }
+        metadata.status = .failed
+        metadata.diagnostics.append(message)
+        activeMetadata = metadata
+        latestMetadata = metadata
+        failureHandler?(metadata)
+    }
+
+    func stop(endedAt: Date) throws -> SystemAudioTrackRecordingMetadata {
+        guard var metadata = activeMetadata else { throw SystemAudioTrackRecordingError.noActiveRecording }
+        metadata.endedAt = endedAt
+        metadata.status = metadata.status == .failed ? .partial : .completed
+        metadata.durationSeconds = 1
+        metadata.codec = "synthetic PCM"
+        activeMetadata = nil
+        latestMetadata = metadata
         return metadata
     }
 }

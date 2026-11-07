@@ -71,6 +71,26 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
     }
 
+    func testRuntimeSourceLossShowsPersistentMicrophoneOnlyWarningAndRetainsScope() throws {
+        app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "source-loss"
+        launch()
+        let start = app.buttons["recording-start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        app.typeKey(.return, modifierFlags: [])
+        let stop = app.buttons["recording-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        let scope = app.staticTexts["recording-audio-scope"]
+        app.buttons["recording-test-source-loss"].click()
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "microphone capture continues"), evaluatedWith: scope)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue((scope.value as? String ?? scope.label).contains("Teams application audio only"), scope.debugDescription)
+        XCTAssertTrue((scope.value as? String ?? scope.label).contains("synthetic source disconnected"), scope.debugDescription)
+        XCTAssertTrue(stop.isEnabled, "Source loss leaves Stop available for the active microphone track")
+        stop.click()
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        XCTAssertTrue(try meetingText().contains("audio_scope: teamsApplication"))
+    }
+
     func testNextCaptureStartsBeforePriorSessionFinalizationAndKeepsNotesOwned() throws {
         app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "overlap"
         launch()

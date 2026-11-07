@@ -219,12 +219,21 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         let factory = SyntheticSystemAudioStreamFactory()
         let recorder = MacSystemAudioTrackRecorder(streamFactory: factory)
         let first = root.appendingPathComponent("failed.caf")
+        var reportedFailure: String?
+        let failureExpectation = expectation(description: "stream failure reaches the capture coordinator")
+        recorder.setCaptureFailureHandler {
+            reportedFailure = String(describing: $0)
+            failureExpectation.fulfill()
+        }
         _ = try recorder.startWritingRecovery(to: first, scope: .teamsApplication)
         let stream = try XCTUnwrap(factory.streams.last)
         stream.deliver(try syntheticSystemSample(0.25))
         stream.fail(CocoaError(.fileReadUnknown))
-        XCTAssertThrowsError(try recorder.stopWritingRecovery(to: first))
+        wait(for: [failureExpectation], timeout: 2)
+        XCTAssertNotNil(reportedFailure)
+        XCTAssertGreaterThan(try recorder.stopWritingRecovery(to: first).durationSeconds, 0)
         XCTAssertEqual(try AVAudioFile(forReading: first).length, 1_024)
+        XCTAssertEqual(stream.stopCount, 0, "The stream delegate already confirmed that the OS stopped this source")
         _ = try recorder.startWritingRecovery(to: root.appendingPathComponent("next.caf"), scope: .allSystemAudio)
         _ = try recorder.stopWritingRecovery(to: root.appendingPathComponent("next.caf"))
     }

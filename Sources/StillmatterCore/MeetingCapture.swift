@@ -230,6 +230,11 @@ public final class MeetingCaptureService {
         self.now = now
         self.timeZone = timeZone
         self.makeID = makeID
+        systemAudioRecorder?.setCaptureFailureHandler { [weak self] metadata in
+            DispatchQueue.main.async { [weak self] in
+                self?.systemAudioCaptureFailed(metadata)
+            }
+        }
     }
 
     public var canStartCapture: Bool {
@@ -573,6 +578,14 @@ public final class MeetingCaptureService {
     private func notifyObservers() {
         let current = snapshot
         observers.forEach { $0(current) }
+    }
+
+    private func systemAudioCaptureFailed(_ metadata: SystemAudioTrackRecordingMetadata) {
+        guard session?.id == metadata.captureSessionID else { return }
+        systemAudioRecording = metadata
+        processingStatus.removeAll { $0.hasPrefix("System audio unavailable;") }
+        processingStatus.append("System audio source lost; capture is continuing microphone-only: \(metadata.diagnostics.last ?? "source unavailable")")
+        notifyObservers()
     }
 
     private func append(_ text: String, prefix: String) throws {
