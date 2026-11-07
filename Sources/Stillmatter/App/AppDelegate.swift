@@ -909,10 +909,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func stopManualCapture(_ sender: Any?) {
         guard let service = captureService, service.snapshot.state == .recording else { return }
         manualCaptureOverride()
+        let stoppingMeeting = service.snapshot.meetingRelativePath
         service.stopManualAsync { [weak self] result in
             if case let .failure(error) = result {
                 NSLog("Manual capture stop failed: \(error)")
-                NSApp.requestUserAttention(.criticalRequest)
+                if service.snapshot.meetingRelativePath == stoppingMeeting {
+                    NSApp.requestUserAttention(.criticalRequest)
+                }
             }
             self?.stateStore.publish(.recordingStatus)
         }

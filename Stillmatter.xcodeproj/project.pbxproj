@@ -85,6 +85,7 @@
 		56271DDF22B89902C89083F5 /* StillmatterUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = StillmatterUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7815B2A03095050800CA324D /* Runner.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = Runner.xcodeproj; sourceTree = "<group>"; };
 		7815B96A3097F65E00CA324D /* Runner.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = Runner.xcodeproj; sourceTree = "<group>"; };
+		7815C0E0309BB6A300CA324D /* Runner.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = Runner.xcodeproj; sourceTree = "<group>"; };
 		7F9449EB9F54468AD1CD99CA /* libStillmatterCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libStillmatterCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4210E23605D7E056A25695C /* StillmatterControlsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = StillmatterControlsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F2F43757AD605B7E4D4D6568 /* StillmatterHostedTestHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = StillmatterHostedTestHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -197,6 +198,13 @@
 			sourceTree = "<group>";
 		};
 		7815B96D3097F65E00CA324D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7815C0E4309BB6A300CA324D /* Products */ = {
 			isa = PBXGroup;
 			children = (
 			);
@@ -437,6 +445,10 @@
 				{
 					ProductGroup = 7815B96D3097F65E00CA324D /* Products */;
 					ProjectRef = 7815B96A3097F65E00CA324D /* Runner.xcodeproj */;
+				},
+				{
+					ProductGroup = 7815C0E4309BB6A300CA324D /* Products */;
+					ProjectRef = 7815C0E0309BB6A300CA324D /* Runner.xcodeproj */;
 				},
 			);
 			projectRoot = "";

@@ -93,6 +93,11 @@ enum CaptureSessionAssembly {
                 continue
             }
             do {
+                // Completed tracks can still be awaiting their durable Job handoff after a crash.
+                // Do not re-finalize a Meeting whose capture already has processing intent.
+                if let jobStore, try CaptureProcessingHandoff.existing(sessionID: sessionID,
+                    meetingRelativePath: mic.meetingRelativePath, workspaceRootURL: vault.rootURL,
+                    jobStore: jobStore) != nil { continue }
                 let recovery = RecordingRecoveryService(
                     vault: vault, jobStore: jobStore, bundleFinalizer: finalizer,
                     transcriptionSidecarGenerator: transcriptionSidecarGenerator

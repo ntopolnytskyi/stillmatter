@@ -208,7 +208,7 @@ final class MeetingManagementTests: XCTestCase {
     func testLiveSnapshotIsMergedWithDurableRows() throws {
         let fixture = try Fixture()
         try fixture.write("Meetings/live/meeting.md", "---\ntitle: Live\n---\n# Live\n")
-        let snapshot = CaptureSnapshot(state: .recording, meetingTitle: "Live", meetingRelativePath: "Meetings/live/meeting.md", elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
+        let snapshot = CaptureSnapshot(state: .recording, meetingTitle: "Live", meetingRelativePath: "Meetings/live/meeting.md", source: .teams, elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
         let row = try XCTUnwrap(MeetingManagementService(vault: fixture.vault, captureSnapshot: { snapshot }).list().first)
         XCTAssertEqual(row.captureState, .live)
     }
@@ -219,7 +219,7 @@ final class MeetingManagementTests: XCTestCase {
         let path = "Meetings/live-legacy/meeting.md"
         let original = "---\ntitle: Live legacy\ncapture_session_id: live-legacy\n---\n# Live legacy\n\n## Live notes\n\nInitial recorder note.\n"
         try fixture.write(path, original)
-        var snapshot: CaptureSnapshot? = CaptureSnapshot(state: .recording, meetingTitle: "Live legacy", meetingRelativePath: path,
+        var snapshot: CaptureSnapshot? = CaptureSnapshot(state: .recording, meetingTitle: "Live legacy", meetingRelativePath: path, source: .teams,
             elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil,
             systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
         let service = MeetingManagementService(vault: fixture.vault, captureSnapshot: { snapshot })
@@ -598,7 +598,7 @@ final class MeetingManagementTests: XCTestCase {
                 metadata: ["capture_session_id": id]
             ))
         }
-        let snapshot = CaptureSnapshot(state: .recording, meetingTitle: "third", meetingRelativePath: "Meetings/third/meeting.md", elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
+        let snapshot = CaptureSnapshot(state: .recording, meetingTitle: "third", meetingRelativePath: "Meetings/third/meeting.md", source: .teams, elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
         let service = MeetingManagementService(vault: fixture.vault, jobStore: store, captureSnapshot: { snapshot })
         let rows = try service.list()
         XCTAssertEqual(rows.filter { $0.processingState == .processing }.count, 2)
@@ -670,7 +670,7 @@ final class MeetingManagementTests: XCTestCase {
             title: "Summarize second", executionClass: .heavy,
             stages: [JobStageDefinition(id: "summarize", title: "Summarize")],
             metadata: ["capture_session_id": "second"]))
-        let activeCapture = CaptureSnapshot(state: .recording, meetingTitle: "second", meetingRelativePath: "Meetings/second/meeting.md", elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
+        let activeCapture = CaptureSnapshot(state: .recording, meetingTitle: "second", meetingRelativePath: "Meetings/second/meeting.md", source: .teams, elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
         let service = MeetingManagementService(vault: fixture.vault, jobStore: store,
             captureSnapshot: { activeCapture }, retryUnavailableReason: { _ in nil },
             retryDispatcher: { _, id, path, session in try scheduler.retry(id: id, meetingRelativePath: path, captureSessionID: session) })
