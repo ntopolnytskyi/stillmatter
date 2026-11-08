@@ -40,6 +40,30 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(service.liveNotesDocument()).load().text, "Keep my draft")
     }
 
+    @MainActor
+    func testLiveNotesLoadRetryRestoresSessionDraftAfterTransientFileFailure() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-notes-retry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: root.appendingPathComponent("support"))
+        let service = MeetingCaptureService(vault: vault, preflight: { .readyForTesting })
+        _ = try service.startManual()
+        let path = try XCTUnwrap(service.snapshot.meetingRelativePath)
+        let notesURL = workspace.appendingPathComponent((path as NSString).deletingLastPathComponent)
+            .appendingPathComponent("my-notes.md")
+        try FileManager.default.createDirectory(at: notesURL, withIntermediateDirectories: true)
+        let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+        view.refresh(isVisible: true)
+        let status = try XCTUnwrap(findView("recording-my-notes-status", in: view) as? NSTextField)
+        XCTAssertTrue(status.stringValue.contains("Could not load My Notes"))
+        try FileManager.default.removeItem(at: notesURL)
+        try XCTUnwrap(service.liveNotesDocument()).stage("Recovered draft", baseVersion: nil)
+        view.refresh(isVisible: true)
+        XCTAssertEqual(view.noteTextView.string, "Recovered draft")
+        XCTAssertTrue(status.stringValue.contains("Recovered unsaved draft"))
+    }
+
     private func findView(_ identifier: String, in view: NSView) -> NSView? {
         if view.accessibilityIdentifier() == identifier { return view }
         for child in view.subviews {

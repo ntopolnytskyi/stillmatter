@@ -197,7 +197,7 @@ public final class MeetingCaptureService {
     private var observers: [(CaptureSnapshot) -> Void] = []
     private var priorCaptureFinalizations: [PriorCaptureFinalization] = []
     private var processingStatus: [String] = []
-    private let notesRecoveryWarning: String?
+    private var notesRecoveryWarning: String?
     private var preflightReport: AudioCapturePreflightReport?
     private var micRecording: MicTrackRecordingMetadata?
     private var systemAudioRecording: SystemAudioTrackRecordingMetadata?
@@ -231,9 +231,14 @@ public final class MeetingCaptureService {
         self.now = now
         self.timeZone = timeZone
         self.makeID = makeID
-        let unresolvedNotes = LiveMeetingNotes.recoverPendingDrafts(in: vault)
-        notesRecoveryWarning = unresolvedNotes.isEmpty ? nil
-            : "My Notes draft needs recovery for \(unresolvedNotes.joined(separator: ", ")). The workspace file was left unchanged."
+        DispatchQueue.global(qos: .utility).async { [weak self, vault] in
+            let unresolvedNotes = LiveMeetingNotes.recoverPendingDrafts(in: vault)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !unresolvedNotes.isEmpty else { return }
+                self.notesRecoveryWarning = "My Notes draft needs recovery for \(unresolvedNotes.joined(separator: ", ")). The workspace file was left unchanged."
+                self.notifyObservers()
+            }
+        }
         systemAudioRecorder?.setCaptureFailureHandler { [weak self] metadata in
             DispatchQueue.main.async { [weak self] in
                 self?.systemAudioCaptureFailed(metadata)

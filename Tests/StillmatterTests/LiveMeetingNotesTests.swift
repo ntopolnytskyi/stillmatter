@@ -59,6 +59,11 @@ final class LiveMeetingNotesTests: XCTestCase {
         let document = fixture.document(session: "session-a")
         try document.stage("Recovered after interruption", baseVersion: nil)
         let restarted = MeetingCaptureService(vault: fixture.vault, preflight: { .readyForTesting })
+        XCTAssertTrue(restarted.canStartCapture)
+        let recovered = expectation(for: NSPredicate { _, _ in
+            (try? fixture.notesText()) == "Recovered after interruption"
+        }, evaluatedWith: restarted)
+        wait(for: [recovered], timeout: 5)
         XCTAssertFalse(restarted.snapshot.processingStatus.contains { $0.hasPrefix("My Notes draft needs recovery") })
         XCTAssertEqual(try fixture.notesText(), "Recovered after interruption")
         XCTAssertFalse(try document.load().hasDraft)
@@ -90,6 +95,10 @@ final class LiveMeetingNotesTests: XCTestCase {
         defer { fixture.cleanup() }
         try fixture.document(session: "session-b").stage("B draft", baseVersion: nil)
         let restarted = MeetingCaptureService(vault: fixture.vault, preflight: { .readyForTesting })
+        let warned = expectation(for: NSPredicate { _, _ in
+            restarted.snapshot.processingStatus.contains { $0.hasPrefix("My Notes draft needs recovery") }
+        }, evaluatedWith: restarted)
+        wait(for: [warned], timeout: 5)
         XCTAssertTrue(restarted.snapshot.processingStatus.contains { $0.hasPrefix("My Notes draft needs recovery") })
         XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: fixture.notesPath))
         XCTAssertEqual(try fixture.document(session: "session-b").load().text, "B draft")

@@ -928,10 +928,13 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
               let document = service.liveNotesDocument() else { return }
         if notesMeetingPath != path {
             notesSaveWork?.cancel()
-            notesMeetingPath = path
-            notesDocument = document
+            notesMeetingPath = nil
+            notesDocument = nil
+            noteTextView.string = ""
             do {
                 let state = try document.load()
+                notesMeetingPath = path
+                notesDocument = document
                 notesVersion = state.version
                 notesSavedText = state.savedText
                 noteTextView.string = state.text
