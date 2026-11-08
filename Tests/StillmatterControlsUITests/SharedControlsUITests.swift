@@ -66,9 +66,42 @@ final class SharedControlsUITests: XCTestCase {
         waitForExpectations(timeout: 10)
         XCTAssertEqual(try String(contentsOf: path), "External edit")
         XCTAssertTrue((editor.value as? String ?? "").contains("local draft"))
-        app.buttons["recording-reload-notes"].click()
-        XCTAssertEqual(editor.value as? String, "External edit")
+        let useDraft = app.buttons["recording-use-notes-draft"]
+        XCTAssertTrue(useDraft.isEnabled)
+        useDraft.click()
+        XCTAssertEqual(try String(contentsOf: path), "Initial local draft")
+        let preserved = root.appendingPathComponent("support/MeetingArtifacts/LiveNotes/Preserved")
+        let copies = try FileManager.default.contentsOfDirectory(at: preserved, includingPropertiesForKeys: nil)
+        XCTAssertEqual(copies.count, 1)
+        XCTAssertEqual(try String(contentsOf: copies[0]), "External edit")
+        editor.click()
+        editor.typeText(" second draft")
+        try "External second".write(to: path, atomically: true, encoding: .utf8)
+        editor.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(editor.value as? String, "External second")
+        XCTAssertEqual(try String(contentsOf: path), "External second")
         app.buttons["recording-stop"].click()
+    }
+
+    func testLiveNotesSurviveNavigationAndSyntheticAppInterruption() throws {
+        launch()
+        app.buttons["recording-start"].click()
+        let editor = app.textViews["recording-my-notes-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.click()
+        editor.typeText("Typed during capture")
+        app.buttons["controls-nav-settings"].click()
+        app.buttons["controls-nav-recording"].click()
+        XCTAssertEqual(editor.value as? String, "Typed during capture")
+        editor.click()
+        editor.typeText(" before interruption")
+        app.terminate()
+        launch()
+        let recovered = expectation(for: NSPredicate { _, _ in
+            (try? self.noteText()) == "Typed during capture before interruption"
+        }, evaluatedWith: app)
+        wait(for: [recovered], timeout: 10)
+        XCTAssertFalse(app.textViews["recording-my-notes-editor"].isHittable)
     }
 
     func testManualSourceShowsActualScopeAndPersistsMeetWithoutChangingMicrophone() throws {

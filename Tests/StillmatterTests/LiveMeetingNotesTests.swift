@@ -33,6 +33,19 @@ final class LiveMeetingNotesTests: XCTestCase {
         XCTAssertFalse(try document.load().hasDraft)
     }
 
+    func testExplicitConflictResolutionKeepsExternalCopyBeforeUsingDraft() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let document = fixture.document(session: "session-a")
+        let base = try document.save("Original", expectedVersion: nil)
+        try document.stage("My resolved text", baseVersion: base)
+        _ = try fixture.vault.writeMarkdown(Data("External text".utf8), relativePath: fixture.notesPath, expectedVersion: base)
+        let resolved = try document.useDraftPreservingExternal()
+        XCTAssertEqual(try fixture.notesText(), "My resolved text")
+        XCTAssertEqual(try String(contentsOf: resolved.preservedCopy), "External text")
+        XCTAssertFalse(try document.load().hasDraft)
+    }
+
     func testDraftCannotAttachToNewCaptureAtSameMeetingPath() throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

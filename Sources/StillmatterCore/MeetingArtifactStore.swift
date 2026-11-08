@@ -338,7 +338,8 @@ final class MeetingArtifactStore {
         let range = legacyNotesRange(in: doorwayText)
         let embedded = range.map { String(doorwayText[$0.bodyStart..<$0.end]) } ?? ""
         let notes = try oldNotes.map { try decode($0.data, path: notePath) } ?? embedded
-        if oldNotes != nil && !embedded.isEmpty && notes.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")) != embedded.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")) {
+        if oldNotes != nil && !embedded.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")).isEmpty &&
+            notes.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")) != embedded.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")) {
             throw malformed(notePath, "This separate file and the doorway's embedded Notes differ. Both are preserved; resolve the two versions before migration.")
         }
         if let extraction, extraction.meeting != meetingPath || extraction.transcript != sibling(meetingPath, "transcript.json") {

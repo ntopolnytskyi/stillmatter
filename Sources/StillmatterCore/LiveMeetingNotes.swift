@@ -96,6 +96,21 @@ public final class LiveMeetingNotes {
                      hasDraft: false, conflictsWithFile: false)
     }
 
+    /// An explicit conflict decision keeps the displaced external version as a
+    /// readable copy before publishing the user's staged draft.
+    public func useDraftPreservingExternal() throws -> (version: WorkspaceFileVersion, preservedCopy: URL) {
+        guard let draft = try storedDraft() else { throw CocoaError(.fileNoSuchFile) }
+        let source = try currentFile()
+        let preserved = draftURL.deletingLastPathComponent().appendingPathComponent("Preserved", isDirectory: true)
+            .appendingPathComponent("\(sessionID)-\(UUID().uuidString).md")
+        try FileManager.default.createDirectory(at: preserved.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(source.text.utf8).write(to: preserved, options: .atomic)
+        let version = try vault.writeMarkdown(Data(draft.text.utf8), relativePath: notesPath,
+                                              expectedVersion: source.version)
+        try? discardDraft()
+        return (version, preserved)
+    }
+
     private func currentFile() throws -> (text: String, version: WorkspaceFileVersion?) {
         guard let version = try vault.versionOfMarkdown(relativePath: notesPath) else { return ("", nil) }
         let data = try vault.readMarkdown(relativePath: notesPath).data

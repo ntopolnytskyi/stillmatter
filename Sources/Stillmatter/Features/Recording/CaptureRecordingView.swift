@@ -47,13 +47,15 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     private let scopeLabel = NSTextField(wrappingLabelWithString: "")
     private let regenerateButton: NSButton
     let noteTextView = NSTextView()
-    private let notesStatus = NSTextField(labelWithString: "")
+    private let notesStatus = NSTextField(wrappingLabelWithString: "")
     private let saveNotesButton: NSButton
     private let reloadNotesButton: NSButton
+    private let useDraftButton: NSButton
     private var notesDocument: LiveMeetingNotes?
     private var notesMeetingPath: String?
     private var notesVersion: WorkspaceFileVersion?
     private var notesSavedText = ""
+    private var notesHaveConflict = false
     private var notesSaveWork: DispatchWorkItem?
     private let preflightRows = NSStackView()
     private let artifactsRows = NSStackView()
@@ -86,6 +88,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         regenerateButton = controls.button("Regenerate Transcript", identifier: "recording-regenerate")
         saveNotesButton = controls.button("Save Notes", identifier: "recording-save-notes")
         reloadNotesButton = controls.button("Reload Latest", identifier: "recording-reload-notes")
+        useDraftButton = controls.button("Use My Draft", identifier: "recording-use-notes-draft")
         artifactsDisclosure = controls.disclosure("Show Processing & Artifacts", identifier: "recording-artifacts")
         teamsDisclosure = controls.disclosure("Show Teams Detection Signals", identifier: "recording-teams")
         languagePopup = controls.popup(identifier: "recording-language")
@@ -515,9 +518,14 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         saveNotesButton.keyEquivalentModifierMask = [.command]
         reloadNotesButton.target = self
         reloadNotesButton.action = #selector(reloadLiveNotes(_:))
+        reloadNotesButton.keyEquivalent = "\u{1b}"
+        useDraftButton.target = self
+        useDraftButton.action = #selector(useLiveNotesDraft(_:))
+        useDraftButton.isEnabled = false
         notesStatus.font = GraphiteFocusPresentation.Typography.metadata
+        notesStatus.maximumNumberOfLines = 0
         notesStatus.setAccessibilityIdentifier("recording-my-notes-status")
-        let actions = NSStackView(views: [saveNotesButton, reloadNotesButton, notesStatus])
+        let actions = NSStackView(views: [saveNotesButton, reloadNotesButton, useDraftButton])
         actions.orientation = .horizontal
         actions.spacing = GraphiteFocusPresentation.Space.compact
         let content = NSStackView()
@@ -526,6 +534,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         content.spacing = GraphiteFocusPresentation.Space.compact
         addFullWidth(scroll, to: content)
         content.addArrangedSubview(actions)
+        addFullWidth(notesStatus, to: content)
         return makeSection(
             title: "My Notes",
             caption: "Markdown saves automatically in this Meeting's my-notes.md. Use - [ ] for an Action Item.",
@@ -605,6 +614,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         noteTextView.isEditable = isRecording
         saveNotesButton.isEnabled = isRecording
         reloadNotesButton.isEnabled = isRecording
+        useDraftButton.isEnabled = isRecording && notesHaveConflict
         liveNotesSection?.isHidden = !isRecording
         startButton.title = presentation.meetingPath == nil ? "Start Capture" : "Start New Capture"
 
@@ -925,8 +935,9 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
                 notesVersion = state.version
                 notesSavedText = state.savedText
                 noteTextView.string = state.text
-                notesStatus.stringValue = state.conflictsWithFile ? "Conflict: external changes and your draft are preserved. Reload Latest discards the draft." :
-                    (state.hasDraft ? "Recovered unsaved draft. Save to retry." : "Saved")
+                notesHaveConflict = state.conflictsWithFile
+                if state.conflictsWithFile { showNotesConflict() }
+                else { notesStatus.stringValue = state.hasDraft ? "Recovered unsaved draft. Save to retry." : "Saved" }
             } catch {
                 notesStatus.stringValue = "Could not load My Notes: \(error.localizedDescription)"
             }
@@ -935,11 +946,13 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         do {
             let state = try document.load()
             if state.conflictsWithFile {
-                notesStatus.stringValue = "Conflict: external changes and your draft are preserved. Reload Latest discards the draft."
+                showNotesConflict()
             } else if !state.hasDraft && noteTextView.string == notesSavedText && state.savedText != notesSavedText {
                 noteTextView.string = state.savedText
                 notesSavedText = state.savedText
                 notesVersion = state.version
+                notesHaveConflict = false
+                useDraftButton.isEnabled = false
                 notesStatus.stringValue = "Updated from my-notes.md"
             }
         } catch {
@@ -969,10 +982,12 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             let version = try document.save(text, expectedVersion: notesVersion)
             notesVersion = version
             notesSavedText = text
+            notesHaveConflict = false
+            useDraftButton.isEnabled = false
             notesStatus.stringValue = "Saved"
         } catch let error as WorkspaceVaultError {
             if case .conflict = error {
-                notesStatus.stringValue = "Conflict: external changes and your draft are preserved. Reload Latest discards the draft."
+                showNotesConflict()
             } else {
                 notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Draft retained."
             }
@@ -989,10 +1004,33 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             noteTextView.string = state.text
             notesSavedText = state.savedText
             notesVersion = state.version
+            notesHaveConflict = false
+            useDraftButton.isEnabled = false
             notesStatus.stringValue = "Reloaded latest My Notes"
         } catch {
             notesStatus.stringValue = "Could not reload My Notes: \(error.localizedDescription). Draft retained."
         }
+    }
+
+    @objc private func useLiveNotesDraft(_ sender: NSButton) {
+        guard let document = notesDocument else { return }
+        notesSaveWork?.cancel()
+        do {
+            let result = try document.useDraftPreservingExternal()
+            notesVersion = result.version
+            notesSavedText = noteTextView.string
+            notesHaveConflict = false
+            useDraftButton.isEnabled = false
+            notesStatus.stringValue = "Saved your draft. Previous external notes are preserved at \(result.preservedCopy.path)."
+        } catch {
+            notesStatus.stringValue = "Could not resolve My Notes conflict: \(error.localizedDescription). Both versions remain preserved."
+        }
+    }
+
+    private func showNotesConflict() {
+        notesHaveConflict = true
+        useDraftButton.isEnabled = true
+        notesStatus.stringValue = "Conflict: external changes and your draft are preserved. Use My Draft saves your text and keeps a copy of the external file; Reload Latest discards the draft."
     }
 
     @objc private func openMeetingFolder(_ sender: NSButton) {
