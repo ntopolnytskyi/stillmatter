@@ -620,7 +620,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
 
         renderPreflight(presentation.preflight, isConfigured: presentation.isConfigured)
         renderArtifacts(presentation.artifactRows)
-        let recoveryWarning = serviceProvider()?.snapshot.processingStatus.first { $0.hasPrefix("My Notes draft needs recovery") }
+        let recoveryWarning = serviceProvider()?.snapshot.notesRecoveryWarning
         let failure = operationFailure ?? presentation.failureMessage ?? recoveryWarning
         errorLabel.stringValue = failure.map { "!  Failure details: \($0)" } ?? ""
         errorLabel.isHidden = failure == nil
@@ -988,6 +988,8 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             notesHaveConflict = false
             useDraftButton.isEnabled = false
             notesStatus.stringValue = "Saved"
+        } catch let error as LiveMeetingNotesError {
+            notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Keep this window open; draft recovery is unavailable."
         } catch let error as WorkspaceVaultError {
             if case .conflict = error {
                 showNotesConflict()
@@ -1019,14 +1021,16 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         guard let document = notesDocument else { return }
         notesSaveWork?.cancel()
         do {
-            let result = try document.useDraftPreservingExternal()
+            let result = try document.useDraftPreservingExternal(noteTextView.string, expectedBaseVersion: notesVersion)
             notesVersion = result.version
             notesSavedText = noteTextView.string
             notesHaveConflict = false
             useDraftButton.isEnabled = false
             notesStatus.stringValue = "Saved your draft. Previous external notes are preserved at \(result.preservedCopy.path)."
+        } catch let error as LiveMeetingNotesError {
+            notesStatus.stringValue = "Could not save the current draft: \(error.localizedDescription). Keep this window open."
         } catch {
-            notesStatus.stringValue = "Could not resolve My Notes conflict: \(error.localizedDescription). Both versions remain preserved."
+            notesStatus.stringValue = "Could not resolve My Notes conflict: \(error.localizedDescription). Your current text remains in this editor."
         }
     }
 

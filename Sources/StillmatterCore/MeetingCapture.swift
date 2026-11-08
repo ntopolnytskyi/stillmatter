@@ -138,6 +138,7 @@ public struct CaptureSnapshot: Equatable {
     public let elapsedSeconds: Int
     public let failureMessage: String?
     public let processingStatus: [String]
+    public let notesRecoveryWarning: String?
     public let preflightReport: AudioCapturePreflightReport?
     public let micRecording: MicTrackRecordingMetadata?
     public let systemAudioRecording: SystemAudioTrackRecordingMetadata?
@@ -153,6 +154,7 @@ public struct CaptureSnapshot: Equatable {
         elapsedSeconds: Int,
         failureMessage: String?,
         processingStatus: [String],
+        notesRecoveryWarning: String? = nil,
         preflightReport: AudioCapturePreflightReport?,
         micRecording: MicTrackRecordingMetadata?,
         systemAudioRecording: SystemAudioTrackRecordingMetadata?,
@@ -167,6 +169,7 @@ public struct CaptureSnapshot: Equatable {
         self.elapsedSeconds = elapsedSeconds
         self.failureMessage = failureMessage
         self.processingStatus = processingStatus
+        self.notesRecoveryWarning = notesRecoveryWarning
         self.preflightReport = preflightReport
         self.micRecording = micRecording
         self.systemAudioRecording = systemAudioRecording
@@ -260,7 +263,8 @@ public final class MeetingCaptureService {
             source: visibleSession?.source,
             elapsedSeconds: elapsed,
             failureMessage: machine.failureMessage,
-            processingStatus: processingStatus + (notesRecoveryWarning.map { [$0] } ?? []),
+            processingStatus: processingStatus,
+            notesRecoveryWarning: notesRecoveryWarning,
             preflightReport: preflightReport,
             micRecording: micRecording,
             systemAudioRecording: systemAudioRecording,

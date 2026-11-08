@@ -1,5 +1,15 @@
 import Foundation
 
+public enum LiveMeetingNotesError: LocalizedError {
+    case draftNotStored(Error)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .draftNotStored(error): return "The recoverable draft could not be written: \(error.localizedDescription)"
+        }
+    }
+}
+
 /// A capture-session-bound draft for the Meeting-owned My Notes file.
 /// The workspace file remains authoritative; a conflicting draft stays in app support.
 public final class LiveMeetingNotes {
@@ -79,7 +89,8 @@ public final class LiveMeetingNotes {
 
     @discardableResult
     public func save(_ text: String, expectedVersion: WorkspaceFileVersion?) throws -> WorkspaceFileVersion {
-        try stage(text, baseVersion: expectedVersion)
+        do { try stage(text, baseVersion: expectedVersion) }
+        catch { throw LiveMeetingNotesError.draftNotStored(error) }
         let version = try vault.writeMarkdown(Data(text.utf8), relativePath: notesPath, expectedVersion: expectedVersion)
         try? FileManager.default.removeItem(at: draftURL)
         return version
@@ -98,7 +109,9 @@ public final class LiveMeetingNotes {
 
     /// An explicit conflict decision keeps the displaced external version as a
     /// readable copy before publishing the user's staged draft.
-    public func useDraftPreservingExternal() throws -> (version: WorkspaceFileVersion, preservedCopy: URL) {
+    public func useDraftPreservingExternal(_ currentText: String, expectedBaseVersion: WorkspaceFileVersion?) throws -> (version: WorkspaceFileVersion, preservedCopy: URL) {
+        do { try stage(currentText, baseVersion: expectedBaseVersion) }
+        catch { throw LiveMeetingNotesError.draftNotStored(error) }
         guard let draft = try storedDraft() else { throw CocoaError(.fileNoSuchFile) }
         let source = try currentFile()
         let preserved = draftURL.deletingLastPathComponent().appendingPathComponent("Preserved", isDirectory: true)

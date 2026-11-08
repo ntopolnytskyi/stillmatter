@@ -40,8 +40,8 @@ final class LiveMeetingNotesTests: XCTestCase {
         let base = try document.save("Original", expectedVersion: nil)
         try document.stage("My resolved text", baseVersion: base)
         _ = try fixture.vault.writeMarkdown(Data("External text".utf8), relativePath: fixture.notesPath, expectedVersion: base)
-        let resolved = try document.useDraftPreservingExternal()
-        XCTAssertEqual(try fixture.notesText(), "My resolved text")
+        let resolved = try document.useDraftPreservingExternal("My resolved text after typing", expectedBaseVersion: base)
+        XCTAssertEqual(try fixture.notesText(), "My resolved text after typing")
         XCTAssertEqual(try String(contentsOf: resolved.preservedCopy), "External text")
         XCTAssertFalse(try document.load().hasDraft)
     }
@@ -64,7 +64,7 @@ final class LiveMeetingNotesTests: XCTestCase {
             (try? fixture.notesText()) == "Recovered after interruption"
         }, evaluatedWith: restarted)
         wait(for: [recovered], timeout: 5)
-        XCTAssertFalse(restarted.snapshot.processingStatus.contains { $0.hasPrefix("My Notes draft needs recovery") })
+        XCTAssertNil(restarted.snapshot.notesRecoveryWarning)
         XCTAssertEqual(try fixture.notesText(), "Recovered after interruption")
         XCTAssertFalse(try document.load().hasDraft)
 
@@ -90,16 +90,30 @@ final class LiveMeetingNotesTests: XCTestCase {
         XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: fixture.notesPath))
     }
 
+    func testFailedDraftStagingDoesNotClaimRecoverableContent() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let blocker = fixture.root.appendingPathComponent("support/MeetingArtifacts/LiveNotes")
+        try FileManager.default.createDirectory(at: blocker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("blocked".utf8).write(to: blocker)
+        XCTAssertThrowsError(try fixture.document(session: "session-a").save("Unsaved", expectedVersion: nil)) { error in
+            guard case .draftNotStored = error as? LiveMeetingNotesError else {
+                return XCTFail("Expected a truthful draft-staging error, got \(error)")
+            }
+        }
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: fixture.notesPath))
+    }
+
     func testRecoveryNeverAttachesAnOldDraftToAnotherCapture() throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         try fixture.document(session: "session-b").stage("B draft", baseVersion: nil)
         let restarted = MeetingCaptureService(vault: fixture.vault, preflight: { .readyForTesting })
         let warned = expectation(for: NSPredicate { _, _ in
-            restarted.snapshot.processingStatus.contains { $0.hasPrefix("My Notes draft needs recovery") }
+            restarted.snapshot.notesRecoveryWarning != nil
         }, evaluatedWith: restarted)
         wait(for: [warned], timeout: 5)
-        XCTAssertTrue(restarted.snapshot.processingStatus.contains { $0.hasPrefix("My Notes draft needs recovery") })
+        XCTAssertNotNil(restarted.snapshot.notesRecoveryWarning)
         XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: fixture.notesPath))
         XCTAssertEqual(try fixture.document(session: "session-b").load().text, "B draft")
     }

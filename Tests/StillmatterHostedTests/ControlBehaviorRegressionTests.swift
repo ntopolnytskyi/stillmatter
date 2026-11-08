@@ -64,6 +64,31 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         XCTAssertTrue(status.stringValue.contains("Recovered unsaved draft"))
     }
 
+    @MainActor
+    func testLiveNotesStageFailureDoesNotClaimDraftIsRetained() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-notes-stage-fail-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: root.appendingPathComponent("support"))
+        let service = MeetingCaptureService(vault: vault, preflight: { .readyForTesting })
+        _ = try service.startManual()
+        let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+        view.refresh(isVisible: true)
+        let blocker = root.appendingPathComponent("support/MeetingArtifacts/LiveNotes")
+        try FileManager.default.createDirectory(at: blocker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("blocked".utf8).write(to: blocker)
+        view.noteTextView.string = "Keep this window open"
+        view.textDidChange(Notification(name: NSText.didChangeNotification, object: view.noteTextView))
+        let status = try XCTUnwrap(findView("recording-my-notes-status", in: view) as? NSTextField)
+        XCTAssertTrue(status.stringValue.contains("Draft recovery failed"))
+        let save = try XCTUnwrap(findView("recording-save-notes", in: view) as? NSButton)
+        save.performClick(nil)
+        XCTAssertTrue(status.stringValue.contains("draft recovery is unavailable"))
+        XCTAssertFalse(status.stringValue.contains("Draft retained"))
+        XCTAssertEqual(view.noteTextView.string, "Keep this window open")
+    }
+
     private func findView(_ identifier: String, in view: NSView) -> NSView? {
         if view.accessibilityIdentifier() == identifier { return view }
         for child in view.subviews {
