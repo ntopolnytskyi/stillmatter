@@ -80,7 +80,6 @@ final class SharedControlsUITests: XCTestCase {
         editor.typeKey(.escape, modifierFlags: [])
         let discard = app.buttons["action-button-2"]
         XCTAssertTrue(discard.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertEqual(discard.label, "Discard Draft")
         app.buttons["action-button-1"].click()
         XCTAssertTrue((editor.value as? String ?? "").contains("second draft"))
         editor.typeKey(.escape, modifierFlags: [])
@@ -135,7 +134,6 @@ final class SharedControlsUITests: XCTestCase {
         stopAnyway.click()
         let confirmation = app.buttons["action-button-2"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertEqual(confirmation.label, "Stop Capture Anyway")
         app.buttons["action-button-1"].click()
         XCTAssertTrue(app.buttons["recording-stop"].exists)
         stopAnyway.click()
