@@ -1075,6 +1075,7 @@ final class MeetingManagementView: NSView {
                 notesOverviewSection?.isHidden = true
                 diagnosticsDisclosure.isHidden = true
                 reviewPrompt.isHidden = true
+                status.isHidden = false
                 status.stringValue = selected.row.captureState == .live
                     ? "● Recording is active. My Notes are available on Recording."
                     : "● Processing is in progress. Meeting content will appear when it finishes."

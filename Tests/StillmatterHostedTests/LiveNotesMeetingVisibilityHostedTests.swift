@@ -34,6 +34,14 @@ final class LiveNotesMeetingVisibilityHostedTests: XCTestCase {
             metadata: ["capture_session_id": "session-a"]))
         let processing = MeetingManagementService(vault: vault, jobStore: jobs)
         let processingView = try await selectedView(for: processing)
+        processingView.openTimeline()
+        XCTAssertTrue(processingView.status.isHidden)
+        let refreshed = expectation(description: "Processing detail refreshes after Transcript selection")
+        processingView.meetingsModel.detail.refreshSelectedDetail { result in
+            if case .success = result { refreshed.fulfill() }
+        }
+        await fulfillment(of: [refreshed], timeout: 5)
+        XCTAssertFalse(processingView.status.isHidden)
         let processingElements = visibleElements(in: processingView)
         XCTAssertTrue(processingElements.contains { $0.contains("Processing is in progress") })
         XCTAssertFalse(processingElements.contains { $0.contains("Notes from Recording") || $0 == "Meeting audio" })
