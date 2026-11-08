@@ -34,7 +34,7 @@ final class SharedControlsUITests: XCTestCase {
         let note = app.textViews["recording-my-notes-editor"]
         note.click()
         note.typeText("Native shared-control note")
-        expectation(for: NSPredicate(format: "value == %@", "Saved"), evaluatedWith: app.staticTexts["recording-my-notes-status"])
+        expectation(for: NSPredicate(format: "value == %@", "✓ Saved"), evaluatedWith: app.staticTexts["recording-my-notes-status"])
         waitForExpectations(timeout: 10)
         let saved = try noteText()
         XCTAssertTrue(saved.contains("Native shared-control note"))
@@ -56,7 +56,7 @@ final class SharedControlsUITests: XCTestCase {
         editor.typeText("Initial")
         editor.typeKey("s", modifierFlags: .command)
         let status = app.staticTexts["recording-my-notes-status"]
-        expectation(for: NSPredicate(format: "value == %@", "Saved"), evaluatedWith: status)
+        expectation(for: NSPredicate(format: "value == %@", "✓ Saved"), evaluatedWith: status)
         waitForExpectations(timeout: 10)
         let path = try XCTUnwrap(notePaths().first)
         editor.typeText(" local draft")
@@ -78,6 +78,13 @@ final class SharedControlsUITests: XCTestCase {
         editor.typeText(" second draft")
         try "External second".write(to: path, atomically: true, encoding: .utf8)
         editor.typeKey(.escape, modifierFlags: [])
+        let discard = app.alerts["Discard the current My Notes draft?"]
+        XCTAssertTrue(discard.waitForExistence(timeout: 5))
+        discard.buttons["Cancel"].click()
+        XCTAssertTrue((editor.value as? String ?? "").contains("second draft"))
+        editor.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(discard.waitForExistence(timeout: 5))
+        discard.buttons["Continue"].click()
         XCTAssertEqual(editor.value as? String, "External second")
         XCTAssertEqual(try String(contentsOf: path), "External second")
         app.buttons["recording-stop"].click()

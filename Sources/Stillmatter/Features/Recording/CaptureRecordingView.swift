@@ -28,6 +28,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     private let onManualCapture: () -> Void
     private let jobRecordsProvider: () -> [JobRecord]
     private let onOpenSettings: () -> Void
+    private let confirmDestructiveAction: (String, String) -> Bool
 
     private let controls: GraphiteFocusControls
 
@@ -80,7 +81,16 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         teamsRecordingDiagnosticProvider: @escaping () -> String = { "Capture policy unavailable" },
         onManualCapture: @escaping () -> Void = {},
         jobRecordsProvider: @escaping () -> [JobRecord],
-        onOpenSettings: @escaping () -> Void
+        onOpenSettings: @escaping () -> Void,
+        confirmDestructiveAction: @escaping (String, String) -> Bool = { title, detail in
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = detail
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Cancel")
+            return alert.runModal() == .alertFirstButtonReturn
+        }
     ) {
         self.controls = controls
         startButton = controls.button("Start Capture", identifier: "recording-start")
@@ -102,6 +112,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         self.onManualCapture = onManualCapture
         self.jobRecordsProvider = jobRecordsProvider
         self.onOpenSettings = onOpenSettings
+        self.confirmDestructiveAction = confirmDestructiveAction
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         buildLayout()
@@ -528,12 +539,17 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         stopAnywayButton.action = #selector(stopCaptureAnyway(_:))
         stopAnywayButton.isEnabled = false
         stopAnywayButton.isHidden = true
-        notesStatus.font = GraphiteFocusPresentation.Typography.metadata
+        notesStatus.font = GraphiteFocusPresentation.Typography.body
         notesStatus.maximumNumberOfLines = 0
         notesStatus.setAccessibilityIdentifier("recording-my-notes-status")
-        let actions = NSStackView(views: [saveNotesButton, reloadNotesButton, useDraftButton, stopAnywayButton])
+        let actions = NSStackView(views: [saveNotesButton, useDraftButton])
         actions.orientation = .horizontal
         actions.spacing = GraphiteFocusPresentation.Space.compact
+        let destructiveActions = NSStackView(views: [reloadNotesButton, stopAnywayButton])
+        destructiveActions.orientation = .horizontal
+        destructiveActions.spacing = GraphiteFocusPresentation.Space.compact
+        reloadNotesButton.bezelColor = colors.destructive
+        stopAnywayButton.bezelColor = colors.destructive
         let content = NSStackView()
         content.orientation = .vertical
         content.alignment = .leading
@@ -541,6 +557,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         addFullWidth(scroll, to: content)
         content.addArrangedSubview(actions)
         addFullWidth(notesStatus, to: content)
+        content.addArrangedSubview(destructiveActions)
         return makeSection(
             title: "My Notes",
             caption: "Markdown saves automatically in this Meeting's my-notes.md. Use - [ ] for an Action Item.",
@@ -903,13 +920,13 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     @objc private func stopCapture(_ sender: NSButton) {
         guard let service = serviceProvider() else { return }
         if notesDocument == nil && !noteTextView.string.isEmpty {
-            notesStatus.stringValue = "Could not save My Notes. Retry Save or copy your text before choosing Stop Capture Anyway."
+            setNotesStatus("Could not save My Notes. Retry Save or copy your text before choosing Stop Capture Anyway.", .destructive)
             stopAnywayButton.isEnabled = true
             stopAnywayButton.isHidden = false
             return
         }
         if notesDocument != nil && noteTextView.string != notesSavedText && !saveNotes() {
-            notesStatus.stringValue += " Retry Save or copy your text before choosing Stop Capture Anyway."
+            setNotesStatus(String(notesStatus.stringValue.dropFirst(2)) + " Retry Save or copy your text before choosing Stop Capture Anyway.", .destructive)
             stopAnywayButton.isEnabled = true
             stopAnywayButton.isHidden = false
             return
@@ -919,6 +936,8 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
 
     @objc private func stopCaptureAnyway(_ sender: NSButton) {
         guard let service = serviceProvider(), service.snapshot.state == .recording else { return }
+        guard confirmDestructiveAction("Stop Capture with unsaved notes?",
+            "The current My Notes text may not be recoverable. Copy it before continuing if draft recovery failed.") else { return }
         stopCaptureSession(service)
     }
 
@@ -969,9 +988,9 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
                 noteTextView.string = state.text
                 notesHaveConflict = state.conflictsWithFile
                 if state.conflictsWithFile { showNotesConflict() }
-                else { notesStatus.stringValue = state.hasDraft ? "Recovered unsaved draft. Save to retry." : "Saved" }
+                else { setNotesStatus(state.hasDraft ? "Recovered unsaved draft. Save to retry." : "Saved", state.hasDraft ? .attention : .success) }
             } catch {
-                notesStatus.stringValue = "Could not load My Notes: \(error.localizedDescription)"
+                setNotesStatus("Could not load My Notes: \(error.localizedDescription)", .destructive)
             }
             return
         }
@@ -985,10 +1004,10 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
                 notesVersion = state.version
                 notesHaveConflict = false
                 useDraftButton.isEnabled = false
-                notesStatus.stringValue = "Updated from my-notes.md"
+                setNotesStatus("Updated from my-notes.md", .success)
             }
         } catch {
-            notesStatus.stringValue = "Could not read My Notes: \(error.localizedDescription)"
+            setNotesStatus("Could not read My Notes: \(error.localizedDescription)", .destructive)
         }
     }
 
@@ -997,12 +1016,12 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         notesSaveWork?.cancel()
         do {
             try document.stage(noteTextView.string, baseVersion: notesVersion)
-            notesStatus.stringValue = "Saving…"
+            setNotesStatus("Saving…", .attention)
             let work = DispatchWorkItem { [weak self] in self?.saveNotesNow(nil) }
             notesSaveWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
         } catch {
-            notesStatus.stringValue = "Draft recovery failed: \(error.localizedDescription). Keep this window open."
+            setNotesStatus("Draft recovery failed: \(error.localizedDescription). Keep this window open.", .destructive)
         }
     }
 
@@ -1023,24 +1042,28 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             useDraftButton.isEnabled = false
             stopAnywayButton.isEnabled = false
             stopAnywayButton.isHidden = true
-            notesStatus.stringValue = "Saved"
+            setNotesStatus("Saved", .success)
             return true
         } catch let error as LiveMeetingNotesError {
-            notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Keep this window open; draft recovery is unavailable."
+            setNotesStatus("Could not save My Notes: \(error.localizedDescription). Keep this window open; draft recovery is unavailable.", .destructive)
         } catch let error as WorkspaceVaultError {
             if case .conflict = error {
                 showNotesConflict()
             } else {
-                notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Draft retained."
+                setNotesStatus("Could not save My Notes: \(error.localizedDescription). Draft retained.", .destructive)
             }
         } catch {
-            notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Draft retained."
+            setNotesStatus("Could not save My Notes: \(error.localizedDescription). Draft retained.", .destructive)
         }
         return false
     }
 
     @objc private func reloadLiveNotes(_ sender: NSButton) {
         guard let document = notesDocument else { return }
+        if noteTextView.string != notesSavedText || notesHaveConflict {
+            guard confirmDestructiveAction("Discard the current My Notes draft?",
+                "Reload Latest replaces the text in this editor with the Meeting file.") else { return }
+        }
         notesSaveWork?.cancel()
         do {
             let state = try document.reloadLatest()
@@ -1049,9 +1072,9 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             notesVersion = state.version
             notesHaveConflict = false
             useDraftButton.isEnabled = false
-            notesStatus.stringValue = "Reloaded latest My Notes"
+            setNotesStatus("Reloaded latest My Notes", .success)
         } catch {
-            notesStatus.stringValue = "Could not reload My Notes: \(error.localizedDescription). Draft retained."
+            setNotesStatus("Could not reload My Notes: \(error.localizedDescription). Draft retained.", .destructive)
         }
     }
 
@@ -1064,18 +1087,23 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             notesSavedText = noteTextView.string
             notesHaveConflict = false
             useDraftButton.isEnabled = false
-            notesStatus.stringValue = "Saved your draft. Previous external notes are preserved at \(result.preservedCopy.path)."
+            setNotesStatus("Saved your draft. Previous external notes are preserved at \(result.preservedCopy.path).", .success)
         } catch let error as LiveMeetingNotesError {
-            notesStatus.stringValue = "Could not save the current draft: \(error.localizedDescription). Keep this window open."
+            setNotesStatus("Could not save the current draft: \(error.localizedDescription). Keep this window open.", .destructive)
         } catch {
-            notesStatus.stringValue = "Could not resolve My Notes conflict: \(error.localizedDescription). Your current text remains in this editor."
+            setNotesStatus("Could not resolve My Notes conflict: \(error.localizedDescription). Your current text remains in this editor.", .destructive)
         }
     }
 
     private func showNotesConflict() {
         notesHaveConflict = true
         useDraftButton.isEnabled = true
-        notesStatus.stringValue = "Conflict: external changes and your draft are preserved. Use My Draft saves your text and keeps a copy of the external file; Reload Latest discards the draft."
+        setNotesStatus("Conflict: external changes and your draft are preserved. Use My Draft saves your text and keeps a copy of the external file; Reload Latest discards the draft.", .attention)
+    }
+
+    private func setNotesStatus(_ message: String, _ meaning: GraphiteFocusStatusMeaning) {
+        notesStatus.stringValue = "\(meaning.symbol) \(message)"
+        notesStatus.textColor = meaning.color(in: colors)
     }
 
     @objc private func openMeetingFolder(_ sender: NSButton) {

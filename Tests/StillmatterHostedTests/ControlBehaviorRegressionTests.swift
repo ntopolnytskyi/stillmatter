@@ -24,7 +24,7 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         view.refresh(isVisible: true)
         XCTAssertEqual(view.noteTextView.string, "External notes")
         let status = try XCTUnwrap(findView("recording-my-notes-status", in: view) as? NSTextField)
-        XCTAssertEqual(status.stringValue, "Updated from my-notes.md")
+        XCTAssertEqual(status.stringValue, "✓ Updated from my-notes.md")
 
         view.noteTextView.string = "Keep my draft"
         view.textDidChange(Notification(name: NSText.didChangeNotification, object: view.noteTextView))
@@ -377,8 +377,10 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support)
         let service = MeetingCaptureService(vault: vault, preflight: { .readyForTesting })
+        var allowStop = false
         let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
-            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {},
+            confirmDestructiveAction: { _, _ in allowStop })
         view.refresh(isVisible: true)
         view.startButton.performClick(nil)
         let meetingPath = try XCTUnwrap(service.snapshot.meetingRelativePath)
@@ -394,6 +396,9 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         XCTAssertTrue(view.noteTextView.string.contains("My unsaved draft"))
         XCTAssertTrue(try String(contentsOf: workspace.appendingPathComponent(notesPath)).contains("External version"))
 
+        view.stopAnywayButton.performClick(nil)
+        XCTAssertEqual(service.snapshot.state, .recording)
+        allowStop = true
         view.stopAnywayButton.performClick(nil)
         let stopped = expectation(for: NSPredicate { _, _ in service.snapshot.state == .idle }, evaluatedWith: service)
         await fulfillment(of: [stopped], timeout: 10)
