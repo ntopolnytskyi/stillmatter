@@ -227,16 +227,21 @@ public final class MeetingNoteTodoBridge {
 
     private static func insertingReferences(_ ids: [String], notes: String, path: String, into markdown: String) -> String {
         var lines = markdown.components(separatedBy: "\n")
-        let existing = Set(lines.compactMap(referenceID(in:)))
         let titles = Dictionary(uniqueKeysWithValues: TodoItemParser().parse(markdown: notes, relativePath: path)
             .compactMap { item -> (String, String)? in
                 guard let metadata = TodoItemParser.metadata(in: item.rawText), metadata.owner == "me", metadata.review == "approved" else { return nil }
                 return (item.id.lowercased(), item.title.replacingOccurrences(of: "|", with: " "))
             })
+        for index in lines.indices {
+            guard let id = referenceID(in: lines[index]), let title = titles[id],
+                  let range = referenceRange(in: lines[index], matching: id) else { continue }
+            lines[index].replaceSubrange(range, with: "[[item:\(id)|\(title)]]")
+        }
+        let existing = Set(lines.compactMap(referenceID(in:)))
         let newReferences = ids.filter { !existing.contains($0) }.compactMap { id in
             titles[id].map { "- [[item:\(id)|\($0)]]" }
         }
-        guard !newReferences.isEmpty else { return markdown }
+        guard !newReferences.isEmpty else { return lines.joined(separator: "\n") }
         let queueHeading = lines.firstIndex { $0.trimmingCharacters(in: .whitespaces) == "## Queue" }
         let insertion: Int
         if let queueHeading {
@@ -257,6 +262,16 @@ public final class MeetingNoteTodoBridge {
         guard let range = line.range(of: #"\[\[item:([0-9a-fA-F-]{36})\|"#, options: .regularExpression) else { return nil }
         let value = line[range].dropFirst("[[item:".count).dropLast(1)
         return UUID(uuidString: String(value))?.uuidString.lowercased()
+    }
+
+    private static func referenceRange(in line: String, matching id: String) -> Range<String.Index>? {
+        guard let prefix = line.range(of: "[[item:") else { return nil }
+        let idStart = prefix.upperBound
+        guard let separator = line[idStart...].firstIndex(of: "|"),
+              UUID(uuidString: String(line[idStart..<separator]))?.uuidString.lowercased() == id.lowercased(),
+              let closing = line[separator...].range(
+                  of: "]]") else { return nil }
+        return prefix.lowerBound..<closing.upperBound
     }
 
     private static func removingReference(_ id: String, from lines: [String]) -> [String] {

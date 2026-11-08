@@ -36,6 +36,8 @@ final class MeetingNoteTodoBridgeTests: XCTestCase {
         _ = try bridge.updateText(item: item, text: "Edited in Todo", expectedQueueVersion: fixture.queueVersion())
         item = try XCTUnwrap(fixture.index.loadTaskViews(today: "2026-01-01").queue.first)
         XCTAssertEqual(item.title, "Edited in Todo")
+        XCTAssertTrue(try fixture.read("Todos/todo.md").contains("[[item:\(item.id)|Edited in Todo]]"))
+        XCTAssertFalse(try fixture.read("Todos/todo.md").contains("[[item:\(item.id)|Original note task]]"))
         _ = try TodoItemMutator(vault: fixture.vault, today: { "2026-01-02" })
             .updateStatus(item: item, status: .done, expectedVersion: fixture.queueVersion())
 
