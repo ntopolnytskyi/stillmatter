@@ -223,8 +223,10 @@ public final class MeetingManagementService {
             if try legacyWriterIsActive(for: detail.row) {
                 let liveNotesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
                 if try vault.versionOfMarkdown(relativePath: liveNotesPath) != nil {
-                    _ = try vault.writeMarkdown(Data(notes.utf8), relativePath: liveNotesPath, expectedVersion: expectedVersion)
-                    _ = try MeetingNoteTodoBridge(vault: vault).adoptSavedNotes(at: liveNotesPath, removingItemIDs: removedNoteTaskIDs)
+                    _ = try MeetingNoteTodoBridge(vault: vault).saveNotes(
+                        notes, at: liveNotesPath, expectedNotesVersion: expectedVersion,
+                        removingItemIDs: removedNoteTaskIDs
+                    )
                     try? index?.update(relativePath: liveNotesPath)
                     onMeetingChanged([detail.row.meetingRelativePath])
                     return try self.detail(for: id)
@@ -241,12 +243,7 @@ public final class MeetingManagementService {
                 }
                 try? index?.update(relativePath: detail.row.meetingRelativePath)
             } else {
-                let loaded = try artifactStore.load(meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id)
-                let notesPath = loaded.paths["notes"] ?? defaultNotesPath
                 try artifactStore.saveNotes(notes, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
-                _ = try MeetingNoteTodoBridge(vault: vault).adoptSavedNotes(
-                    at: notesPath, removingItemIDs: removedNoteTaskIDs
-                )
                 try? index?.update(relativePath: Self.sibling(detail.row.meetingRelativePath, "my-notes.md"))
             }
             onMeetingChanged([detail.row.meetingRelativePath])

@@ -97,7 +97,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         cell.completionButton.target = self
         cell.completionButton.action = #selector(completeRow(_:))
         cell.completionButton.tag = row
-        cell.editButton.isHidden = item.canonicalLocation == nil
+        cell.editButton.isHidden = item.canonicalLocation?.relativePath.hasSuffix("/my-notes.md") != true
         cell.editButton.setAccessibilityIdentifier("task-edit-\(item.id)")
         cell.editButton.setAccessibilityLabel("Edit \(item.title)")
         cell.editButton.target = self

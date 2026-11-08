@@ -48,6 +48,22 @@ public final class MeetingNoteTodoBridge {
         return try vault.readMarkdown(relativePath: notesPath).version
     }
 
+    /// Prepares a Meeting artifact save so its notes and Todo projection can be
+    /// published together by MeetingArtifactTransaction.
+    func prepareArtifactSave(_ text: String, at notesPath: String, replacing oldNotes: String) throws ->
+        (notes: String, todoReplacement: WorkspaceMarkdownReplacement?) {
+        let queue = try currentQueue()
+        let removedIDs = Self.itemIDs(in: oldNotes, path: notesPath)
+            .subtracting(Self.itemIDs(in: text, path: notesPath))
+        let result = try Self.adopt(notes: text, path: notesPath, queue: queue.text, removingItemIDs: removedIDs)
+        let todoReplacement = result.queue == queue.text ? nil : WorkspaceMarkdownReplacement(
+            relativePath: TodoItemIndex.mainTodoRelativePath,
+            data: Data(result.queue.utf8),
+            expectedVersion: queue.version
+        )
+        return (result.notes, todoReplacement)
+    }
+
     /// Replaces the canonical checkbox text while retaining its identity and state metadata.
     @discardableResult
     public func updateText(item: TodoItem, text: String,

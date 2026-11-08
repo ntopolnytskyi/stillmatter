@@ -248,13 +248,18 @@ final class MeetingArtifactStore {
             try keepConflict(text, external: loaded.notes, meetingID: meetingID, path: path)
             throw WorkspaceVaultError.conflict(relativePath: path, expected: expected, actual: loaded.notesVersion)
         }
-        let adopted = try adopting(text, path: path, kind: "notes")
+        let canonical = try adopting(text, path: path, kind: "notes")
+        let prepared = try MeetingNoteTodoBridge(vault: vault)
+            .prepareArtifactSave(canonical, at: path, replacing: loaded.notes)
+        let adopted = prepared.notes
         try validateCanonicalItems(["notes": adopted, "actions": loaded.sections.myActionItems,
                                     "decisions": loaded.sections.decisions, "open": loaded.sections.openQuestions],
                                    paths: loaded.paths, meetingPath: meetingPath)
-        try MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint).publish([
-            .init(relativePath: path, data: Data(try wrapped("notes", adopted).utf8), expectedVersion: expected)
-        ])
+        var replacements = [WorkspaceMarkdownReplacement(
+            relativePath: path, data: Data(try wrapped("notes", adopted).utf8), expectedVersion: expected
+        )]
+        if let todoReplacement = prepared.todoReplacement { replacements.append(todoReplacement) }
+        try MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint).publish(replacements)
     }
 
     func saveSummary(_ sections: MeetingSummarySections, meetingPath: String, meetingID: String, expected: WorkspaceFileVersion) throws {

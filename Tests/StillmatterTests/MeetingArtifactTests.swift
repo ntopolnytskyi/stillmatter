@@ -74,6 +74,31 @@ final class MeetingArtifactTests: XCTestCase {
         XCTAssertEqual(try load().notes, initial.notes)
     }
 
+    func testNoteSaveAndTodoProjectionRecoverTogetherAtEveryArtifactCheckpoint() throws {
+        enum Crash: Error { case injected }
+        for stop in 0...2 {
+            let workspace = root.appendingPathComponent("note-projection-\(stop)")
+            let isolated = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support.appendingPathComponent("note-projection-\(stop)"))
+            _ = try isolated.writeMarkdown(Data("# Legacy\n## Notes\nOriginal notes\n".utf8), relativePath: meeting, expectedVersion: nil)
+            _ = try isolated.writeMarkdown(Data("## Queue\n\n## Done\n".utf8), relativePath: "Todos/todo.md", expectedVersion: nil)
+            let stable = MeetingArtifactStore(vault: isolated, inbox: nil)
+            let initial = try stable.load(meetingPath: meeting, meetingID: "fixture")
+            let failing = MeetingArtifactStore(vault: isolated, inbox: nil, checkpoint: { if $0 == stop { throw Crash.injected } })
+
+            XCTAssertThrowsError(try failing.saveNotes(
+                "Updated notes\n- [ ] Send the follow-up", meetingPath: meeting,
+                meetingID: "fixture", expected: initial.notesVersion
+            ))
+
+            let reopened = try stable.load(meetingPath: meeting, meetingID: "fixture")
+            XCTAssertTrue(reopened.notes.contains("Updated notes"))
+            let item = try XCTUnwrap(TodoItemParser().parse(markdown: reopened.notes, relativePath: reopened.paths["notes"]!).first)
+            let queue = try isolated.readMarkdown(relativePath: "Todos/todo.md").data
+            XCTAssertEqual(String(decoding: queue, as: UTF8.self).components(separatedBy: "[[item:\(item.id)|Send the follow-up]]").count - 1, 1)
+            XCTAssertEqual(try stable.load(meetingPath: meeting, meetingID: "fixture").notes, reopened.notes)
+        }
+    }
+
     func testSummarySaveAllowsMovingAnIdentityBetweenArtifacts() throws {
         try seed()
         let initial = try load()
