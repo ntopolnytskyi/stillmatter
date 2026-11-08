@@ -92,6 +92,7 @@ public enum MeetingMutation {
     case saveSummary(meetingID: String, sections: MeetingSummarySections, baseVersion: WorkspaceFileVersion)
     case saveActionDraft(id: String, title: String, comment: String)
     case reviewAction(id: String, accept: Bool)
+    case reassignNoteTask(meetingID: String, itemID: String, owner: String)
     case archive(meetingID: String)
     case restore(meetingID: String)
     case rename(meetingID: String, title: String, baseVersion: WorkspaceFileVersion)
@@ -341,6 +342,13 @@ public final class MeetingDetailModel: ObservableObject {
                              completion: ((Result<Void, Error>) -> Void)? = nil) {
         perform(.reviewAction(id: id, accept: accept), progress: accept ? "Accepting Action Item…" : "Dismissing Action Item…",
                 completion: completion)
+    }
+
+    public func reassignNoteTask(itemID: String, owner: String,
+                                 completion: ((Result<Void, Error>) -> Void)? = nil) {
+        guard let detail else { completion?(.failure(MeetingManagementError.unavailable)); return }
+        perform(.reassignNoteTask(meetingID: detail.row.id, itemID: itemID, owner: owner),
+                progress: "Reassigning note-authored task…", completion: completion)
     }
 
     public func archive(completion: ((Result<Void, Error>) -> Void)? = nil) {

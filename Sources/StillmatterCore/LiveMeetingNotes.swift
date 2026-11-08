@@ -121,7 +121,9 @@ public final class LiveMeetingNotes {
     public func save(_ text: String, expectedVersion: WorkspaceFileVersion?) throws -> WorkspaceFileVersion {
         do { try stage(text, baseVersion: expectedVersion) }
         catch { throw LiveMeetingNotesError.draftNotStored(error) }
-        let version = try vault.writeMarkdown(Data(text.utf8), relativePath: notesPath, expectedVersion: expectedVersion)
+        let version = try MeetingNoteTodoBridge(vault: vault).saveNotes(
+            text, at: notesPath, expectedNotesVersion: expectedVersion
+        )
         try? FileManager.default.removeItem(at: draftURL)
         return version
     }
@@ -143,8 +145,9 @@ public final class LiveMeetingNotes {
         guard let draft = try storedDraft() else { return }
         let source = try currentFile()
         if source.text == draft.text { try discardDraft(); return }
-        _ = try vault.writeMarkdown(Data(draft.text.utf8), relativePath: notesPath,
-                                    expectedVersion: draft.baseVersion)
+        _ = try MeetingNoteTodoBridge(vault: vault).saveNotes(
+            draft.text, at: notesPath, expectedNotesVersion: draft.baseVersion
+        )
         try discardDraft()
     }
 
@@ -159,8 +162,9 @@ public final class LiveMeetingNotes {
             .appendingPathComponent("\(sessionID)-\(UUID().uuidString).md")
         try FileManager.default.createDirectory(at: preserved.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(source.text.utf8).write(to: preserved, options: .atomic)
-        let version = try vault.writeMarkdown(Data(draft.text.utf8), relativePath: notesPath,
-                                              expectedVersion: source.version)
+        let version = try MeetingNoteTodoBridge(vault: vault).saveNotes(
+            draft.text, at: notesPath, expectedNotesVersion: source.version
+        )
         try? discardDraft()
         return (version, preserved)
     }

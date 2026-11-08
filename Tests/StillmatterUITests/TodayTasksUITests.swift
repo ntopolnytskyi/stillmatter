@@ -2,6 +2,31 @@ import Foundation
 import XCTest
 
 extension StillmatterFlowsUITests {
+    func testTodoEditorWritesNoteAuthoredTaskBackToMyNotes() throws {
+        app.terminate()
+        let queue = try seedPersonalQueue()
+        relaunch()
+        app.buttons["sidebar-tasks"].click()
+        let edit = app.buttons["task-edit-ee935d20-e388-4ccf-b6bd-1f5dc785fd01"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 15))
+        edit.click()
+        let alert = app.dialogs.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let editor = alert.textFields["task-text-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.click()
+        editor.typeKey("a", modifierFlags: .command)
+        editor.typeText("Updated from Todo")
+        alert.buttons["Save"].click()
+        XCTAssertTrue(app.buttons["Edit Updated from Todo"].waitForExistence(timeout: 10))
+        relaunch()
+        app.buttons["sidebar-tasks"].click()
+        XCTAssertTrue(app.buttons["Edit Updated from Todo"].waitForExistence(timeout: 10))
+        let notes = fixtureRoot.appendingPathComponent("workspace/Meetings/task/my-notes.md")
+        XCTAssertTrue(try String(contentsOf: notes).contains("- [ ] Updated from Todo <!-- sm-item:"))
+        XCTAssertEqual(try String(contentsOf: queue).components(separatedBy: "[[item:ee935d20-e388-4ccf-b6bd-1f5dc785fd01").count - 1, 1)
+    }
+
     func testTodayTasksSharedControlsCompleteCanonicalItemsAndPreserveNavigation() throws {
         app.terminate()
         let queue = try seedPersonalQueue()
@@ -33,6 +58,11 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(app.staticTexts["No matching Todo Items"].waitForExistence(timeout: 10))
         let notes = fixtureRoot.appendingPathComponent("workspace/Meetings/task/my-notes.md")
         XCTAssertTrue(try String(contentsOf: notes).contains("- [x] Personal task"))
+        let doneMode = app.radioGroups["tasks-mode"].radioButtons["Done"]
+        XCTAssertTrue(doneMode.waitForExistence(timeout: 10))
+        doneMode.click()
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier CONTAINS[c] 'reopen' OR label CONTAINS[c] 'reopen'")).firstMatch.exists)
+        app.radioGroups["tasks-mode"].radioButtons["Queue"].click()
         filter.click()
         filter.typeKey("a", modifierFlags: .command)
         filter.typeKey(.delete, modifierFlags: [])

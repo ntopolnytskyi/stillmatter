@@ -24,4 +24,15 @@ struct TodoCompletion {
         _ = try TodoItemMutator(vault: vault).updateStatus(item: match, status: .done, expectedVersion: queue.version)
         return try TodoItemIndex(workspaceRootURL: root).loadTaskViews(today: TodoItemMutator.systemToday())
     }
+
+    func updateText(_ item: TodoItem, text: String, displayedRoot: URL?) throws -> TodoTaskViews {
+        guard let root = workspaceRoot(), let displayedRoot,
+              root.standardizedFileURL.resolvingSymlinksInPath() == displayedRoot.standardizedFileURL.resolvingSymlinksInPath() else {
+            throw TodoItemMutationError.staleCanonicalItem(item.id)
+        }
+        let vault = WorkspaceVault(workspaceRootURL: root, appSupportRootURL: appSupportRoot)
+        let queue = try vault.readMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath)
+        _ = try MeetingNoteTodoBridge(vault: vault).updateText(item: item, text: text, expectedQueueVersion: queue.version)
+        return try TodoItemIndex(workspaceRootURL: root).loadTaskViews(today: TodoItemMutator.systemToday())
+    }
 }

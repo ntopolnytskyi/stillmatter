@@ -46,6 +46,9 @@ final class MeetingMutationExecutor: MeetingMutationExecuting {
                 case let .reviewAction(id, accept):
                     try service.reviewAction(id: id, accept: accept)
                     return .none
+                case let .reassignNoteTask(meetingID, itemID, owner):
+                    try service.reassignNoteTask(itemID: itemID, owner: owner, meetingID: meetingID)
+                    return .none
                 case let .archive(meetingID):
                     try service.archive(meetingID: meetingID)
                     return .none

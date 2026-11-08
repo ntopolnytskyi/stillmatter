@@ -373,7 +373,7 @@ final class MeetingArtifactTests: XCTestCase {
         try write("Todos/todo.md", todo)
         let first = try load()
         XCTAssertTrue(first.notes.contains("CRLF\u{2028}prose\u{2029}"), first.notes.debugDescription)
-        XCTAssertTrue(first.notes.contains("Note\u{2028}task\u{2029}"))
+        XCTAssertTrue(first.notes.contains("Note\u{2028}task\u{2029}"), first.notes.debugDescription)
         let canonical = try text(path("action-items.md"))
         XCTAssertTrue(canonical.contains("Parent comment\r\n"), canonical.debugDescription)
         XCTAssertTrue(canonical.contains("Child comment\r\n"))

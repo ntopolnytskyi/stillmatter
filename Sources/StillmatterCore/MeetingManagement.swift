@@ -116,6 +116,16 @@ public final class MeetingManagementService {
         if let meetingPath { onMeetingChanged([meetingPath]) }
     }
 
+    public func reassignNoteTask(itemID: String, owner: String, meetingID: String) throws {
+        let detail = try self.detail(for: meetingID)
+        let notesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
+        let matching = TodoItemParser().parse(markdown: detail.humanNotes, relativePath: notesPath).contains { $0.id == itemID }
+        guard matching else { throw TodoItemMutationError.itemNotFound(itemID) }
+        let queue = try vault.readMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath)
+        try MeetingNoteTodoBridge(vault: vault).reassign(itemID: itemID, to: owner, expectedQueueVersion: queue.version)
+        onMeetingChanged([detail.row.meetingRelativePath])
+    }
+
     public func reviewAction(id: String, accept: Bool) throws {
         guard inbox != nil else { throw MeetingManagementError.unavailable }
         let meetingPath = proposalMeetingPath(id: id)
@@ -203,10 +213,18 @@ public final class MeetingManagementService {
         do {
             let detail = try self.detail(for: id)
             guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting content is read-only.") }
+            let defaultNotesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
+            let noteIDs: (String) -> Set<String> = { text in
+                Set(TodoItemParser().parse(markdown: text, relativePath: defaultNotesPath).compactMap {
+                    UUID(uuidString: $0.id)?.uuidString.lowercased()
+                })
+            }
+            let removedNoteTaskIDs = noteIDs(detail.humanNotes).subtracting(noteIDs(notes))
             if try legacyWriterIsActive(for: detail.row) {
                 let liveNotesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
                 if try vault.versionOfMarkdown(relativePath: liveNotesPath) != nil {
                     _ = try vault.writeMarkdown(Data(notes.utf8), relativePath: liveNotesPath, expectedVersion: expectedVersion)
+                    _ = try MeetingNoteTodoBridge(vault: vault).adoptSavedNotes(at: liveNotesPath, removingItemIDs: removedNoteTaskIDs)
                     try? index?.update(relativePath: liveNotesPath)
                     onMeetingChanged([detail.row.meetingRelativePath])
                     return try self.detail(for: id)
@@ -223,7 +241,12 @@ public final class MeetingManagementService {
                 }
                 try? index?.update(relativePath: detail.row.meetingRelativePath)
             } else {
+                let loaded = try artifactStore.load(meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id)
+                let notesPath = loaded.paths["notes"] ?? defaultNotesPath
                 try artifactStore.saveNotes(notes, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
+                _ = try MeetingNoteTodoBridge(vault: vault).adoptSavedNotes(
+                    at: notesPath, removingItemIDs: removedNoteTaskIDs
+                )
                 try? index?.update(relativePath: Self.sibling(detail.row.meetingRelativePath, "my-notes.md"))
             }
             onMeetingChanged([detail.row.meetingRelativePath])

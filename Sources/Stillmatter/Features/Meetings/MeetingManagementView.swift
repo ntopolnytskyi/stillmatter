@@ -598,7 +598,7 @@ final class MeetingManagementView: NSView {
 
     private func textSection(_ title: String) -> NSView {
         let card = MeetingOverviewHostingView(rootView: MeetingOverviewSection(title: title, editIdentifier: title == "Summary" ? "meeting-overview-edit-summary" : "meeting-overview-edit-notes", content: "", unavailable: "Content unavailable.",
-            canEdit: false, expand: {}, edit: {}, copy: {}))
+            canEdit: false, expand: {}, edit: {}, copy: {}, canReassignNoteTask: false, reassignNoteTask: {}))
         card.translatesAutoresizingMaskIntoConstraints = false
         if title == "Summary" { summaryOverviewSection = card }
         else { notesOverviewSection = card }
@@ -1296,9 +1296,9 @@ final class MeetingManagementView: NSView {
 
     private func showUnavailableOverviewSections() {
         summaryOverviewSection?.update(MeetingOverviewSection(title: "Summary", editIdentifier: "meeting-overview-edit-summary", content: "", unavailable: "No meeting selected.",
-            canEdit: false, expand: {}, edit: {}, copy: {}))
+            canEdit: false, expand: {}, edit: {}, copy: {}, canReassignNoteTask: false, reassignNoteTask: {}))
         notesOverviewSection?.update(MeetingOverviewSection(title: "My notes", editIdentifier: "meeting-overview-edit-notes", content: "", unavailable: "No meeting selected.",
-            canEdit: false, expand: {}, edit: {}, copy: {}))
+            canEdit: false, expand: {}, edit: {}, copy: {}, canReassignNoteTask: false, reassignNoteTask: {}))
     }
 
     private func beginSummaryEditing() { beginTextEditing(.summary) }
@@ -1428,12 +1428,53 @@ final class MeetingManagementView: NSView {
             canEdit: detail.summaryVersion != nil && !detail.row.isArchived,
             expand: { [weak self] in self?.expandSummary() },
             edit: { [weak self] in self?.beginSummaryEditing() },
-            copy: { [weak self] in self?.copySummary() }))
+            copy: { [weak self] in self?.copySummary() }, canReassignNoteTask: false, reassignNoteTask: {}))
         notesOverviewSection?.update(MeetingOverviewSection(title: "My notes", editIdentifier: "meeting-overview-edit-notes", content: detail.humanNotes.trimmingCharacters(in: .newlines),
             unavailable: "No notes yet. Choose Edit to add notes.", canEdit: detail.notesVersion != nil && !detail.row.isArchived,
             expand: { [weak self] in self?.expandNotes() },
             edit: { [weak self] in self?.beginNotesEditing() },
-            copy: { [weak self] in self?.copyNotes() }))
+            copy: { [weak self] in self?.copyNotes() },
+            canReassignNoteTask: noteTaskItems(in: detail).isEmpty == false && !detail.row.isArchived,
+            reassignNoteTask: { [weak self] in self?.presentNoteTaskReassignment(for: detail) }))
+    }
+
+    private func noteTaskItems(in detail: MeetingBrowserDetail) -> [TodoItem] {
+        TodoItemParser().parse(markdown: detail.humanNotes,
+            relativePath: (detail.row.meetingRelativePath as NSString).deletingLastPathComponent + "/my-notes.md")
+            .filter { UUID(uuidString: $0.id) != nil }
+    }
+
+    private func presentNoteTaskReassignment(for detail: MeetingBrowserDetail) {
+        guard window != nil, !detail.row.isArchived, selectedID == detail.row.id else { return }
+        let items = noteTaskItems(in: detail)
+        guard !items.isEmpty else { return }
+        let selector = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 28), pullsDown: false)
+        for item in items { selector.addItem(withTitle: item.title); selector.lastItem?.representedObject = item.id }
+        let owner = NSTextField(string: "")
+        owner.placeholderString = "Person ID (for example person-alex)"
+        owner.setAccessibilityIdentifier("meeting-note-task-owner")
+        owner.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
+        let controls = NSStackView(views: [selector, owner])
+        controls.orientation = .vertical
+        controls.spacing = GraphiteFocusPresentation.Space.compact
+        let alert = NSAlert()
+        alert.messageText = "Reassign note-authored task"
+        alert.informativeText = "The task stays in My Notes and leaves your personal Todo queue. Enter the Person ID to assign it to."
+        alert.accessoryView = controls
+        alert.addButton(withTitle: "Reassign")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let itemID = selector.selectedItem?.representedObject as? String else { return }
+        meetingsModel.detail.reassignNoteTask(itemID: itemID, owner: owner.stringValue) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.status.stringValue = "Task reassigned. It remains in My Notes."
+                self.meetingsModel.detail.refreshSelectedDetail()
+            case let .failure(error):
+                self.status.stringValue = "Could not reassign task: \(error.localizedDescription)"
+            }
+        }
     }
 
     @objc private func copyOutcome(_ sender: NSButton) {

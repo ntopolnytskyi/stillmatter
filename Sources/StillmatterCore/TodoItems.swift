@@ -198,7 +198,7 @@ public struct TodoItemParser {
         return trimmed.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
     }
 
-    fileprivate static func metadata(in text: String) -> MeetingItemMetadata? {
+    static func metadata(in text: String) -> MeetingItemMetadata? {
         guard let start = text.range(of: "<!-- sm-item:"), text.hasSuffix(" -->"),
               let item = try? JSONDecoder().decode(MeetingItemMetadata.self, from: Data(text[start.upperBound..<text.index(text.endIndex, offsetBy: -4)].utf8)),
               item.v == 1, UUID(uuidString: item.id) != nil else { return nil }
@@ -232,6 +232,7 @@ public enum TodoItemMutationError: Error, Equatable, LocalizedError {
     case duplicateIdentity(String)
     case invalidReference(String)
     case invalidCanonicalMetadata(String)
+    case invalidOwner(String)
     case staleCanonicalItem(String)
 
     public var errorDescription: String? {
@@ -240,6 +241,7 @@ public enum TodoItemMutationError: Error, Equatable, LocalizedError {
         case let .duplicateIdentity(id): return "Multiple checkboxes or queue references use Todo identity \(id). Keep one canonical checkbox and one queue reference, then reload."
         case let .invalidReference(line): return "Invalid Todo reference: \(line). Restore its item UUID and reload."
         case let .invalidCanonicalMetadata(path): return "Malformed Action Item identity metadata in \(path). Repair its sm-item comment before reloading Todo."
+        case let .invalidOwner(owner): return "Todo owner \(owner) is empty. Choose a Person before reassigning this item."
         case let .staleCanonicalItem(id): return "Todo \(id) changed in its canonical file. Your source is preserved; reload before editing it."
         }
     }

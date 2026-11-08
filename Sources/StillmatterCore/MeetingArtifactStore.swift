@@ -76,6 +76,7 @@ final class MeetingArtifactStore {
         let transaction = MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint)
         try transaction.recover()
         let statePath = sibling(meetingPath, "meeting-artifacts.json")
+        var migrated = false
         if try manifest(at: statePath) == nil {
             if let pair = try MeetingTranscriptCodec.reconcile(baseHash: nil,
                 text: optional(sibling(meetingPath, "transcript.txt"))?.data,
@@ -86,6 +87,10 @@ final class MeetingArtifactStore {
                 }
             }
             try migrate(meetingPath: meetingPath, meetingID: meetingID, transaction: transaction)
+            migrated = true
+        }
+        if migrated {
+            _ = try MeetingNoteTodoBridge(vault: vault).adoptSavedNotes(at: sibling(meetingPath, "my-notes.md"))
         }
         let stateSource = try vault.readMarkdown(relativePath: statePath)
         var state = try JSONDecoder().decode(Manifest.self, from: stateSource.data)

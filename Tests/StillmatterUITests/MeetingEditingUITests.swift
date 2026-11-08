@@ -2,6 +2,31 @@ import Foundation
 import XCTest
 
 extension StillmatterFlowsUITests {
+    func testReassignNoteAuthoredTaskKeepsItInMeetingAndRemovesItFromTodo() throws {
+        try seedMeeting(notes: "- [ ] Assign this task\n")
+        openFixtureMeeting()
+        let reassign = app.buttons["meeting-note-task-reassign"]
+        XCTAssertTrue(reassign.waitForExistence(timeout: 10))
+        reassign.click()
+        let alert = app.dialogs.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let owner = alert.textFields["meeting-note-task-owner"]
+        XCTAssertTrue(owner.waitForExistence(timeout: 5))
+        owner.click()
+        owner.typeText("person-alex")
+        alert.buttons["Reassign"].click()
+        let reassigned = NSPredicate { _, _ in
+            (try? String(contentsOf: self.notesURL, encoding: .utf8).contains("person-alex")) == true
+        }
+        expectation(for: reassigned, evaluatedWith: app)
+        waitForExpectations(timeout: 10)
+        let notes = try notesText()
+        XCTAssertTrue(notes.contains("- [ ] Assign this task <!-- sm-item:"))
+        XCTAssertTrue(notes.contains("person-alex"))
+        let queue = fixtureRoot.appendingPathComponent("workspace/Todos/todo.md")
+        XCTAssertFalse(try String(contentsOf: queue, encoding: .utf8).contains("[[item:"))
+    }
+
     func testNotesSavePersistsAfterRelaunch() throws {
         try seedMeeting()
         openFixtureMeeting()

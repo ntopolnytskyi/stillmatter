@@ -12,7 +12,8 @@ final class LiveMeetingNotesTests: XCTestCase {
         XCTAssertEqual(try reopened.load().text, "Call notes\n- [ ] Follow up")
         XCTAssertTrue(try reopened.load().hasDraft)
         _ = try reopened.save("Call notes\n- [ ] Follow up", expectedVersion: nil)
-        XCTAssertEqual(try fixture.notesText(), "Call notes\n- [ ] Follow up")
+        let savedNotes = try fixture.notesText()
+        XCTAssertTrue(savedNotes.hasPrefix("Call notes\n- [ ] Follow up <!-- sm-item:"), savedNotes)
         XCTAssertFalse(try reopened.load().hasDraft)
         XCTAssertFalse(try fixture.doorwayText().contains("Call notes"))
     }

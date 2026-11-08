@@ -97,6 +97,12 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         cell.completionButton.target = self
         cell.completionButton.action = #selector(completeRow(_:))
         cell.completionButton.tag = row
+        cell.editButton.isHidden = item.canonicalLocation == nil
+        cell.editButton.setAccessibilityIdentifier("task-edit-\(item.id)")
+        cell.editButton.setAccessibilityLabel("Edit \(item.title)")
+        cell.editButton.target = self
+        cell.editButton.action = #selector(editRow(_:))
+        cell.editButton.tag = row
         return cell
     }
 
@@ -323,6 +329,32 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         completeItem(at: sender.tag)
     }
 
+    @objc private func editRow(_ sender: NSButton) {
+        guard visibleItems.indices.contains(sender.tag), let completion else { return }
+        let item = visibleItems[sender.tag]
+        let editor = NSTextField(string: item.title)
+        editor.placeholderString = "Todo text"
+        editor.setAccessibilityIdentifier("task-text-editor")
+        editor.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
+        let alert = NSAlert()
+        alert.messageText = "Edit Todo Item"
+        alert.informativeText = "Changes are saved to this Meeting’s My Notes checkbox."
+        alert.accessoryView = editor
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        while alert.runModal() == .alertFirstButtonReturn {
+            do {
+                render(.loaded(try completion.updateText(item, text: editor.stringValue, displayedRoot: displayedRoot)))
+                onChange()
+                return
+            } catch {
+                // Reopen the same editor with the user's draft intact. WorkspaceVault
+                // rejects stale writes before replacing either canonical file.
+                alert.informativeText = "Could not save. The workspace file was left unchanged. Your draft remains here. \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func completeItem(at index: Int) {
         guard let completion, visibleItems.indices.contains(index) else { return }
         let item = visibleItems[index]
@@ -378,6 +410,7 @@ final class TodoLedgerTableView: NSTableView {
 
 final class TodoLedgerCellView: NSTableCellView {
     let completionButton: NSButton
+    let editButton: NSButton
     private let statusLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
     private let meaningLabel = NSTextField(labelWithString: "")
@@ -385,6 +418,7 @@ final class TodoLedgerCellView: NSTableCellView {
 
     init(identifier: NSUserInterfaceItemIdentifier, controls: GraphiteFocusControls = GraphiteFocusControls()) {
         completionButton = controls.checkbox("", identifier: "task-complete")
+        editButton = controls.button("Edit", identifier: "task-edit")
         super.init(frame: .zero)
         self.identifier = identifier
         buildLayout()
@@ -438,7 +472,7 @@ final class TodoLedgerCellView: NSTableCellView {
         detail.orientation = .vertical
         detail.alignment = .leading
         detail.spacing = GraphiteFocusPresentation.Space.primitive
-        let row = NSStackView(views: [completionButton, statusLabel, detail])
+        let row = NSStackView(views: [completionButton, statusLabel, detail, editButton])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = GraphiteFocusPresentation.Space.panel
