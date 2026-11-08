@@ -361,6 +361,10 @@ public final class MeetingCaptureService {
         return LiveMeetingNotes(vault: vault, sessionID: session.id, meetingPath: session.meetingRelativePath)
     }
 
+    public func pendingLiveNotesDocuments() -> [LiveMeetingNotes] {
+        LiveMeetingNotes.pendingDocuments(in: vault)
+    }
+
     public func appendActionItem(_ text: String) throws {
         try append(text, prefix: "- [ ] ")
     }

@@ -13,6 +13,20 @@ public enum LiveMeetingNotesError: LocalizedError {
 /// A capture-session-bound draft for the Meeting-owned My Notes file.
 /// The workspace file remains authoritative; a conflicting draft stays in app support.
 public final class LiveMeetingNotes {
+    /// Returns drafts that still belong to their original Meeting doorway.
+    /// Invalid or unreadable drafts remain in app support for manual recovery.
+    public static func pendingDocuments(in vault: WorkspaceVault) -> [LiveMeetingNotes] {
+        let directory = vault.meetingArtifactStateURL.appendingPathComponent("LiveNotes", isDirectory: true)
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "json" }.sorted { $0.path < $1.path }.compactMap { url in
+            guard let draft = try? JSONDecoder().decode(Draft.self, from: Data(contentsOf: url)),
+                  let doorway = try? vault.readMarkdown(relativePath: draft.meetingPath).data,
+                  let text = String(data: doorway, encoding: .utf8),
+                  text.contains("capture_session_id: \(draft.sessionID)\n") else { return nil }
+            return LiveMeetingNotes(vault: vault, sessionID: draft.sessionID, meetingPath: draft.meetingPath)
+        }
+    }
+
     /// Replays drafts left by interrupted app execution only when the original
     /// capture still owns the doorway and the workspace file has not changed.
     public static func recoverPendingDrafts(in vault: WorkspaceVault) -> [String] {
@@ -80,6 +94,8 @@ public final class LiveMeetingNotes {
                      version: draft == nil ? source.version : draft?.baseVersion, hasDraft: draft != nil,
                      conflictsWithFile: draft != nil && draft?.baseVersion != source.version)
     }
+
+    public var meetingRelativePath: String { meetingPath }
 
     public func stage(_ text: String, baseVersion: WorkspaceFileVersion?) throws {
         try FileManager.default.createDirectory(at: draftURL.deletingLastPathComponent(), withIntermediateDirectories: true)

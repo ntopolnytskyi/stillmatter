@@ -84,7 +84,7 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertTrue((editor.value as? String ?? "").contains("second draft"))
         editor.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(discard.waitForExistence(timeout: 5))
-        discard.buttons["Continue"].click()
+        discard.buttons["Discard Draft"].click()
         XCTAssertEqual(editor.value as? String, "External second")
         XCTAssertEqual(try String(contentsOf: path), "External second")
         app.buttons["recording-stop"].click()

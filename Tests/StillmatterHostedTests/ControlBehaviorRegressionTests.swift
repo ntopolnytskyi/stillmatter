@@ -380,7 +380,7 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         var allowStop = false
         let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
             teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {},
-            confirmDestructiveAction: { _, _ in allowStop })
+            confirmDestructiveAction: { _, _, _ in allowStop })
         view.refresh(isVisible: true)
         view.startButton.performClick(nil)
         let meetingPath = try XCTUnwrap(service.snapshot.meetingRelativePath)
@@ -404,6 +404,17 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         await fulfillment(of: [stopped], timeout: 10)
         XCTAssertTrue(try String(contentsOf: workspace.appendingPathComponent(notesPath)).contains("External version"))
         XCTAssertNotNil(service.snapshot.notesRecoveryWarning)
+        let relaunchedService = MeetingCaptureService(vault: vault, preflight: { .readyForTesting })
+        let relaunchedView = CaptureRecordingView(serviceProvider: { relaunchedService }, rootURLProvider: { workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+        relaunchedView.refresh(isVisible: true)
+        XCTAssertFalse(relaunchedView.noteTextView.isEditable)
+        XCTAssertEqual(relaunchedView.noteTextView.string, "My unsaved draft")
+        let useDraft = try XCTUnwrap(findView("recording-use-notes-draft", in: relaunchedView) as? NSButton)
+        XCTAssertTrue(useDraft.isEnabled)
+        useDraft.performClick(nil)
+        XCTAssertEqual(try String(contentsOf: workspace.appendingPathComponent(notesPath)), "My unsaved draft")
+        XCTAssertFalse(LiveMeetingNotes.pendingDocuments(in: vault).contains { $0.meetingRelativePath == meetingPath })
     }
 
     @MainActor
