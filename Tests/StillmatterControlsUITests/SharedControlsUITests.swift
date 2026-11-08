@@ -111,6 +111,44 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertFalse(app.textViews["recording-my-notes-editor"].isHittable)
     }
 
+    func testStopAnywayKeepsConflictForRecoveryAfterRelaunch() throws {
+        launch()
+        app.buttons["recording-start"].click()
+        let editor = app.textViews["recording-my-notes-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.click()
+        editor.typeText("Original")
+        editor.typeKey("s", modifierFlags: .command)
+        expectation(for: NSPredicate(format: "value == %@", "✓ Saved"), evaluatedWith: app.staticTexts["recording-my-notes-status"])
+        waitForExpectations(timeout: 10)
+        let notes = try XCTUnwrap(notePaths().first)
+        editor.typeText(" draft")
+        try "External".write(to: notes, atomically: true, encoding: .utf8)
+        app.buttons["recording-stop"].click()
+        let stopAnyway = app.buttons["recording-stop-anyway"]
+        XCTAssertTrue(stopAnyway.waitForExistence(timeout: 5))
+        stopAnyway.click()
+        let confirmation = app.alerts["Stop Capture with unsaved notes?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["Cancel"].click()
+        XCTAssertTrue(app.buttons["recording-stop"].exists)
+        stopAnyway.click()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["Stop Capture Anyway"].click()
+        XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
+        XCTAssertEqual(try String(contentsOf: notes), "External")
+
+        app.terminate()
+        launch()
+        let recoveredEditor = app.textViews["recording-my-notes-editor"]
+        XCTAssertTrue(recoveredEditor.waitForExistence(timeout: 10))
+        XCTAssertEqual(recoveredEditor.value as? String, "Original draft")
+        app.buttons["recording-use-notes-draft"].click()
+        XCTAssertEqual(try String(contentsOf: notes), "Original draft")
+        let preserved = root.appendingPathComponent("support/MeetingArtifacts/LiveNotes/Preserved")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: preserved, includingPropertiesForKeys: nil).count, 1)
+    }
+
     func testManualSourceShowsActualScopeAndPersistsMeetWithoutChangingMicrophone() throws {
         launch()
         let source = app.popUpButtons["recording-source"]
