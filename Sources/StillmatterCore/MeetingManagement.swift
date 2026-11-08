@@ -204,6 +204,13 @@ public final class MeetingManagementService {
             let detail = try self.detail(for: id)
             guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting content is read-only.") }
             if try legacyWriterIsActive(for: detail.row) {
+                let liveNotesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
+                if try vault.versionOfMarkdown(relativePath: liveNotesPath) != nil {
+                    _ = try vault.writeMarkdown(Data(notes.utf8), relativePath: liveNotesPath, expectedVersion: expectedVersion)
+                    try? index?.update(relativePath: liveNotesPath)
+                    onMeetingChanged([detail.row.meetingRelativePath])
+                    return try self.detail(for: id)
+                }
                 // Capture still appends to the doorway until the live-notes writer is
                 // migrated. Keep this representation authoritative for that session.
                 let updated = Self.replaceNotes(in: detail.doorwayText, notes: notes)

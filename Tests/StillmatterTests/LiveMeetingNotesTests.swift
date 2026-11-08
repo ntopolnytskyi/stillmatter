@@ -1,0 +1,145 @@
+import XCTest
+@testable import StillmatterCore
+
+final class LiveMeetingNotesTests: XCTestCase {
+    func testDraftSurvivesReopenAndAutosavePublishesSeparateMeetingFile() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let first = fixture.document(session: "session-a")
+        XCTAssertEqual(try first.load().text, "")
+        try first.stage("Call notes\n- [ ] Follow up", baseVersion: nil)
+        let reopened = fixture.document(session: "session-a")
+        XCTAssertEqual(try reopened.load().text, "Call notes\n- [ ] Follow up")
+        XCTAssertTrue(try reopened.load().hasDraft)
+        _ = try reopened.save("Call notes\n- [ ] Follow up", expectedVersion: nil)
+        XCTAssertEqual(try fixture.notesText(), "Call notes\n- [ ] Follow up")
+        XCTAssertFalse(try reopened.load().hasDraft)
+        XCTAssertFalse(try fixture.doorwayText().contains("Call notes"))
+    }
+
+    func testExternalEditRejectsSaveAndPreservesBothVersions() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let document = fixture.document(session: "session-a")
+        let base = try document.save("Original", expectedVersion: nil)
+        try document.stage("Local draft", baseVersion: base)
+        _ = try fixture.vault.writeMarkdown(Data("External edit".utf8), relativePath: fixture.notesPath, expectedVersion: base)
+        XCTAssertTrue(try document.load().conflictsWithFile)
+        XCTAssertThrowsError(try document.save("Local draft", expectedVersion: base))
+        XCTAssertEqual(try fixture.notesText(), "External edit")
+        XCTAssertEqual(try fixture.document(session: "session-a").load().text, "Local draft")
+        XCTAssertEqual(try fixture.document(session: "session-b").load().text, "External edit")
+        XCTAssertEqual(try document.reloadLatest().text, "External edit")
+        XCTAssertFalse(try document.load().hasDraft)
+    }
+
+    func testDraftCannotAttachToNewCaptureAtSameMeetingPath() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        try fixture.document(session: "session-a").stage("A only", baseVersion: nil)
+        XCTAssertEqual(try fixture.document(session: "session-b").load().text, "")
+    }
+
+    func testStartupRecoversInterruptedDraftOnlyForOriginalCaptureAndUnchangedFile() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let document = fixture.document(session: "session-a")
+        try document.stage("Recovered after interruption", baseVersion: nil)
+        let restarted = MeetingCaptureService(vault: fixture.vault, preflight: { .readyForTesting })
+        XCTAssertFalse(restarted.snapshot.processingStatus.contains { $0.hasPrefix("My Notes draft needs recovery") })
+        XCTAssertEqual(try fixture.notesText(), "Recovered after interruption")
+        XCTAssertFalse(try document.load().hasDraft)
+
+        let base = try fixture.vault.readMarkdown(relativePath: fixture.notesPath).version
+        try document.stage("Local conflict", baseVersion: base)
+        _ = try fixture.vault.writeMarkdown(Data("External".utf8), relativePath: fixture.notesPath, expectedVersion: base)
+        XCTAssertFalse(LiveMeetingNotes.recoverPendingDrafts(in: fixture.vault).isEmpty)
+        XCTAssertEqual(try fixture.notesText(), "External")
+        XCTAssertEqual(try document.load().text, "Local conflict")
+    }
+
+    func testWriteFailureRetainsDraftWithoutClaimingCanonicalSave() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let document = fixture.document(session: "session-a")
+        let blocker = fixture.root.appendingPathComponent("workspace/Meetings/live/my-notes.md")
+        try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try document.save("Still here", expectedVersion: nil))
+        try FileManager.default.removeItem(at: blocker)
+        let recovered = try fixture.document(session: "session-a").load()
+        XCTAssertTrue(recovered.hasDraft)
+        XCTAssertEqual(recovered.text, "Still here")
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: fixture.notesPath))
+    }
+
+    func testRecoveryNeverAttachesAnOldDraftToAnotherCapture() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        try fixture.document(session: "session-b").stage("B draft", baseVersion: nil)
+        let restarted = MeetingCaptureService(vault: fixture.vault, preflight: { .readyForTesting })
+        XCTAssertTrue(restarted.snapshot.processingStatus.contains { $0.hasPrefix("My Notes draft needs recovery") })
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: fixture.notesPath))
+        XCTAssertEqual(try fixture.document(session: "session-b").load().text, "B draft")
+    }
+
+    func testReloadFailureLeavesRecoverableDraftIntact() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let document = fixture.document(session: "session-a")
+        try document.stage("Local draft", baseVersion: nil)
+        let blocker = fixture.root.appendingPathComponent("workspace/Meetings/live/my-notes.md")
+        try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try document.reloadLatest())
+        try FileManager.default.removeItem(at: blocker)
+        XCTAssertEqual(try fixture.document(session: "session-a").load().text, "Local draft")
+    }
+
+    func testAlreadyPublishedDraftClearsOnLoadAfterInterruptedCleanup() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let document = fixture.document(session: "session-a")
+        let version = try document.save("Published", expectedVersion: nil)
+        try document.stage("Published", baseVersion: version)
+        let state = try document.load()
+        XCTAssertFalse(state.hasDraft)
+        XCTAssertEqual(state.text, "Published")
+    }
+
+    func testMeetingEditorUsesSameFileWhileCaptureIsLive() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.document(session: "session-a").save("Live first", expectedVersion: nil)
+        let snapshot = CaptureSnapshot(state: .recording, meetingTitle: "Live", meetingRelativePath: fixture.meetingPath,
+            source: .teams, elapsedSeconds: 1, failureMessage: nil, processingStatus: [], preflightReport: nil,
+            micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
+        let meetings = MeetingManagementService(vault: fixture.vault, captureSnapshot: { snapshot })
+        let first = try meetings.detail(for: fixture.meetingPath)
+        XCTAssertEqual(first.humanNotes, "Live first")
+        _ = try meetings.saveHumanNotes("Edited in Meeting", for: fixture.meetingPath,
+                                        expectedVersion: XCTUnwrap(first.notesVersion))
+        XCTAssertEqual(try fixture.notesText(), "Edited in Meeting")
+        XCTAssertFalse(try fixture.doorwayText().contains("Edited in Meeting"))
+    }
+
+    private final class Fixture {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-live-notes-\(UUID().uuidString)")
+        let vault: WorkspaceVault
+        let meetingPath = "Meetings/live/meeting.md"
+        let notesPath = "Meetings/live/my-notes.md"
+
+        init() throws {
+            vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"),
+                                   appSupportRootURL: root.appendingPathComponent("support"))
+            try vault.createDirectory(relativePath: "Meetings/live")
+            _ = try vault.writeMarkdown(Data("capture_session_id: session-a\n# Meeting\n".utf8), relativePath: meetingPath, expectedVersion: nil)
+        }
+
+        func document(session: String) -> LiveMeetingNotes {
+            LiveMeetingNotes(vault: vault, sessionID: session, meetingPath: meetingPath)
+        }
+
+        func notesText() throws -> String { String(decoding: try vault.readMarkdown(relativePath: notesPath).data, as: UTF8.self) }
+        func doorwayText() throws -> String { String(decoding: try vault.readMarkdown(relativePath: meetingPath).data, as: UTF8.self) }
+        func cleanup() { try? FileManager.default.removeItem(at: root) }
+    }
+}

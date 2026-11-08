@@ -1,6 +1,6 @@
 import Foundation
 
-public struct WorkspaceFileVersion: Equatable {
+public struct WorkspaceFileVersion: Equatable, Codable {
     public let contentHash: String
     public let modificationDate: Date
     public let byteCount: Int

@@ -31,21 +31,44 @@ final class SharedControlsUITests: XCTestCase {
         let stop = app.buttons["recording-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertFalse(app.popUpButtons["recording-language"].isEnabled)
-        let note = app.textFields["recording-note"]
+        let note = app.textViews["recording-my-notes-editor"]
         note.click()
         note.typeText("Native shared-control note")
-        note.typeKey(.return, modifierFlags: [])
-        expectation(for: NSPredicate(format: "value == %@", ""), evaluatedWith: note)
+        expectation(for: NSPredicate(format: "value == %@", "Saved"), evaluatedWith: app.staticTexts["recording-my-notes-status"])
         waitForExpectations(timeout: 10)
-        let saved = try meetingText()
+        let saved = try noteText()
         XCTAssertTrue(saved.contains("Native shared-control note"))
         stop.click()
         XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["recording-stop"].exists)
-        XCTAssertEqual(try meetingText().components(separatedBy: "Native shared-control note").count - 1, 1)
+        XCTAssertEqual(try noteText().components(separatedBy: "Native shared-control note").count - 1, 1)
         app.buttons["controls-nav-settings"].click()
         app.buttons["controls-nav-recording"].click()
         XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
+    }
+
+    func testLiveNotesConflictPreservesDraftAndReloadsExternalFile() throws {
+        launch()
+        app.buttons["recording-start"].click()
+        let editor = app.textViews["recording-my-notes-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.click()
+        editor.typeText("Initial")
+        editor.typeKey("s", modifierFlags: .command)
+        let status = app.staticTexts["recording-my-notes-status"]
+        expectation(for: NSPredicate(format: "value == %@", "Saved"), evaluatedWith: status)
+        waitForExpectations(timeout: 10)
+        let path = try XCTUnwrap(notePaths().first)
+        editor.typeText(" local draft")
+        try "External edit".write(to: path, atomically: true, encoding: .utf8)
+        app.buttons["recording-save-notes"].click()
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "Conflict"), evaluatedWith: status)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(try String(contentsOf: path), "External edit")
+        XCTAssertTrue((editor.value as? String ?? "").contains("local draft"))
+        app.buttons["recording-reload-notes"].click()
+        XCTAssertEqual(editor.value as? String, "External edit")
+        app.buttons["recording-stop"].click()
     }
 
     func testManualSourceShowsActualScopeAndPersistsMeetWithoutChangingMicrophone() throws {
@@ -97,10 +120,10 @@ final class SharedControlsUITests: XCTestCase {
         let start = app.buttons["recording-start"]
         XCTAssertTrue(start.waitForExistence(timeout: 10))
         start.click()
-        let note = app.textFields["recording-note"]
+        let note = app.textViews["recording-my-notes-editor"]
         note.click()
         note.typeText("Session A note")
-        note.typeKey(.return, modifierFlags: [])
+        app.buttons["recording-save-notes"].click()
         let stop = app.buttons["recording-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         stop.click()
@@ -117,7 +140,7 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertTrue((priorStatus.value as? String ?? "").contains("prior Meeting's audio is finalizing separately"), "A's status remains visible while B records")
         note.click()
         note.typeText("Session B note")
-        note.typeKey(.return, modifierFlags: [])
+        app.buttons["recording-save-notes"].click()
         app.buttons["recording-test-release-prior-finalization"].click()
         expectation(for: NSPredicate { _, _ in
             !(priorStatus.value as? String ?? "").contains("prior Meeting's audio is finalizing separately")
@@ -127,7 +150,7 @@ final class SharedControlsUITests: XCTestCase {
         app.buttons["recording-stop"].click()
         XCTAssertTrue(start.waitForExistence(timeout: 10))
 
-        let notes = try meetingTexts()
+        let notes = try noteTexts()
         XCTAssertEqual(notes.count, 2)
         XCTAssertTrue(notes.contains { $0.contains("Session A note") && !$0.contains("Session B note") })
         XCTAssertTrue(notes.contains { $0.contains("Session B note") && !$0.contains("Session A note") })
@@ -281,6 +304,18 @@ final class SharedControlsUITests: XCTestCase {
         return try files.filter { $0.hasSuffix("meeting.md") }.map {
             try String(contentsOf: root.appendingPathComponent("workspace").appendingPathComponent($0))
         }
+    }
+
+    private func noteText() throws -> String { try XCTUnwrap(noteTexts().first) }
+
+    private func noteTexts() throws -> [String] {
+        try notePaths().map { try String(contentsOf: $0) }
+    }
+
+    private func notePaths() throws -> [URL] {
+        let workspace = root.appendingPathComponent("workspace")
+        return try FileManager.default.subpathsOfDirectory(atPath: workspace.path)
+            .filter { $0.hasSuffix("my-notes.md") }.map { workspace.appendingPathComponent($0) }
     }
 
     private func effectiveSettings() throws -> [String: Any] {

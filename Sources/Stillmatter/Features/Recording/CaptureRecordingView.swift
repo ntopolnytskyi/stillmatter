@@ -5,7 +5,7 @@ import StillmatterCore
 
 /// Focused operational workspace for Meeting capture. Capture state and the next safe action stay
 /// prominent; supporting diagnostics and artifact details are disclosed only when requested.
-final class CaptureRecordingView: NSView {
+final class CaptureRecordingView: NSView, NSTextViewDelegate {
     override var isFlipped: Bool { true }
 
     struct Presentation {
@@ -46,9 +46,15 @@ final class CaptureRecordingView: NSView {
     private let sourcePopup: NSPopUpButton
     private let scopeLabel = NSTextField(wrappingLabelWithString: "")
     private let regenerateButton: NSButton
-    let noteField: NSTextField
-    private let addNoteButton: NSButton
-    private let addActionButton: NSButton
+    let noteTextView = NSTextView()
+    private let notesStatus = NSTextField(labelWithString: "")
+    private let saveNotesButton: NSButton
+    private let reloadNotesButton: NSButton
+    private var notesDocument: LiveMeetingNotes?
+    private var notesMeetingPath: String?
+    private var notesVersion: WorkspaceFileVersion?
+    private var notesSavedText = ""
+    private var notesSaveWork: DispatchWorkItem?
     private let preflightRows = NSStackView()
     private let artifactsRows = NSStackView()
     private let teamsRows = NSStackView()
@@ -78,13 +84,12 @@ final class CaptureRecordingView: NSView {
         stopButton = controls.button("Stop Capture", identifier: "recording-stop")
         openFolderButton = controls.button("Open Meeting Folder", identifier: "recording-open-folder")
         regenerateButton = controls.button("Regenerate Transcript", identifier: "recording-regenerate")
-        addNoteButton = controls.button("Add Note", identifier: "recording-add-note")
-        addActionButton = controls.button("Add Action Checkbox", identifier: "recording-add-action")
+        saveNotesButton = controls.button("Save Notes", identifier: "recording-save-notes")
+        reloadNotesButton = controls.button("Reload Latest", identifier: "recording-reload-notes")
         artifactsDisclosure = controls.disclosure("Show Processing & Artifacts", identifier: "recording-artifacts")
         teamsDisclosure = controls.disclosure("Show Teams Detection Signals", identifier: "recording-teams")
         languagePopup = controls.popup(identifier: "recording-language")
         sourcePopup = controls.popup(identifier: "recording-source")
-        noteField = controls.textField(identifier: "recording-note")
         self.serviceProvider = serviceProvider
         self.rootURLProvider = rootURLProvider
         self.teamsDetectionProvider = teamsDetectionProvider
@@ -106,6 +111,7 @@ final class CaptureRecordingView: NSView {
 
     deinit {
         timer?.invalidate()
+        notesSaveWork?.cancel()
     }
 
     func refresh(isVisible: Bool) {
@@ -129,6 +135,7 @@ final class CaptureRecordingView: NSView {
         }
 
         let snapshot = service.snapshot
+        refreshLiveNotes(service: service, snapshot: snapshot)
         render(presentation(for: snapshot))
         if snapshot.state == .recording, let source = snapshot.source {
             sourcePopup.selectItem(withTag: source == .teams ? 0 : (source == .zoom ? 1 : 2))
@@ -485,26 +492,43 @@ final class CaptureRecordingView: NSView {
     }
 
     private func makeLiveNotesSection() -> NSView {
-        noteField.placeholderString = "Type a live note or Action Item…"
-        noteField.target = self
-        noteField.action = #selector(addNote(_:))
-        noteField.setAccessibilityLabel("Live note or Action Item text")
-        addNoteButton.target = self
-        addNoteButton.action = #selector(addNote(_:))
-        addActionButton.target = self
-        addActionButton.action = #selector(addAction(_:))
-        let actions = NSStackView(views: [addNoteButton, addActionButton])
+        noteTextView.isRichText = false
+        noteTextView.isAutomaticQuoteSubstitutionEnabled = false
+        noteTextView.frame = NSRect(x: 0, y: 0, width: 800, height: 180)
+        noteTextView.minSize = NSSize(width: 0, height: 180)
+        noteTextView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        noteTextView.isVerticallyResizable = true
+        noteTextView.isHorizontallyResizable = false
+        noteTextView.autoresizingMask = [.width]
+        noteTextView.textContainer?.widthTracksTextView = true
+        noteTextView.font = GraphiteFocusPresentation.Typography.body
+        noteTextView.delegate = self
+        noteTextView.setAccessibilityIdentifier("recording-my-notes-editor")
+        noteTextView.setAccessibilityLabel("My Notes Markdown")
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.documentView = noteTextView
+        scroll.heightAnchor.constraint(equalToConstant: 180).isActive = true
+        saveNotesButton.target = self
+        saveNotesButton.action = #selector(saveNotesNow(_:))
+        saveNotesButton.keyEquivalent = "s"
+        saveNotesButton.keyEquivalentModifierMask = [.command]
+        reloadNotesButton.target = self
+        reloadNotesButton.action = #selector(reloadLiveNotes(_:))
+        notesStatus.font = GraphiteFocusPresentation.Typography.metadata
+        notesStatus.setAccessibilityIdentifier("recording-my-notes-status")
+        let actions = NSStackView(views: [saveNotesButton, reloadNotesButton, notesStatus])
         actions.orientation = .horizontal
         actions.spacing = GraphiteFocusPresentation.Space.compact
         let content = NSStackView()
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = GraphiteFocusPresentation.Space.compact
-        addFullWidth(noteField, to: content)
+        addFullWidth(scroll, to: content)
         content.addArrangedSubview(actions)
         return makeSection(
-            title: "Live Notes",
-            caption: "Available while recording. Action checkboxes remain proposals in the Meeting doorway; they do not create Todo Items.",
+            title: "My Notes",
+            caption: "Markdown saves automatically in this Meeting's my-notes.md. Use - [ ] for an Action Item.",
             content: content
         )
     }
@@ -578,15 +602,16 @@ final class CaptureRecordingView: NSView {
         languagePopup.isEnabled = presentation.isConfigured && !isRecording
         sourcePopup.isEnabled = presentation.isConfigured && !isRecording
         regenerateButton.isEnabled = presentation.canRegenerateTranscript && !isRecording
-        noteField.isEnabled = isRecording
-        addNoteButton.isEnabled = isRecording
-        addActionButton.isEnabled = isRecording
+        noteTextView.isEditable = isRecording
+        saveNotesButton.isEnabled = isRecording
+        reloadNotesButton.isEnabled = isRecording
         liveNotesSection?.isHidden = !isRecording
         startButton.title = presentation.meetingPath == nil ? "Start Capture" : "Start New Capture"
 
         renderPreflight(presentation.preflight, isConfigured: presentation.isConfigured)
         renderArtifacts(presentation.artifactRows)
-        let failure = operationFailure ?? presentation.failureMessage
+        let recoveryWarning = serviceProvider()?.snapshot.processingStatus.first { $0.hasPrefix("My Notes draft needs recovery") }
+        let failure = operationFailure ?? presentation.failureMessage ?? recoveryWarning
         errorLabel.stringValue = failure.map { "!  Failure details: \($0)" } ?? ""
         errorLabel.isHidden = failure == nil
     }
@@ -860,6 +885,7 @@ final class CaptureRecordingView: NSView {
 
     @objc private func stopCapture(_ sender: NSButton) {
         guard let service = serviceProvider() else { return }
+        if notesDocument != nil && noteTextView.string != notesSavedText { saveNotesNow(nil) }
         onManualCapture()
         let stoppedMeetingRelativePath = service.snapshot.meetingRelativePath
         service.stopManualAsync { [weak self] result in
@@ -887,16 +913,86 @@ final class CaptureRecordingView: NSView {
         perform { service in _ = try service.regenerateTranscript(language: language) }
     }
 
-    @objc private func addNote(_ sender: Any?) {
-        let text = noteField.stringValue
-        perform { service in try service.appendLiveNote(text) }
-        if errorLabel.stringValue.isEmpty { noteField.stringValue = "" }
+    private func refreshLiveNotes(service: MeetingCaptureService, snapshot: CaptureSnapshot) {
+        guard snapshot.state == .recording, let path = snapshot.meetingRelativePath,
+              let document = service.liveNotesDocument() else { return }
+        if notesMeetingPath != path {
+            notesSaveWork?.cancel()
+            notesMeetingPath = path
+            notesDocument = document
+            do {
+                let state = try document.load()
+                notesVersion = state.version
+                notesSavedText = state.savedText
+                noteTextView.string = state.text
+                notesStatus.stringValue = state.conflictsWithFile ? "Conflict: external changes and your draft are preserved. Reload Latest discards the draft." :
+                    (state.hasDraft ? "Recovered unsaved draft. Save to retry." : "Saved")
+            } catch {
+                notesStatus.stringValue = "Could not load My Notes: \(error.localizedDescription)"
+            }
+            return
+        }
+        do {
+            let state = try document.load()
+            if state.conflictsWithFile {
+                notesStatus.stringValue = "Conflict: external changes and your draft are preserved. Reload Latest discards the draft."
+            } else if !state.hasDraft && noteTextView.string == notesSavedText && state.savedText != notesSavedText {
+                noteTextView.string = state.savedText
+                notesSavedText = state.savedText
+                notesVersion = state.version
+                notesStatus.stringValue = "Updated from my-notes.md"
+            }
+        } catch {
+            notesStatus.stringValue = "Could not read My Notes: \(error.localizedDescription)"
+        }
     }
 
-    @objc private func addAction(_ sender: NSButton) {
-        let text = noteField.stringValue
-        perform { service in try service.appendActionItem(text) }
-        if errorLabel.stringValue.isEmpty { noteField.stringValue = "" }
+    func textDidChange(_ notification: Notification) {
+        guard notification.object as? NSTextView === noteTextView, let document = notesDocument else { return }
+        notesSaveWork?.cancel()
+        do {
+            try document.stage(noteTextView.string, baseVersion: notesVersion)
+            notesStatus.stringValue = "Saving…"
+            let work = DispatchWorkItem { [weak self] in self?.saveNotesNow(nil) }
+            notesSaveWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+        } catch {
+            notesStatus.stringValue = "Draft recovery failed: \(error.localizedDescription). Keep this window open."
+        }
+    }
+
+    @objc private func saveNotesNow(_ sender: Any?) {
+        notesSaveWork?.cancel()
+        guard let document = notesDocument else { return }
+        do {
+            let text = noteTextView.string
+            let version = try document.save(text, expectedVersion: notesVersion)
+            notesVersion = version
+            notesSavedText = text
+            notesStatus.stringValue = "Saved"
+        } catch let error as WorkspaceVaultError {
+            if case .conflict = error {
+                notesStatus.stringValue = "Conflict: external changes and your draft are preserved. Reload Latest discards the draft."
+            } else {
+                notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Draft retained."
+            }
+        } catch {
+            notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Draft retained."
+        }
+    }
+
+    @objc private func reloadLiveNotes(_ sender: NSButton) {
+        guard let document = notesDocument else { return }
+        notesSaveWork?.cancel()
+        do {
+            let state = try document.reloadLatest()
+            noteTextView.string = state.text
+            notesSavedText = state.savedText
+            notesVersion = state.version
+            notesStatus.stringValue = "Reloaded latest My Notes"
+        } catch {
+            notesStatus.stringValue = "Could not reload My Notes: \(error.localizedDescription). Draft retained."
+        }
     }
 
     @objc private func openMeetingFolder(_ sender: NSButton) {

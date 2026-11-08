@@ -1062,6 +1062,29 @@ final class MeetingManagementView: NSView {
             statusBadge.isHidden = false
             pinnedAudio.isHidden = false
             configureMeetingState(selected.row)
+            let inProgress = selected.row.captureState == .live || selected.row.processingState == .processing
+            if inProgress {
+                overview.stringValue = selected.row.captureState == .live ? "Recording" : "Processing"
+                overviewPage.isHidden = true
+                timelinePage.isHidden = true
+                pageSelector.isHidden = true
+                pinnedAudio.isHidden = true
+                toolbar.isHidden = true
+                notesSection?.isHidden = true
+                summaryOverviewSection?.isHidden = true
+                notesOverviewSection?.isHidden = true
+                diagnosticsDisclosure.isHidden = true
+                reviewPrompt.isHidden = true
+                status.stringValue = selected.row.captureState == .live
+                    ? "Recording is active. My Notes are available on Recording."
+                    : "Processing is in progress. Meeting content will appear when it finishes."
+                lastRenderedDetail = selected
+                return
+            }
+            if pageSelector.isHidden {
+                pageSelector.isHidden = false
+                renderPage(meetingsModel.detail.page)
+            }
             overview.stringValue = detailOverview(selected)
             if changedMeeting {
                 timelineNavigation.jump = nil

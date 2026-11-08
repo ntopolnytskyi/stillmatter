@@ -7,6 +7,47 @@ import StillmatterCore
 
 /// Runs unchanged against the pre-migration forms and their shared-control replacements.
 final class ControlBehaviorRegressionTests: XCTestCase {
+    @MainActor
+    func testLiveNotesRefreshesCleanEditorAndKeepsDraftAfterWriteFailure() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-live-notes-ui-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: root.appendingPathComponent("support"))
+        let service = MeetingCaptureService(vault: vault, preflight: { .readyForTesting })
+        let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+        _ = try service.startManual()
+        view.refresh(isVisible: true)
+        let path = try XCTUnwrap(service.snapshot.meetingRelativePath)
+        let notePath = (path as NSString).deletingLastPathComponent + "/my-notes.md"
+        _ = try vault.writeMarkdown(Data("External notes".utf8), relativePath: notePath, expectedVersion: nil)
+        view.refresh(isVisible: true)
+        XCTAssertEqual(view.noteTextView.string, "External notes")
+        let status = try XCTUnwrap(findView("recording-my-notes-status", in: view) as? NSTextField)
+        XCTAssertEqual(status.stringValue, "Updated from my-notes.md")
+
+        view.noteTextView.string = "Keep my draft"
+        view.textDidChange(Notification(name: NSText.didChangeNotification, object: view.noteTextView))
+        let noteURL = workspace.appendingPathComponent(notePath)
+        try FileManager.default.removeItem(at: noteURL)
+        try FileManager.default.createDirectory(at: noteURL, withIntermediateDirectories: true)
+        let save = try XCTUnwrap(findView("recording-save-notes", in: view) as? NSButton)
+        save.performClick(nil)
+        XCTAssertTrue(status.stringValue.contains("Could not save My Notes"))
+        XCTAssertEqual(view.noteTextView.string, "Keep my draft")
+        try FileManager.default.removeItem(at: noteURL)
+        _ = try vault.writeMarkdown(Data("External notes".utf8), relativePath: notePath, expectedVersion: nil)
+        XCTAssertEqual(try XCTUnwrap(service.liveNotesDocument()).load().text, "Keep my draft")
+    }
+
+    private func findView(_ identifier: String, in view: NSView) -> NSView? {
+        if view.accessibilityIdentifier() == identifier { return view }
+        for child in view.subviews {
+            if let found = findView(identifier, in: child) { return found }
+        }
+        return nil
+    }
+
     func testMacRecorderReleaseAndExportEntryPointsWithoutActiveDevices() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-recorder-entry-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -259,17 +300,20 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         XCTAssertFalse(view.startButton.isEnabled)
         XCTAssertTrue(view.stopButton.isEnabled)
         let path = try XCTUnwrap(service.snapshot.meetingRelativePath)
-        view.noteField.stringValue = "Synthetic live note through the real field"
-        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(view.noteField.action), to: view.noteField.target, from: view.noteField))
-        XCTAssertTrue(try String(contentsOf: workspace.appendingPathComponent(path)).contains("Synthetic live note through the real field"))
-        XCTAssertEqual(view.noteField.stringValue, "")
+        view.noteTextView.string = "Synthetic live note through the real field"
+        view.textDidChange(Notification(name: NSText.didChangeNotification, object: view.noteTextView))
+        let saved = expectation(for: NSPredicate { _, _ in
+            (try? String(contentsOf: workspace.appendingPathComponent(path).deletingLastPathComponent().appendingPathComponent("my-notes.md"))) == "Synthetic live note through the real field"
+        }, evaluatedWith: view)
+        await fulfillment(of: [saved], timeout: 10)
+        XCTAssertEqual(view.noteTextView.string, "Synthetic live note through the real field")
         view.stopButton.performClick(nil)
         let stopped = expectation(for: NSPredicate { _, _ in service.snapshot.state == .idle }, evaluatedWith: service)
         await fulfillment(of: [stopped], timeout: 10)
         view.refresh(isVisible: true)
         XCTAssertTrue(view.startButton.isEnabled)
         XCTAssertFalse(view.stopButton.isEnabled)
-        XCTAssertFalse(view.noteField.isEnabled)
+        XCTAssertFalse(view.noteTextView.isEditable)
     }
 
     @MainActor

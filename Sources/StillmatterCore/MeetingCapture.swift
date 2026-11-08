@@ -197,6 +197,7 @@ public final class MeetingCaptureService {
     private var observers: [(CaptureSnapshot) -> Void] = []
     private var priorCaptureFinalizations: [PriorCaptureFinalization] = []
     private var processingStatus: [String] = []
+    private let notesRecoveryWarning: String?
     private var preflightReport: AudioCapturePreflightReport?
     private var micRecording: MicTrackRecordingMetadata?
     private var systemAudioRecording: SystemAudioTrackRecordingMetadata?
@@ -230,6 +231,9 @@ public final class MeetingCaptureService {
         self.now = now
         self.timeZone = timeZone
         self.makeID = makeID
+        let unresolvedNotes = LiveMeetingNotes.recoverPendingDrafts(in: vault)
+        notesRecoveryWarning = unresolvedNotes.isEmpty ? nil
+            : "My Notes draft needs recovery for \(unresolvedNotes.joined(separator: ", ")). The workspace file was left unchanged."
         systemAudioRecorder?.setCaptureFailureHandler { [weak self] metadata in
             DispatchQueue.main.async { [weak self] in
                 self?.systemAudioCaptureFailed(metadata)
@@ -251,7 +255,7 @@ public final class MeetingCaptureService {
             source: visibleSession?.source,
             elapsedSeconds: elapsed,
             failureMessage: machine.failureMessage,
-            processingStatus: processingStatus,
+            processingStatus: processingStatus + (notesRecoveryWarning.map { [$0] } ?? []),
             preflightReport: preflightReport,
             micRecording: micRecording,
             systemAudioRecording: systemAudioRecording,
@@ -341,6 +345,11 @@ public final class MeetingCaptureService {
 
     public func appendLiveNote(_ text: String) throws {
         try append(text, prefix: "- ")
+    }
+
+    public func liveNotesDocument() -> LiveMeetingNotes? {
+        guard machine.state == .recording, let session else { return nil }
+        return LiveMeetingNotes(vault: vault, sessionID: session.id, meetingPath: session.meetingRelativePath)
     }
 
     public func appendActionItem(_ text: String) throws {

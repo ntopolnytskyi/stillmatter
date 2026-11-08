@@ -50,7 +50,10 @@ final class MeetingArtifactStore {
         let doorway = try vault.readMarkdown(relativePath: meetingPath)
         let text = try decode(doorway.data, path: meetingPath)
         let range = legacyNotesRange(in: text)
-        let notes = range.map { String(text[$0.bodyStart..<$0.end]) } ?? ""
+        let notesPath = sibling(meetingPath, "my-notes.md")
+        let separate = try optional(notesPath)
+        let notes = try separate.map { try decode($0.data, path: notesPath) }
+            ?? (range.map { String(text[$0.bodyStart..<$0.end]) } ?? "")
         let summaryPath = sibling(meetingPath, "summary.md")
         let summary = try optional(summaryPath)
         let summaryText = try summary.map { try decode($0.data, path: summaryPath) } ?? ""
@@ -62,10 +65,10 @@ final class MeetingArtifactStore {
         let reviews = try Dictionary(uniqueKeysWithValues: extraction.myActionItems.map {
             ($0.id, try inbox?.proposalReviewState(id: "meeting-action:" + meetingID + ":" + $0.id) ?? .referenceOnly)
         })
-        return Loaded(notes: notes, notesVersion: doorway.version,
+        return Loaded(notes: notes, notesVersion: separate?.version ?? doorway.version,
             sections: MeetingSummarySections(summary: summaryText), summaryVersion: summary?.version ?? doorway.version,
-            extraction: extraction, transcript: transcript, paths: ["notes": meetingPath, "summary": summaryPath],
-            versions: summary.map { ["notes": doorway.version, "summary": $0.version] } ?? ["notes": doorway.version], reviewStates: reviews, completionStates: [:])
+            extraction: extraction, transcript: transcript, paths: ["notes": separate == nil ? meetingPath : notesPath, "summary": summaryPath],
+            versions: summary.map { ["notes": separate?.version ?? doorway.version, "summary": $0.version] } ?? ["notes": separate?.version ?? doorway.version], reviewStates: reviews, completionStates: [:])
     }
 
     func load(meetingPath: String, meetingID: String) throws -> Loaded {

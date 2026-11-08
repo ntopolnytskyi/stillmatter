@@ -76,12 +76,12 @@ final class SharedControlsHostedTests: XCTestCase {
         let settingToggle: NSButton = try control("settings-launch-at-login", in: settings)
         let settingPopup: NSPopUpButton = try control("settings-teams-recording", in: settings)
         let recordingPopup: NSPopUpButton = try control("recording-language", in: recording)
-        for consumer in [recording.startButton, recording.noteField, recordingPopup, settingField, settingButton, settingToggle, settingPopup] as [NSControl] {
+        for consumer in [recording.startButton, recordingPopup, settingField, settingButton, settingToggle, settingPopup] as [NSControl] {
             XCTAssertEqual(consumer.font, controls.style.font)
             XCTAssertEqual(consumer.controlSize, .small)
         }
         XCTAssertEqual(recording.startButton.keyEquivalent, "\r")
-        XCTAssertFalse(recording.noteField.isEnabled)
+        XCTAssertFalse(recording.noteTextView.isEditable)
         XCTAssertEqual(settingField.placeholderString, "Private/**, Archive/Old/**")
         XCTAssertEqual(recording.artifactsDisclosure.bezelStyle, .rounded)
         XCTAssertFalse(recording.artifactsDisclosure.isBordered)
@@ -109,7 +109,7 @@ final class SharedControlsHostedTests: XCTestCase {
         XCTAssertFalse(recording.stopButton.isEnabled)
         recording.startButton.performClick(nil)
         XCTAssertEqual(fixture.service.snapshot.state, .idle)
-        XCTAssertFalse(recording.noteField.isEnabled)
+        XCTAssertFalse(recording.noteTextView.isEditable)
         let blocked = AudioCapturePreflightReport(items: [.init(id: "microphone", title: "Microphone", status: .blocked,
             detail: "Controlled permission refusal", settingsAction: .openMicrophonePrivacy)])
         recording.render(.init(state: .failed, stateTitle: "Failed", stateDetail: "Controlled refusal", elapsedSeconds: 0,

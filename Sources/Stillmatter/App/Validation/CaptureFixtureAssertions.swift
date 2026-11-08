@@ -109,7 +109,7 @@ extension CaptureRecordingView {
             isConfigured: true,
             canRegenerateTranscript: false
         ))
-        precondition(renderedPreflightCount == 2 && stopButton.isEnabled && noteField.isEnabled, "Degraded recording must preserve capture and live notes")
+        precondition(renderedPreflightCount == 2 && stopButton.isEnabled && noteTextView.isEditable, "Degraded recording must preserve capture and live notes")
         operationFailure = "Could not update capture: fixture write failure"
         refresh(isVisible: true)
         precondition(!errorLabel.isHidden && errorLabel.stringValue.contains("fixture write failure"), "Operation failures must survive a timed refresh")
