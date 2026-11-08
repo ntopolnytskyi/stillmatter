@@ -87,6 +87,9 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         XCTAssertTrue(status.stringValue.contains("draft recovery is unavailable"))
         XCTAssertFalse(status.stringValue.contains("Draft retained"))
         XCTAssertEqual(view.noteTextView.string, "Keep this window open")
+        view.stopButton.performClick(nil)
+        XCTAssertEqual(service.snapshot.state, .recording)
+        XCTAssertTrue(view.noteTextView.isEditable)
     }
 
     private func findView(_ identifier: String, in view: NSView) -> NSView? {

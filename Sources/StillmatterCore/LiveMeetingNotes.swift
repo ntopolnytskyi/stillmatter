@@ -107,6 +107,17 @@ public final class LiveMeetingNotes {
                      hasDraft: false, conflictsWithFile: false)
     }
 
+    /// Publishes the last keystroke's durable draft when capture ends through
+    /// automation or another control that does not own the Recording editor.
+    public func flushStagedDraft() throws {
+        guard let draft = try storedDraft() else { return }
+        let source = try currentFile()
+        if source.text == draft.text { try discardDraft(); return }
+        _ = try vault.writeMarkdown(Data(draft.text.utf8), relativePath: notesPath,
+                                    expectedVersion: draft.baseVersion)
+        try discardDraft()
+    }
+
     /// An explicit conflict decision keeps the displaced external version as a
     /// readable copy before publishing the user's staged draft.
     public func useDraftPreservingExternal(_ currentText: String, expectedBaseVersion: WorkspaceFileVersion?) throws -> (version: WorkspaceFileVersion, preservedCopy: URL) {

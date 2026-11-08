@@ -157,6 +157,34 @@ final class LiveMeetingNotesTests: XCTestCase {
         XCTAssertFalse(try fixture.doorwayText().contains("Edited in Meeting"))
     }
 
+    func testServiceStopFlushesStagedDraftWithoutRecordingView() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let service = MeetingCaptureService(vault: fixture.vault, preflight: { .readyForTesting })
+        let session = try service.startManual()
+        try XCTUnwrap(service.liveNotesDocument()).stage("Last typed words", baseVersion: nil)
+        _ = try service.stopManual()
+        let notesPath = (session.meetingRelativePath as NSString).deletingLastPathComponent + "/my-notes.md"
+        XCTAssertEqual(String(decoding: try fixture.vault.readMarkdown(relativePath: notesPath).data, as: UTF8.self),
+                       "Last typed words")
+    }
+
+    func testServiceStopPreservesConflictingDraftAndWarnsWithoutReplacingExternalFile() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let service = MeetingCaptureService(vault: fixture.vault, preflight: { .readyForTesting })
+        let session = try service.startManual()
+        let document = try XCTUnwrap(service.liveNotesDocument())
+        try document.stage("Local last words", baseVersion: nil)
+        let path = (session.meetingRelativePath as NSString).deletingLastPathComponent + "/my-notes.md"
+        _ = try fixture.vault.writeMarkdown(Data("External last words".utf8), relativePath: path, expectedVersion: nil)
+        _ = try service.stopManual()
+        XCTAssertEqual(String(decoding: try fixture.vault.readMarkdown(relativePath: path).data, as: UTF8.self),
+                       "External last words")
+        XCTAssertEqual(try document.load().text, "Local last words")
+        XCTAssertNotNil(service.snapshot.notesRecoveryWarning)
+    }
+
     private final class Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-live-notes-\(UUID().uuidString)")
         let vault: WorkspaceVault

@@ -895,7 +895,11 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
 
     @objc private func stopCapture(_ sender: NSButton) {
         guard let service = serviceProvider() else { return }
-        if notesDocument != nil && noteTextView.string != notesSavedText { saveNotesNow(nil) }
+        if notesDocument == nil && !noteTextView.string.isEmpty {
+            notesStatus.stringValue = "Could not save My Notes. Keep this window open and retry when the file is available."
+            return
+        }
+        if notesDocument != nil && noteTextView.string != notesSavedText && !saveNotes() { return }
         onManualCapture()
         let stoppedMeetingRelativePath = service.snapshot.meetingRelativePath
         service.stopManualAsync { [weak self] result in
@@ -978,8 +982,13 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     }
 
     @objc private func saveNotesNow(_ sender: Any?) {
+        _ = saveNotes()
+    }
+
+    @discardableResult
+    private func saveNotes() -> Bool {
         notesSaveWork?.cancel()
-        guard let document = notesDocument else { return }
+        guard let document = notesDocument else { return false }
         do {
             let text = noteTextView.string
             let version = try document.save(text, expectedVersion: notesVersion)
@@ -988,6 +997,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             notesHaveConflict = false
             useDraftButton.isEnabled = false
             notesStatus.stringValue = "Saved"
+            return true
         } catch let error as LiveMeetingNotesError {
             notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Keep this window open; draft recovery is unavailable."
         } catch let error as WorkspaceVaultError {
@@ -999,6 +1009,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         } catch {
             notesStatus.stringValue = "Could not save My Notes: \(error.localizedDescription). Draft retained."
         }
+        return false
     }
 
     @objc private func reloadLiveNotes(_ sender: NSButton) {

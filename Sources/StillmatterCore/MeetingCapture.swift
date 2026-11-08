@@ -447,6 +447,13 @@ public final class MeetingCaptureService {
             }
         }
 
+        do {
+            try LiveMeetingNotes(vault: vault, sessionID: activeSession.id,
+                                 meetingPath: activeSession.meetingRelativePath).flushStagedDraft()
+        } catch {
+            notesRecoveryWarning = "My Notes draft for \(activeSession.meetingRelativePath) was preserved but could not be saved: \(error.localizedDescription)."
+        }
+
         try? markCaptureFinalizing(relativePath: activeSession.meetingRelativePath)
         let request = CaptureFinalizationRequest(
             session: activeSession,
