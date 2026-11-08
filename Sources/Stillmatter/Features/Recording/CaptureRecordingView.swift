@@ -51,6 +51,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     private let saveNotesButton: NSButton
     private let reloadNotesButton: NSButton
     private let useDraftButton: NSButton
+    let stopAnywayButton: NSButton
     private var notesDocument: LiveMeetingNotes?
     private var notesMeetingPath: String?
     private var notesVersion: WorkspaceFileVersion?
@@ -89,6 +90,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         saveNotesButton = controls.button("Save Notes", identifier: "recording-save-notes")
         reloadNotesButton = controls.button("Reload Latest", identifier: "recording-reload-notes")
         useDraftButton = controls.button("Use My Draft", identifier: "recording-use-notes-draft")
+        stopAnywayButton = controls.button("Stop Capture Anyway", identifier: "recording-stop-anyway")
         artifactsDisclosure = controls.disclosure("Show Processing & Artifacts", identifier: "recording-artifacts")
         teamsDisclosure = controls.disclosure("Show Teams Detection Signals", identifier: "recording-teams")
         languagePopup = controls.popup(identifier: "recording-language")
@@ -522,10 +524,14 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         useDraftButton.target = self
         useDraftButton.action = #selector(useLiveNotesDraft(_:))
         useDraftButton.isEnabled = false
+        stopAnywayButton.target = self
+        stopAnywayButton.action = #selector(stopCaptureAnyway(_:))
+        stopAnywayButton.isEnabled = false
+        stopAnywayButton.isHidden = true
         notesStatus.font = GraphiteFocusPresentation.Typography.metadata
         notesStatus.maximumNumberOfLines = 0
         notesStatus.setAccessibilityIdentifier("recording-my-notes-status")
-        let actions = NSStackView(views: [saveNotesButton, reloadNotesButton, useDraftButton])
+        let actions = NSStackView(views: [saveNotesButton, reloadNotesButton, useDraftButton, stopAnywayButton])
         actions.orientation = .horizontal
         actions.spacing = GraphiteFocusPresentation.Space.compact
         let content = NSStackView()
@@ -615,6 +621,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         saveNotesButton.isEnabled = isRecording
         reloadNotesButton.isEnabled = isRecording
         useDraftButton.isEnabled = isRecording && notesHaveConflict
+        stopAnywayButton.isHidden = !isRecording || !stopAnywayButton.isEnabled
         liveNotesSection?.isHidden = !isRecording
         startButton.title = presentation.meetingPath == nil ? "Start Capture" : "Start New Capture"
 
@@ -896,10 +903,28 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     @objc private func stopCapture(_ sender: NSButton) {
         guard let service = serviceProvider() else { return }
         if notesDocument == nil && !noteTextView.string.isEmpty {
-            notesStatus.stringValue = "Could not save My Notes. Keep this window open and retry when the file is available."
+            notesStatus.stringValue = "Could not save My Notes. Retry Save or copy your text before choosing Stop Capture Anyway."
+            stopAnywayButton.isEnabled = true
+            stopAnywayButton.isHidden = false
             return
         }
-        if notesDocument != nil && noteTextView.string != notesSavedText && !saveNotes() { return }
+        if notesDocument != nil && noteTextView.string != notesSavedText && !saveNotes() {
+            notesStatus.stringValue += " Retry Save or copy your text before choosing Stop Capture Anyway."
+            stopAnywayButton.isEnabled = true
+            stopAnywayButton.isHidden = false
+            return
+        }
+        stopCaptureSession(service)
+    }
+
+    @objc private func stopCaptureAnyway(_ sender: NSButton) {
+        guard let service = serviceProvider(), service.snapshot.state == .recording else { return }
+        stopCaptureSession(service)
+    }
+
+    private func stopCaptureSession(_ service: MeetingCaptureService) {
+        stopAnywayButton.isEnabled = false
+        stopAnywayButton.isHidden = true
         onManualCapture()
         let stoppedMeetingRelativePath = service.snapshot.meetingRelativePath
         service.stopManualAsync { [weak self] result in
@@ -996,6 +1021,8 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             notesSavedText = text
             notesHaveConflict = false
             useDraftButton.isEnabled = false
+            stopAnywayButton.isEnabled = false
+            stopAnywayButton.isHidden = true
             notesStatus.stringValue = "Saved"
             return true
         } catch let error as LiveMeetingNotesError {

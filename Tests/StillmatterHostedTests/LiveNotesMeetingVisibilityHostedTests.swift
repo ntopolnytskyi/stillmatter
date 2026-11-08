@@ -23,11 +23,9 @@ final class LiveNotesMeetingVisibilityHostedTests: XCTestCase {
             micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
         let live = MeetingManagementService(vault: vault, captureSnapshot: { liveSnapshot })
         let liveView = try await selectedView(for: live)
-        XCTAssertTrue(liveView.overviewPage.isHidden)
-        XCTAssertTrue(liveView.timelinePage.isHidden)
-        XCTAssertTrue(liveView.toolbar.isHidden)
-        XCTAssertTrue(liveView.pageSelector.isHidden)
-        XCTAssertTrue(liveView.status.stringValue.contains("Recording is active"))
+        let liveElements = visibleElements(in: liveView)
+        XCTAssertTrue(liveElements.contains { $0.contains("Recording is active") })
+        XCTAssertFalse(liveElements.contains { $0.contains("Notes from Recording") || $0 == "Meeting audio" })
 
         let jobs = try JobStore(databaseURL: root.appendingPathComponent("jobs.sqlite"))
         _ = try jobs.enqueue(id: "processing", manifest: JobManifest(type: "meeting.transcription", title: "Processing",
@@ -36,14 +34,15 @@ final class LiveNotesMeetingVisibilityHostedTests: XCTestCase {
             metadata: ["capture_session_id": "session-a"]))
         let processing = MeetingManagementService(vault: vault, jobStore: jobs)
         let processingView = try await selectedView(for: processing)
-        XCTAssertTrue(processingView.overviewPage.isHidden)
-        XCTAssertTrue(processingView.timelinePage.isHidden)
-        XCTAssertTrue(processingView.status.stringValue.contains("Processing is in progress"))
+        let processingElements = visibleElements(in: processingView)
+        XCTAssertTrue(processingElements.contains { $0.contains("Processing is in progress") })
+        XCTAssertFalse(processingElements.contains { $0.contains("Notes from Recording") || $0 == "Meeting audio" })
 
         let later = MeetingManagementService(vault: vault)
         XCTAssertEqual(try later.detail(for: meetingPath).humanNotes.trimmingCharacters(in: .newlines), "Notes from Recording")
         let laterView = try await selectedView(for: later)
-        XCTAssertFalse(laterView.overviewPage.isHidden)
+        let laterElements = visibleElements(in: laterView)
+        XCTAssertTrue(laterElements.contains("Meeting audio"), "Visible elements: \(laterElements)")
         XCTAssertEqual(laterView.displayedDetail?.humanNotes.trimmingCharacters(in: .newlines), "Notes from Recording")
     }
 
@@ -62,5 +61,27 @@ final class LiveNotesMeetingVisibilityHostedTests: XCTestCase {
         let detail = expectation(for: NSPredicate { _, _ in view.displayedDetail?.row.id == row.id }, evaluatedWith: view)
         await fulfillment(of: [detail], timeout: 5)
         return view
+    }
+
+    @MainActor
+    private func visibleElements(in view: NSView) -> [String] {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        view.frame = window.contentView?.bounds ?? .zero
+        view.layoutSubtreeIfNeeded()
+        var elements: [String] = []
+        var visited = Set<ObjectIdentifier>()
+        func collect(_ object: Any) {
+            guard let element = object as? NSObject,
+                  element.responds(to: NSSelectorFromString("accessibilityChildren")) else { return }
+            let id = ObjectIdentifier(element)
+            guard visited.insert(id).inserted else { return }
+            let value = String(describing: element.value(forKey: "accessibilityValue") ?? "")
+            elements.append(value)
+            for child in element.value(forKey: "accessibilityChildren") as? [Any] ?? [] { collect(child) }
+        }
+        collect(window)
+        return elements
     }
 }

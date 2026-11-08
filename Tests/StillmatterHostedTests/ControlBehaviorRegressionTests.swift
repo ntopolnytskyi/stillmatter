@@ -369,6 +369,39 @@ final class ControlBehaviorRegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testNotesConflictAllowsExplicitStopAndKeepsDraft() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-stop-conflict-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        let support = root.appendingPathComponent("support")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support)
+        let service = MeetingCaptureService(vault: vault, preflight: { .readyForTesting })
+        let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+        view.refresh(isVisible: true)
+        view.startButton.performClick(nil)
+        let meetingPath = try XCTUnwrap(service.snapshot.meetingRelativePath)
+        let notesPath = (meetingPath as NSString).deletingLastPathComponent + "/my-notes.md"
+        view.noteTextView.string = "My unsaved draft"
+        view.textDidChange(Notification(name: NSText.didChangeNotification, object: view.noteTextView))
+        _ = try vault.writeMarkdown(Data("External version".utf8), relativePath: notesPath, expectedVersion: nil)
+
+        view.stopButton.performClick(nil)
+        XCTAssertEqual(service.snapshot.state, .recording)
+        XCTAssertFalse(view.stopAnywayButton.isHidden)
+        XCTAssertTrue(view.stopAnywayButton.isEnabled)
+        XCTAssertTrue(view.noteTextView.string.contains("My unsaved draft"))
+        XCTAssertTrue(try String(contentsOf: workspace.appendingPathComponent(notesPath)).contains("External version"))
+
+        view.stopAnywayButton.performClick(nil)
+        let stopped = expectation(for: NSPredicate { _, _ in service.snapshot.state == .idle }, evaluatedWith: service)
+        await fulfillment(of: [stopped], timeout: 10)
+        XCTAssertTrue(try String(contentsOf: workspace.appendingPathComponent(notesPath)).contains("External version"))
+        XCTAssertNotNil(service.snapshot.notesRecoveryWarning)
+    }
+
+    @MainActor
     func testRecordControlCanStartBWhileStoppedSessionAStillFinalizes() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-capture-overlap-\(UUID().uuidString)")
         let workspace = root.appendingPathComponent("workspace")
