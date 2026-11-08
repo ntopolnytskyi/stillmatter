@@ -78,13 +78,14 @@ final class SharedControlsUITests: XCTestCase {
         editor.typeText(" second draft")
         try "External second".write(to: path, atomically: true, encoding: .utf8)
         editor.typeKey(.escape, modifierFlags: [])
-        let discard = app.alerts["Discard the current My Notes draft?"]
-        XCTAssertTrue(discard.waitForExistence(timeout: 5))
-        discard.buttons["Cancel"].click()
+        let discard = app.buttons["action-button-2"]
+        XCTAssertTrue(discard.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(discard.label, "Discard Draft")
+        app.buttons["action-button-1"].click()
         XCTAssertTrue((editor.value as? String ?? "").contains("second draft"))
         editor.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(discard.waitForExistence(timeout: 5))
-        discard.buttons["Discard Draft"].click()
+        discard.click()
         XCTAssertEqual(editor.value as? String, "External second")
         XCTAssertEqual(try String(contentsOf: path), "External second")
         app.buttons["recording-stop"].click()
@@ -124,17 +125,22 @@ final class SharedControlsUITests: XCTestCase {
         let notes = try XCTUnwrap(notePaths().first)
         editor.typeText(" draft")
         try "External".write(to: notes, atomically: true, encoding: .utf8)
+        editor.typeText(" after external")
+        app.buttons["recording-save-notes"].click()
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "Conflict"), evaluatedWith: app.staticTexts["recording-my-notes-status"])
+        waitForExpectations(timeout: 10)
         app.buttons["recording-stop"].click()
         let stopAnyway = app.buttons["recording-stop-anyway"]
         XCTAssertTrue(stopAnyway.waitForExistence(timeout: 5))
         stopAnyway.click()
-        let confirmation = app.alerts["Stop Capture with unsaved notes?"]
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
-        confirmation.buttons["Cancel"].click()
+        let confirmation = app.buttons["action-button-2"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(confirmation.label, "Stop Capture Anyway")
+        app.buttons["action-button-1"].click()
         XCTAssertTrue(app.buttons["recording-stop"].exists)
         stopAnyway.click()
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
-        confirmation.buttons["Stop Capture Anyway"].click()
+        confirmation.click()
         XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
         XCTAssertEqual(try String(contentsOf: notes), "External")
 
@@ -142,9 +148,9 @@ final class SharedControlsUITests: XCTestCase {
         launch()
         let recoveredEditor = app.textViews["recording-my-notes-editor"]
         XCTAssertTrue(recoveredEditor.waitForExistence(timeout: 10))
-        XCTAssertEqual(recoveredEditor.value as? String, "Original draft")
+        XCTAssertEqual(recoveredEditor.value as? String, "Original draft after external")
         app.buttons["recording-use-notes-draft"].click()
-        XCTAssertEqual(try String(contentsOf: notes), "Original draft")
+        XCTAssertEqual(try String(contentsOf: notes), "Original draft after external")
         let preserved = root.appendingPathComponent("support/MeetingArtifacts/LiveNotes/Preserved")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: preserved, includingPropertiesForKeys: nil).count, 1)
     }

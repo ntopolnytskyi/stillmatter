@@ -237,7 +237,8 @@ public final class MeetingCaptureService {
         DispatchQueue.global(qos: .utility).async { [weak self, vault] in
             let unresolvedNotes = LiveMeetingNotes.recoverPendingDrafts(in: vault)
             DispatchQueue.main.async { [weak self] in
-                guard let self, !unresolvedNotes.isEmpty else { return }
+                guard let self, !unresolvedNotes.isEmpty,
+                      LiveMeetingNotes.hasPendingDraftFiles(in: vault) else { return }
                 self.notesRecoveryWarning = "My Notes draft needs recovery for \(unresolvedNotes.joined(separator: ", ")). The workspace file was left unchanged."
                 self.notifyObservers()
             }
@@ -363,6 +364,13 @@ public final class MeetingCaptureService {
 
     public func pendingLiveNotesDocuments() -> [LiveMeetingNotes] {
         LiveMeetingNotes.pendingDocuments(in: vault)
+    }
+
+    public func refreshNotesRecoveryWarning() {
+        let unresolved = LiveMeetingNotes.recoverPendingDrafts(in: vault)
+        notesRecoveryWarning = unresolved.isEmpty ? nil
+            : "My Notes draft needs recovery for \(unresolved.joined(separator: ", ")). The workspace file was left unchanged."
+        notifyObservers()
     }
 
     public func appendActionItem(_ text: String) throws {

@@ -16,33 +16,25 @@ public final class LiveMeetingNotes {
     /// Returns drafts that still belong to their original Meeting doorway.
     /// Invalid or unreadable drafts remain in app support for manual recovery.
     public static func pendingDocuments(in vault: WorkspaceVault) -> [LiveMeetingNotes] {
-        let directory = vault.meetingArtifactStateURL.appendingPathComponent("LiveNotes", isDirectory: true)
-        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        return files.filter { $0.pathExtension == "json" }.sorted { $0.path < $1.path }.compactMap { url in
+        draftFiles(in: vault).compactMap { url in
             guard let draft = try? JSONDecoder().decode(Draft.self, from: Data(contentsOf: url)),
-                  let doorway = try? vault.readMarkdown(relativePath: draft.meetingPath).data,
-                  let text = String(data: doorway, encoding: .utf8),
-                  text.contains("capture_session_id: \(draft.sessionID)\n") else { return nil }
-            return LiveMeetingNotes(vault: vault, sessionID: draft.sessionID, meetingPath: draft.meetingPath)
+                  let path = resolvedMeetingPath(for: draft, in: vault) else { return nil }
+            return LiveMeetingNotes(vault: vault, sessionID: draft.sessionID, meetingPath: path)
         }
     }
 
     /// Replays drafts left by interrupted app execution only when the original
     /// capture still owns the doorway and the workspace file has not changed.
     public static func recoverPendingDrafts(in vault: WorkspaceVault) -> [String] {
-        let directory = vault.meetingArtifactStateURL.appendingPathComponent("LiveNotes", isDirectory: true)
-        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         var unresolved: [String] = []
-        for url in files where url.pathExtension == "json" {
+        for url in draftFiles(in: vault) {
             do {
                 let draft = try JSONDecoder().decode(Draft.self, from: Data(contentsOf: url))
-                let doorway = try vault.readMarkdown(relativePath: draft.meetingPath).data
-                guard let text = String(data: doorway, encoding: .utf8),
-                      text.contains("capture_session_id: \(draft.sessionID)\n") else {
+                guard let path = resolvedMeetingPath(for: draft, in: vault) else {
                     unresolved.append(draft.meetingPath)
                     continue
                 }
-                let document = LiveMeetingNotes(vault: vault, sessionID: draft.sessionID, meetingPath: draft.meetingPath)
+                let document = LiveMeetingNotes(vault: vault, sessionID: draft.sessionID, meetingPath: path)
                 let state = try document.load()
                 if state.hasDraft { _ = try document.save(draft.text, expectedVersion: draft.baseVersion) }
             } catch {
@@ -50,6 +42,28 @@ public final class LiveMeetingNotes {
             }
         }
         return unresolved
+    }
+
+    private static func draftFiles(in vault: WorkspaceVault) -> [URL] {
+        let directory = vault.meetingArtifactStateURL.appendingPathComponent("LiveNotes", isDirectory: true)
+        return ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "json" }.sorted { $0.path < $1.path }
+    }
+
+    public static func hasPendingDraftFiles(in vault: WorkspaceVault) -> Bool {
+        !draftFiles(in: vault).isEmpty
+    }
+
+    private static func resolvedMeetingPath(for draft: Draft, in vault: WorkspaceVault) -> String? {
+        func owns(_ path: String) -> Bool {
+            guard let data = try? vault.readMarkdown(relativePath: path).data,
+                  let text = String(data: data, encoding: .utf8) else { return false }
+            return text.contains("capture_session_id: \(draft.sessionID)\n")
+        }
+        if owns(draft.meetingPath) { return draft.meetingPath }
+        guard let paths = try? vault.markdownPaths(relativeTo: "Meetings") else { return nil }
+        let matches = paths.filter { ($0 as NSString).lastPathComponent == "meeting.md" && owns($0) }
+        return matches.count == 1 ? matches[0] : nil
     }
 
     public struct State {
@@ -161,7 +175,10 @@ public final class LiveMeetingNotes {
     private func storedDraft() throws -> Draft? {
         guard FileManager.default.fileExists(atPath: draftURL.path) else { return nil }
         let draft = try JSONDecoder().decode(Draft.self, from: Data(contentsOf: draftURL))
-        guard draft.sessionID == sessionID, draft.meetingPath == meetingPath else { return nil }
+        guard draft.sessionID == sessionID else { return nil }
+        if draft.meetingPath != meetingPath {
+            guard Self.resolvedMeetingPath(for: draft, in: vault) == meetingPath else { return nil }
+        }
         return draft
     }
 }

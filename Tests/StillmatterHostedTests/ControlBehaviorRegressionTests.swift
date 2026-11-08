@@ -415,6 +415,7 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         useDraft.performClick(nil)
         XCTAssertEqual(try String(contentsOf: workspace.appendingPathComponent(notesPath)), "My unsaved draft")
         XCTAssertFalse(LiveMeetingNotes.pendingDocuments(in: vault).contains { $0.meetingRelativePath == meetingPath })
+        XCTAssertNil(relaunchedService.snapshot.notesRecoveryWarning)
     }
 
     @MainActor

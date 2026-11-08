@@ -53,6 +53,27 @@ final class LiveMeetingNotesTests: XCTestCase {
         XCTAssertEqual(try fixture.document(session: "session-b").load().text, "")
     }
 
+    func testPendingConflictFollowsRenamedMeetingFolder() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let document = fixture.document(session: "session-a")
+        let base = try document.save("Original", expectedVersion: nil)
+        try document.stage("Local draft", baseVersion: base)
+        _ = try fixture.vault.writeMarkdown(Data("External edit".utf8), relativePath: fixture.notesPath, expectedVersion: base)
+        let oldFolder = fixture.root.appendingPathComponent("workspace/Meetings/live")
+        let newFolder = fixture.root.appendingPathComponent("workspace/Meetings/renamed")
+        try FileManager.default.moveItem(at: oldFolder, to: newFolder)
+
+        let pending = try XCTUnwrap(LiveMeetingNotes.pendingDocuments(in: fixture.vault).first)
+        XCTAssertEqual(pending.meetingRelativePath, "Meetings/renamed/meeting.md")
+        XCTAssertEqual(try pending.load().text, "Local draft")
+        XCTAssertTrue(try pending.load().conflictsWithFile)
+        let resolved = try pending.useDraftPreservingExternal("Local draft", expectedBaseVersion: base)
+        XCTAssertEqual(try String(contentsOf: newFolder.appendingPathComponent("my-notes.md")), "Local draft")
+        XCTAssertEqual(try String(contentsOf: resolved.preservedCopy), "External edit")
+        XCTAssertTrue(LiveMeetingNotes.pendingDocuments(in: fixture.vault).isEmpty)
+    }
+
     func testStartupRecoversInterruptedDraftOnlyForOriginalCaptureAndUnchangedFile() throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

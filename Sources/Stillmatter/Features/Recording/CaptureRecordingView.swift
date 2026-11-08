@@ -28,7 +28,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     private let onManualCapture: () -> Void
     private let jobRecordsProvider: () -> [JobRecord]
     private let onOpenSettings: () -> Void
-    private let confirmDestructiveAction: (String, String, String) -> Bool
+    private let confirmDestructiveAction: @MainActor (String, String, String) -> Bool
 
     private let controls: GraphiteFocusControls
 
@@ -83,7 +83,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         onManualCapture: @escaping () -> Void = {},
         jobRecordsProvider: @escaping () -> [JobRecord],
         onOpenSettings: @escaping () -> Void,
-        confirmDestructiveAction: @escaping (String, String, String) -> Bool = { title, detail, action in
+        confirmDestructiveAction: @escaping @MainActor (String, String, String) -> Bool = { title, detail, action in
             let alert = NSAlert()
             alert.messageText = title
             alert.informativeText = detail
@@ -1069,7 +1069,10 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             stopAnywayButton.isEnabled = false
             stopAnywayButton.isHidden = true
             setNotesStatus("Saved", .success)
-            if notesRecoveryActive { refresh(isVisible: !isHidden) }
+            if notesRecoveryActive {
+                serviceProvider()?.refreshNotesRecoveryWarning()
+                refresh(isVisible: !isHidden)
+            }
             return true
         } catch let error as LiveMeetingNotesError {
             setNotesStatus("Could not save My Notes: \(error.localizedDescription). Keep this window open; draft recovery is unavailable.", .destructive)
@@ -1100,7 +1103,10 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             notesHaveConflict = false
             useDraftButton.isEnabled = false
             setNotesStatus("Reloaded latest My Notes", .success)
-            if notesRecoveryActive { refresh(isVisible: !isHidden) }
+            if notesRecoveryActive {
+                serviceProvider()?.refreshNotesRecoveryWarning()
+                refresh(isVisible: !isHidden)
+            }
         } catch {
             setNotesStatus("Could not reload My Notes: \(error.localizedDescription). Draft retained.", .destructive)
         }
@@ -1116,7 +1122,10 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             notesHaveConflict = false
             useDraftButton.isEnabled = false
             setNotesStatus("Saved your draft. Previous external notes are preserved at \(result.preservedCopy.path).", .success)
-            if notesRecoveryActive { refresh(isVisible: !isHidden) }
+            if notesRecoveryActive {
+                serviceProvider()?.refreshNotesRecoveryWarning()
+                refresh(isVisible: !isHidden)
+            }
         } catch let error as LiveMeetingNotesError {
             setNotesStatus("Could not save the current draft: \(error.localizedDescription). Keep this window open.", .destructive)
         } catch {
