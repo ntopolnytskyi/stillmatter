@@ -52,7 +52,12 @@ final class MeetingSummaryTests: XCTestCase {
             transcript: fixture.transcriptPath, decisions: [],
             myActionItems: [fixture.outcome(id: noteID, text: "Keep this user's task", segment: 0)],
             otherActionItems: [], openQuestions: [])
-        for _ in 0..<2 { _ = try execute(fixture.executor(extraction: duplicate), manifest: manifest) }
+        let misclassifiedDuplicate = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath,
+            transcript: fixture.transcriptPath, decisions: [], myActionItems: [],
+            otherActionItems: [fixture.outcome(id: noteID, text: "Misclassified duplicate", segment: 0)], openQuestions: [])
+        for extraction in [duplicate, duplicate, misclassifiedDuplicate, misclassifiedDuplicate] {
+            _ = try execute(fixture.executor(extraction: extraction), manifest: manifest)
+        }
 
         let reopened = try management.detail(for: initial.row.id)
         XCTAssertEqual(TodoItemParser().parse(markdown: reopened.humanNotes, relativePath: notePath).first?.id, noteID)
@@ -62,6 +67,7 @@ final class MeetingSummaryTests: XCTestCase {
         let extraction = try JSONDecoder().decode(MeetingSummaryExtraction.self,
             from: Data(contentsOf: fixture.workspaceURL.appendingPathComponent(fixture.extractionPath)))
         XCTAssertTrue(extraction.myActionItems.isEmpty)
+        XCTAssertTrue(extraction.otherActionItems.isEmpty)
         let queue = try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadTaskViews(today: "2026-01-01").queue
         XCTAssertEqual(queue.filter { $0.id == noteID }.count, 1)
         XCTAssertEqual(queue.count, 1)

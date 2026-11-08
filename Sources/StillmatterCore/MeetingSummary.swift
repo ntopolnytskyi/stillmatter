@@ -266,7 +266,8 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
 
         let notesPath = canonicalBase?.paths["notes"] ?? Self.notesPath(for: transcript.meetingRelativePath)
         let noteItemIDs = try noteAuthoredItemIDs(at: notesPath)
-        let duplicateNoteIDs = noteItemIDs.intersection(Set(extraction.myActionItems.map { $0.id.lowercased() }))
+        let extractedActionItemIDs = extraction.myActionItems + extraction.otherActionItems
+        let duplicateNoteIDs = noteItemIDs.intersection(Set(extractedActionItemIDs.map { $0.id.lowercased() }))
         if !duplicateNoteIDs.isEmpty {
             extraction = MeetingSummaryExtraction(
                 schemaVersion: extraction.schemaVersion,
@@ -274,7 +275,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                 transcript: extraction.transcript,
                 decisions: extraction.decisions,
                 myActionItems: extraction.myActionItems.filter { !duplicateNoteIDs.contains($0.id.lowercased()) },
-                otherActionItems: extraction.otherActionItems,
+                otherActionItems: extraction.otherActionItems.filter { !duplicateNoteIDs.contains($0.id.lowercased()) },
                 openQuestions: extraction.openQuestions
             )
         }
