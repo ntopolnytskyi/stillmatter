@@ -101,6 +101,31 @@ public final class MeetingNoteTodoBridge {
         }
     }
 
+    /// Removes Todo references whose canonical checkbox no longer exists. This
+    /// never rewrites a Meeting file; a later external restoration can be adopted
+    /// again at an explicit save boundary.
+    @discardableResult
+    public func pruneDanglingReferences() throws -> Set<String> {
+        let queuePath = TodoItemIndex.mainTodoRelativePath
+        guard let queueVersion = try vault.versionOfMarkdown(relativePath: queuePath) else { return [] }
+        let queue = try vault.readMarkdown(relativePath: queuePath)
+        let indexedItems = try TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems()
+        let canonicalIDs = Set(indexedItems.compactMap { item -> String? in
+            guard item.canonicalLocation != nil else { return nil }
+            return item.id.lowercased()
+        })
+        var lines = String(decoding: queue.data, as: UTF8.self).components(separatedBy: "\n")
+        let danglingIDs = Set(lines.compactMap(Self.referenceID(in:)).filter { !canonicalIDs.contains($0) })
+        guard !danglingIDs.isEmpty else { return [] }
+        lines.removeAll { line in
+            guard let id = Self.referenceID(in: line) else { return false }
+            return danglingIDs.contains(id)
+        }
+        _ = try vault.writeMarkdown(Data(lines.joined(separator: "\n").utf8), relativePath: queuePath,
+                                    expectedVersion: queueVersion)
+        return danglingIDs
+    }
+
     private func update(item: TodoItem, expectedQueueVersion: WorkspaceFileVersion,
                         transform: (String, MeetingItemMetadata) throws -> (line: String, isPersonal: Bool)) throws -> WorkspaceFileVersion {
         let queuePath = TodoItemIndex.mainTodoRelativePath

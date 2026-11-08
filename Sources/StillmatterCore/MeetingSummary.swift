@@ -106,6 +106,8 @@ public enum MeetingSummaryJob {
 
     public static func manifest(meetingRelativePath: String, captureSessionID: String, transcriptJSONRelativePath: String) throws -> JobManifest {
         let paths = artifactPaths(meetingRelativePath: meetingRelativePath)
+        let meetingDirectory = (meetingRelativePath as NSString).deletingLastPathComponent
+        let notesPath = meetingDirectory.isEmpty ? "my-notes.md" : meetingDirectory + "/my-notes.md"
         let workflow = PiWorkflowManifest(
             task: """
             Summarize this meeting transcript. Return an editable Markdown summary and a machine-readable extraction.
@@ -114,12 +116,13 @@ public enum MeetingSummaryJob {
             Use '-' when a section has no supported outcome. Cite every extracted outcome with one or more transcript segment IDs and exact start/end seconds from transcript.json; do not invent evidence.
             The extraction JSON must have schema_version=1, meeting and transcript matching the manifest paths, and arrays named decisions, my_action_items, other_action_items, and open_questions. Every array item must contain a stable id, concise text, and citations with segment_id, start_seconds, and end_seconds.
             Classify only commitments assigned to the user/Me as my_action_items. Commitments assigned to anyone else belong in other_action_items.
+            Read My Notes at \(notesPath) as protected context. Never rewrite or delete its content. When a transcript commitment is already represented by one of its note-authored checkboxes, do not extract a second Action Item; reuse that checkbox's exact sm-item UUID as the outcome id so the app can enforce the identity match. Do not infer a match from title similarity alone.
             """,
             primarySources: [
                 JobArtifactReference(relativePath: transcriptJSONRelativePath, role: "timestamped-transcript"),
                 JobArtifactReference(relativePath: meetingRelativePath, role: "meeting-doorway")
             ],
-            relatedContext: ["Projects/**", "People/**"],
+            relatedContext: ["Projects/**", "People/**", notesPath],
             expectedOutputs: [
                 PiWorkflowOutput(
                     relativePath: paths.summary,
@@ -253,7 +256,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
             meetingPath: transcript.meetingRelativePath,
             transcriptPath: transcriptPath
         )
-        let extraction: MeetingSummaryExtraction
+        var extraction: MeetingSummaryExtraction
         do {
             extraction = try JSONDecoder().decode(MeetingSummaryExtraction.self, from: extractionArtifact.data)
         } catch {
@@ -261,18 +264,44 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         }
         try validate(extraction, transcript: transcript, transcriptPath: transcriptPath)
 
+        let notesPath = canonicalBase?.paths["notes"] ?? Self.notesPath(for: transcript.meetingRelativePath)
+        let noteItemIDs = try noteAuthoredItemIDs(at: notesPath)
+        let duplicateNoteIDs = noteItemIDs.intersection(Set(extraction.myActionItems.map { $0.id.lowercased() }))
+        if !duplicateNoteIDs.isEmpty {
+            extraction = MeetingSummaryExtraction(
+                schemaVersion: extraction.schemaVersion,
+                meeting: extraction.meeting,
+                transcript: extraction.transcript,
+                decisions: extraction.decisions,
+                myActionItems: extraction.myActionItems.filter { !duplicateNoteIDs.contains($0.id.lowercased()) },
+                otherActionItems: extraction.otherActionItems,
+                openQuestions: extraction.openQuestions
+            )
+        }
+        let sanitizedExtractionData = try JSONEncoder().encode(extraction)
+        var publishedArtifacts = result.artifacts
+        if let extractionIndex = publishedArtifacts.firstIndex(where: { $0.relativePath == paths.extraction }) {
+            publishedArtifacts[extractionIndex] = GeneratedArtifact(relativePath: paths.extraction, data: sanitizedExtractionData)
+        }
+
         let sourceRef = Self.summarySourceRef(meetingRelativePath: transcript.meetingRelativePath)
         var queued = 0
         try cancellation.performIfActive {
             if let canonicalBase, let canonicalID {
-                try artifacts.publishGenerated(summary: summary.data, extraction: extraction, extractionData: extractionArtifact.data,
+                try artifacts.publishGenerated(summary: summary.data, extraction: extraction, extractionData: sanitizedExtractionData,
                     base: canonicalBase, meetingPath: transcript.meetingRelativePath, meetingID: canonicalID,
                     expectedExtraction: expectedVersions[paths.extraction] ?? nil)
             } else {
-                try vault.replaceMarkdownTransaction(result.artifacts.map {
+                try vault.replaceMarkdownTransaction(publishedArtifacts.map {
                     WorkspaceMarkdownReplacement(relativePath: $0.relativePath, data: $0.data,
                         expectedVersion: expectedVersions[$0.relativePath] ?? nil)
                 })
+            }
+            for noteID in noteItemIDs {
+                let duplicateProposalID = "meeting-action:\(captureSessionID):\(noteID)"
+                if try inbox.proposalReviewState(id: duplicateProposalID) == .pending {
+                    try inbox.setProposalReviewState(id: duplicateProposalID, state: .referenceOnly)
+                }
             }
             for item in extraction.myActionItems {
                 let proposalID = "meeting-action:\(captureSessionID):\(item.id)"
@@ -290,10 +319,10 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
             onApplied()
         }
         return JobStageResult(
-            artifacts: result.artifacts,
+            artifacts: publishedArtifacts,
             logMessages: result.logMessages + [
                 "Published editable meeting summary and cited structured extraction",
-                "Queued \(queued) My Action Item proposal(s); kept \(extraction.otherActionItems.count) Other Action Item(s) reference-only"
+                "Queued \(queued) My Action Item proposal(s); suppressed \(duplicateNoteIDs.count) note-identity duplicate(s); kept \(extraction.otherActionItems.count) Other Action Item(s) reference-only"
             ]
         )
     }
@@ -374,5 +403,21 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
     private static func summarySourceRef(meetingRelativePath: String) -> String {
         let directory = (meetingRelativePath as NSString).deletingLastPathComponent
         return "[[\(directory)/summary#My action items|ref]]"
+    }
+
+    private static func notesPath(for meetingRelativePath: String) -> String {
+        let directory = (meetingRelativePath as NSString).deletingLastPathComponent
+        return directory.isEmpty ? "my-notes.md" : directory + "/my-notes.md"
+    }
+
+    private func noteAuthoredItemIDs(at relativePath: String) throws -> Set<String> {
+        guard try vault.versionOfMarkdown(relativePath: relativePath) != nil else { return [] }
+        let source = try vault.readMarkdown(relativePath: relativePath)
+        let text = String(decoding: source.data, as: UTF8.self)
+        return Set(TodoItemParser().parse(markdown: text, relativePath: relativePath).compactMap { item in
+            guard let metadata = TodoItemParser.metadata(in: item.rawText),
+                  metadata.origin == "note", UUID(uuidString: metadata.id) != nil else { return nil }
+            return metadata.id.lowercased()
+        })
     }
 }

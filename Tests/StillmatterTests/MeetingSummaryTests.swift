@@ -24,7 +24,47 @@ final class MeetingSummaryTests: XCTestCase {
         XCTAssertEqual(workflow.primarySources.first?.relativePath, fixture.transcriptPath)
         XCTAssertTrue(workflow.task.contains("exact start/end seconds"))
         XCTAssertTrue(workflow.task.contains("only commitments assigned to the user/Me"))
+        XCTAssertTrue(workflow.task.contains("reuse that checkbox's exact sm-item UUID"))
+        XCTAssertTrue(workflow.relatedContext.contains("Meetings/2026/09/kickoff/my-notes.md"))
         XCTAssertTrue(workflow.forbiddenMutations.contains("Todos/**"))
+    }
+
+    func testNoteIdentitySuppressesDuplicateAIProposalAndPreservesNoteOnRetry() throws {
+        let fixture = try MeetingSummaryFixture()
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript,
+            transcriptJSONRelativePath: fixture.transcriptPath)
+        let empty = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath,
+            transcript: fixture.transcriptPath, decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        _ = try execute(fixture.executor(extraction: empty), manifest: manifest)
+
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL,
+            appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        let management = MeetingManagementService(vault: vault, inbox: fixture.inbox)
+        let initial = try management.detail(for: fixture.transcript.meetingRelativePath)
+        let saved = try management.saveHumanNotes("- [ ] Keep this user's task", for: initial.row.id,
+            expectedVersion: XCTUnwrap(initial.notesVersion))
+        let notePath = "Meetings/2026/09/kickoff/my-notes.md"
+        let noteID = try XCTUnwrap(TodoItemParser().parse(markdown: saved.humanNotes, relativePath: notePath).first?.id)
+        let proposalID = "meeting-action:capture-summary:\(noteID)"
+        try fixture.inbox.queueProposal(id: proposalID, title: "Duplicate note task", sourceRef: "[[Meetings/2026/09/kickoff/summary#My action items|ref]]")
+
+        let duplicate = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath,
+            transcript: fixture.transcriptPath, decisions: [],
+            myActionItems: [fixture.outcome(id: noteID, text: "Keep this user's task", segment: 0)],
+            otherActionItems: [], openQuestions: [])
+        for _ in 0..<2 { _ = try execute(fixture.executor(extraction: duplicate), manifest: manifest) }
+
+        let reopened = try management.detail(for: initial.row.id)
+        XCTAssertEqual(TodoItemParser().parse(markdown: reopened.humanNotes, relativePath: notePath).first?.id, noteID)
+        XCTAssertTrue(reopened.humanNotes.contains("Keep this user's task"))
+        XCTAssertEqual(try fixture.inbox.proposalReviewState(id: proposalID), .referenceOnly)
+        XCTAssertFalse(try fixture.inbox.items(category: .review).contains { $0.id == proposalID })
+        let extraction = try JSONDecoder().decode(MeetingSummaryExtraction.self,
+            from: Data(contentsOf: fixture.workspaceURL.appendingPathComponent(fixture.extractionPath)))
+        XCTAssertTrue(extraction.myActionItems.isEmpty)
+        let queue = try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadTaskViews(today: "2026-01-01").queue
+        XCTAssertEqual(queue.filter { $0.id == noteID }.count, 1)
+        XCTAssertEqual(queue.count, 1)
     }
 
     func testExecutorPublishesSummaryAndCitedExtractionAndQueuesOnlyMyActionItems() throws {
@@ -250,7 +290,10 @@ final class MeetingSummaryTests: XCTestCase {
         let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
         let management = MeetingManagementService(vault: vault, inbox: fixture.inbox)
         let migrated = try management.detail(for: fixture.transcript.meetingRelativePath)
-        _ = try management.saveHumanNotes("My words remain authoritative", for: migrated.row.id, expectedVersion: XCTUnwrap(migrated.notesVersion))
+        _ = try management.saveHumanNotes("My words remain authoritative\n- [ ] My note task", for: migrated.row.id, expectedVersion: XCTUnwrap(migrated.notesVersion))
+        let notePath = "Meetings/2026/09/kickoff/my-notes.md"
+        let savedNotes = try management.detail(for: migrated.row.id).humanNotes
+        let noteItemID = try XCTUnwrap(TodoItemParser().parse(markdown: savedNotes, relativePath: notePath).first?.id)
         let proposal = "meeting-action:" + migrated.row.id + ":approved"
         // A legacy doorway without capture_session_id keeps its persisted Meeting identity;
         // use the existing scoped review item to bind this fixture's canonical action.
@@ -264,13 +307,21 @@ final class MeetingSummaryTests: XCTestCase {
             myActionItems: [fixture.outcome(id: "approved", text: "Must not rewrite approved work", segment: 0), fixture.outcome(id: "new-task", text: "New pending task", segment: 0)],
             otherActionItems: [], openQuestions: [])
         _ = try execute(fixture.executor(extraction: next), manifest: manifest)
+        _ = try execute(fixture.executor(extraction: next), manifest: manifest)
         let reopened = try management.detail(for: migrated.row.id)
-        XCTAssertEqual(reopened.humanNotes, "My words remain authoritative")
+        XCTAssertEqual(TodoItemParser().parse(markdown: reopened.humanNotes, relativePath: notePath).first?.id, noteItemID)
+        XCTAssertTrue(reopened.humanNotes.contains("My words remain authoritative"))
+        XCTAssertTrue(reopened.humanNotes.contains("- [ ] My note task <!-- sm-item:"))
         XCTAssertEqual(reopened.myActionItems.first(where: { $0.id == approved.id })?.text, approved.text)
         XCTAssertEqual(reopened.myActionItems.first(where: { $0.id == approved.id })?.reviewState, .accepted)
         XCTAssertEqual(reopened.myActionItems.first(where: { $0.id == "new-task" })?.reviewState, .pending)
         XCTAssertEqual(reopened.decisions.first?.text, "New decision")
-        XCTAssertEqual(try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadTaskViews(today: "2026-01-01").queue.count, 1)
+        let queue = try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadTaskViews(today: "2026-01-01").queue
+        XCTAssertEqual(queue.filter { $0.id == noteItemID }.count, 1)
+        XCTAssertEqual(queue.count, 2)
+        let pendingProposals = try fixture.inbox.items(category: .review).map(\.id)
+        XCTAssertEqual(pendingProposals.filter { $0 == "meeting-action:capture-summary:new-task" }.count, 1)
+        XCTAssertFalse(pendingProposals.contains { $0 == "meeting-action:capture-summary:\(noteItemID)" })
     }
 
     private func execute(_ executor: MeetingSummaryJobExecutor, manifest: JobManifest) throws -> JobStageResult {

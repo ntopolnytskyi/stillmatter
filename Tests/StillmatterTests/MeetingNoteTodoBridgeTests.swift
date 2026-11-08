@@ -78,6 +78,26 @@ final class MeetingNoteTodoBridgeTests: XCTestCase {
         XCTAssertTrue(try fixture.index.loadTaskViews(today: "2026-01-01").queue.isEmpty)
     }
 
+    func testExternalCheckboxRemovalPrunesOnlyItsTodoReference() throws {
+        let fixture = try NoteTodoFixture()
+        defer { fixture.remove() }
+        let path = "Meetings/one/my-notes.md"
+        try fixture.write(path, "- [ ] Remove this externally\n")
+        let bridge = MeetingNoteTodoBridge(vault: fixture.vault)
+        try bridge.adoptSavedNotes(at: path)
+        let item = try XCTUnwrap(fixture.index.loadTaskViews(today: "2026-01-01").queue.first)
+
+        let externalNotes = "External prose remains authoritative.\n"
+        _ = try fixture.vault.writeMarkdown(Data(externalNotes.utf8), relativePath: path,
+                                             expectedVersion: fixture.vault.versionOfMarkdown(relativePath: path))
+        XCTAssertTrue(try fixture.index.loadTaskViews(today: "2026-01-01").queue.isEmpty)
+
+        XCTAssertEqual(try bridge.pruneDanglingReferences(), [item.id])
+        XCTAssertEqual(try fixture.read(path), externalNotes)
+        XCTAssertFalse(try fixture.read("Todos/todo.md").contains("[[item:\(item.id)"))
+        XCTAssertTrue(try fixture.index.loadTaskViews(today: "2026-01-01").queue.isEmpty)
+    }
+
     func testExternalNotesChangeWinsAndStaleTodoEditDoesNotOverwriteIt() throws {
         let fixture = try NoteTodoFixture()
         defer { fixture.remove() }

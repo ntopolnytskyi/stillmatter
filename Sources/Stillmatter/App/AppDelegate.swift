@@ -744,6 +744,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .joined(separator: "\n")
         guard workspaceKey != meetingReadWorkspaceKey else { return }
 
+        pruneDanglingTodoReferences(in: rootURL)
+
         workbenchWorkspaceChangeMonitor?.stop()
         workbenchWorkspaceChangeMonitor = nil
         meetingWorkspaceChangeMonitor?.stop()
@@ -810,7 +812,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
-        let monitor = MeetingWorkspaceChangeMonitor(rootURL: rootURL) { [weak model] change in
+        let monitor = MeetingWorkspaceChangeMonitor(rootURL: rootURL) { [weak self, weak model] change in
+            if case .workspaceFilesChanged = change {
+                self?.pruneDanglingTodoReferences(in: rootURL)
+            } else if case .rescanRequired = change {
+                self?.pruneDanglingTodoReferences(in: rootURL)
+            }
             model?.invalidate(change)
         }
         meetingWorkspaceChangeMonitor = monitor
@@ -821,6 +828,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         workbenchWorkspaceChangeMonitor = workbenchMonitor
         workbenchMonitor.start()
+    }
+
+    private func pruneDanglingTodoReferences(in rootURL: URL) {
+        do {
+            _ = try MeetingNoteTodoBridge(vault: WorkspaceVault(
+                workspaceRootURL: rootURL, appSupportRootURL: Self.applicationSupportURL
+            )).pruneDanglingReferences()
+        } catch {
+            NSLog("Could not refresh Todo references after Meeting files changed: %@", error.localizedDescription)
+        }
     }
 
     private func makeMeetingManagementService(rootURL: URL, mediaURL: URL?, searchIndex: SearchIndex?,
