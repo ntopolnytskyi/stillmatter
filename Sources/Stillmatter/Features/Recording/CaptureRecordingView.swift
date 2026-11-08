@@ -88,8 +88,8 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             alert.messageText = title
             alert.informativeText = detail
             alert.alertStyle = .warning
-            alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: action)
+            alert.addButton(withTitle: "Cancel").setAccessibilityIdentifier("recording-confirm-cancel")
+            alert.addButton(withTitle: action).setAccessibilityIdentifier("recording-confirm-destructive")
             return alert.runModal() == .alertSecondButtonReturn
         }
     ) {
@@ -646,9 +646,9 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         renderPreflight(presentation.preflight, isConfigured: presentation.isConfigured)
         renderArtifacts(presentation.artifactRows)
         let recoveryWarning = serviceProvider()?.snapshot.notesRecoveryWarning
-        let failure = operationFailure ?? presentation.failureMessage ?? recoveryWarning
-        errorLabel.stringValue = failure.map { "!  Failure details: \($0)" } ?? ""
-        errorLabel.isHidden = failure == nil
+        let failures = [operationFailure, presentation.failureMessage, recoveryWarning].compactMap { $0 }
+        errorLabel.stringValue = failures.map { "!  \($0)" }.joined(separator: "\n")
+        errorLabel.isHidden = failures.isEmpty
     }
 
     private func renderPreflight(_ report: AudioCapturePreflightReport?, isConfigured: Bool) {
@@ -976,6 +976,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     private func refreshLiveNotes(service: MeetingCaptureService, snapshot: CaptureSnapshot) {
         guard snapshot.state == .recording else {
             guard let pending = service.pendingLiveNotesDocuments().first else {
+                if snapshot.notesRecoveryWarning != nil { service.refreshNotesRecoveryWarning() }
                 notesRecoveryActive = false
                 notesMeetingPath = nil
                 notesDocument = nil

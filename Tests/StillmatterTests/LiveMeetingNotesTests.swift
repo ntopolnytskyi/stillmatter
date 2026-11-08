@@ -204,6 +204,9 @@ final class LiveMeetingNotesTests: XCTestCase {
                        "External last words")
         XCTAssertEqual(try document.load().text, "Local last words")
         XCTAssertNotNil(service.snapshot.notesRecoveryWarning)
+        try document.discardDraft()
+        service.refreshNotesRecoveryWarning()
+        XCTAssertNil(service.snapshot.notesRecoveryWarning)
     }
 
     private final class Fixture {

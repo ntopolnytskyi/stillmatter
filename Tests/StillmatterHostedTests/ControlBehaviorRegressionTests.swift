@@ -404,6 +404,10 @@ final class ControlBehaviorRegressionTests: XCTestCase {
         await fulfillment(of: [stopped], timeout: 10)
         XCTAssertTrue(try String(contentsOf: workspace.appendingPathComponent(notesPath)).contains("External version"))
         XCTAssertNotNil(service.snapshot.notesRecoveryWarning)
+        view.operationFailure = "Recorder also failed"
+        view.refresh(isVisible: true)
+        XCTAssertTrue(view.errorLabel.stringValue.contains("Recorder also failed"))
+        XCTAssertTrue(view.errorLabel.stringValue.contains("My Notes draft"))
         let relaunchedService = MeetingCaptureService(vault: vault, preflight: { .readyForTesting })
         let relaunchedView = CaptureRecordingView(serviceProvider: { relaunchedService }, rootURLProvider: { workspace },
             teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})

@@ -368,8 +368,10 @@ public final class MeetingCaptureService {
 
     public func refreshNotesRecoveryWarning() {
         let unresolved = LiveMeetingNotes.recoverPendingDrafts(in: vault)
-        notesRecoveryWarning = unresolved.isEmpty ? nil
+        let warning = unresolved.isEmpty ? nil
             : "My Notes draft needs recovery for \(unresolved.joined(separator: ", ")). The workspace file was left unchanged."
+        guard notesRecoveryWarning != warning else { return }
+        notesRecoveryWarning = warning
         notifyObservers()
     }
 
