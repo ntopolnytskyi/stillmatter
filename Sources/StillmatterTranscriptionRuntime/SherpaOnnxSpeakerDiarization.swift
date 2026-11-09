@@ -15,6 +15,10 @@ private struct SherpaDiarizationOutput: Decodable {
 /// Runs the locally installed sherpa-onnx CPU diarizer in the app-owned Python runtime.
 /// The returned integer clusters remain anonymous and retain the model's original times.
 public final class SherpaOnnxSpeakerDiarizationEngine: CancellableSpeakerDiarizationEngine {
+    /// Synthetic probe outputs may exceed decoded audio by a few frames. The probe accepts
+    /// at most this documented alignment collar; we trim that small tail to the source end.
+    private static let maximumAcceptedEndOvershootSeconds = 0.1
+
     public let engineIdentifier = "sherpa-onnx"
     public let modelIdentifier = "pyannote-segmentation-3.0+titanet-small"
 
@@ -65,11 +69,15 @@ public final class SherpaOnnxSpeakerDiarizationEngine: CancellableSpeakerDiariza
             throw SpeakerDiarizationError.invalidOutput("Local speaker diarization returned unreadable output: \(error.localizedDescription)")
         }
         guard result.duration_seconds.isFinite, result.duration_seconds > 0,
-              result.segments.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end > $0.start && $0.speaker >= 0 }) else {
+              result.segments.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0
+                && $0.start < result.duration_seconds && $0.end > $0.start
+                && $0.end <= result.duration_seconds + Self.maximumAcceptedEndOvershootSeconds
+                && $0.speaker >= 0 }) else {
             throw SpeakerDiarizationError.invalidOutput("Local speaker diarization returned invalid speaker timing or cluster IDs.")
         }
         return result.segments.map {
-            SpeakerDiarizationTurn(startSeconds: $0.start, endSeconds: $0.end, clusterID: $0.speaker)
+            SpeakerDiarizationTurn(startSeconds: $0.start, endSeconds: min($0.end, result.duration_seconds),
+                clusterID: $0.speaker)
         }
     }
 }

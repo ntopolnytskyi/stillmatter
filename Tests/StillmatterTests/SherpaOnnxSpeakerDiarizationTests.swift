@@ -56,6 +56,44 @@ final class SherpaOnnxSpeakerDiarizationTests: XCTestCase {
             }
     }
 
+    func testEngineClampsSmallModelEndOvershootToSourceDuration() throws {
+        let root = try makeComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let python = root.appendingPathComponent("runtime/bin/python3")
+        try """
+        #!/bin/sh
+        cat > "$5" <<'JSON'
+        {"duration_seconds":2.0,"segments":[{"start":1.2,"end":2.06,"speaker":0}]}
+        JSON
+        """.write(to: python, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
+
+        let turns = try SherpaOnnxSpeakerDiarizationEngine(componentURL: root)
+            .diarize(audioURL: URL(fileURLWithPath: "/fixture/mic.wav"))
+
+        XCTAssertEqual(turns, [SpeakerDiarizationTurn(startSeconds: 1.2, endSeconds: 2.0, clusterID: 0)])
+    }
+
+    func testEngineRejectsTurnMoreThanOneTenthSecondBeyondSourceDuration() throws {
+        let root = try makeComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let python = root.appendingPathComponent("runtime/bin/python3")
+        try """
+        #!/bin/sh
+        cat > "$5" <<'JSON'
+        {"duration_seconds":2.0,"segments":[{"start":1.2,"end":2.11,"speaker":0}]}
+        JSON
+        """.write(to: python, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
+
+        XCTAssertThrowsError(try SherpaOnnxSpeakerDiarizationEngine(componentURL: root)
+            .diarize(audioURL: URL(fileURLWithPath: "/fixture/mic.wav"))) { error in
+                guard case SpeakerDiarizationError.invalidOutput = error else {
+                    return XCTFail("Expected out-of-range timing to fail, got \(error)")
+                }
+            }
+    }
+
     func testEngineReportsMissingLocalRuntimeOrModels() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("StillmatterSherpaTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
