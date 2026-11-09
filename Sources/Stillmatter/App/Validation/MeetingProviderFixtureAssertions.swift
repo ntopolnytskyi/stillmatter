@@ -14,6 +14,13 @@ extension MeetingManagementView {
         precondition(ready(), "Meeting fixture timed out: \(label)")
     }
 
+    private func recordMeetingFixtureProgress(_ message: String) {
+        guard let path = ProcessInfo.processInfo.environment["STILLMATTER_TASK09_MEETING_RESULT_PATH"] else { return }
+        let url = URL(fileURLWithPath: path)
+        let current = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        try? Data((current + message + "\n").utf8).write(to: url, options: .atomic)
+    }
+
     func validateExplicitProviderFixtures() async {
         let file = meetingFixtureTemporaryRoot.appendingPathComponent("focused-\(UUID().uuidString).caf")
         defer { try? FileManager.default.removeItem(at: file) }
@@ -118,6 +125,7 @@ extension MeetingManagementView {
                          liveView.pageSelector.isHidden && liveView.pinnedAudio.isHidden &&
                          liveView.toolbar.isHidden && liveView.status.stringValue.contains("Recording is active"),
                          "Recording detail must show guidance without exposing prior Meeting content or playback")
+            recordMeetingFixtureProgress("Recording detail remained blank")
             liveView.refresh(isVisible: false)
 
             let queuedStore = try JobStore(databaseURL: workspaceRoot.appendingPathComponent("Support/state-fixture.sqlite"))
@@ -139,9 +147,11 @@ extension MeetingManagementView {
                          queuedView.pageSelector.isHidden && queuedView.pinnedAudio.isHidden &&
                          queuedView.toolbar.isHidden && !queuedView.processingProgress.isHidden &&
                          queuedView.processingProgress.accessibilityLabel() == "Processing" &&
-                         (queuedView.processingProgress.accessibilityValue() as? String)?.contains("Work in progress") == true &&
+                         ((queuedView.processingProgress.accessibilityValue() as? String)?.contains("Stage: Generate Summary") == true ||
+                          (queuedView.processingProgress.accessibilityValue() as? String)?.contains("Work in progress") == true) &&
                          queuedView.status.stringValue.contains("Meeting content will appear when it finishes"),
                          "Queued work must show separate wait guidance while all Meeting content remains hidden")
+            recordMeetingFixtureProgress("Queued Processing detail remained blank")
             queuedView.refresh(isVisible: false)
 
             let readable = selectionView.displayedDetail!
