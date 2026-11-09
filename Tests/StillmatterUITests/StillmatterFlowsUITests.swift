@@ -22,6 +22,8 @@ final class StillmatterFlowsUITests: XCTestCase {
         app.launchEnvironment["STILLMATTER_VALIDATION_RECORDING_MEDIA_ROOT"] = media.path
         app.launchEnvironment["STILLMATTER_VALIDATION_WORKSPACE_ROOT"] = workspace.path
         app.launchEnvironment["STILLMATTER_VALIDATION_APPLICATION_SUPPORT_ROOT"] = support.path
+        app.launchEnvironment["STILLMATTER_VALIDATION_PRESERVE_SETTINGS"] = "1"
+        app.launchEnvironment["STILLMATTER_VALIDATION_SETTINGS_SNAPSHOT_PATH"] = fixtureRoot.appendingPathComponent("settings.json").path
         app.launch()
         // macOS may restore a stale UI-test bundle after an interrupted run.
         let restore = app.dialogs.buttons["Don’t Reopen"].firstMatch
@@ -39,8 +41,7 @@ final class StillmatterFlowsUITests: XCTestCase {
         }
         app?.terminate()
         if let fixtureRoot {
-            let support = fixtureRoot.appendingPathComponent("support").path
-            let suite = "works.stillmatter.validation.\(support.utf8.map(String.init).joined(separator: "-"))"
+            let suite = "works.stillmatter.validation.\(fixtureRoot.lastPathComponent)"
             UserDefaults.standard.removePersistentDomain(forName: suite)
         }
         if let fixtureRoot { try FileManager.default.removeItem(at: fixtureRoot) }
@@ -116,6 +117,44 @@ final class StillmatterFlowsUITests: XCTestCase {
                       "Seeking while playing must move the playhead rather than resetting it")
         XCTAssertTrue(app.buttons["Pause Meeting audio"].waitForExistence(timeout: 5))
         app.buttons["Pause Meeting audio"].click()
+    }
+
+    func testTranscriptionLanguageSelectionPersistsAcrossNativeAppRestart() throws {
+        app.buttons["sidebar-recording"].click()
+        let language = app.popUpButtons["recording-language"]
+        XCTAssertTrue(language.waitForExistence(timeout: 10), app.debugDescription)
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: language)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(language.value as? String, "Auto (mixed-language quality unverified)")
+
+        language.click()
+        let english = app.menuItems["English"]
+        XCTAssertTrue(english.waitForExistence(timeout: 5), app.debugDescription)
+        english.click()
+        XCTAssertEqual(language.value as? String, "English")
+        XCTAssertEqual(try settingsSnapshotLanguage(), "en", "The application SettingsStore should observe the selected language")
+
+        app.terminate()
+        app.launchEnvironment["STILLMATTER_VALIDATION_RECORDING_MEDIA_ROOT"] = fixtureRoot.appendingPathComponent("media").path
+        app.launchEnvironment["STILLMATTER_VALIDATION_WORKSPACE_ROOT"] = fixtureRoot.appendingPathComponent("workspace").path
+        app.launchEnvironment["STILLMATTER_VALIDATION_APPLICATION_SUPPORT_ROOT"] = fixtureRoot.appendingPathComponent("support").path
+        app.launchEnvironment["STILLMATTER_VALIDATION_PRESERVE_SETTINGS"] = "1"
+        app.launchEnvironment["STILLMATTER_VALIDATION_SETTINGS_SNAPSHOT_PATH"] = fixtureRoot.appendingPathComponent("settings.json").path
+        app.launch()
+        XCTAssertTrue(app.windows["Stillmatter"].waitForExistence(timeout: 15), app.debugDescription)
+        app.buttons["sidebar-recording"].click()
+        let reopenedLanguage = app.popUpButtons["recording-language"]
+        XCTAssertTrue(reopenedLanguage.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: reopenedLanguage)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(try settingsSnapshotLanguage(), "en", "The application should reload the persisted transcription language")
+        XCTAssertEqual(reopenedLanguage.value as? String, "English")
+    }
+
+    private func settingsSnapshotLanguage() throws -> String? {
+        let data = try Data(contentsOf: fixtureRoot.appendingPathComponent("settings.json"))
+        let settings = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return settings["transcriptionLanguage"] as? String
     }
 
     func attachMeetingScreenshot(_ name: String) {

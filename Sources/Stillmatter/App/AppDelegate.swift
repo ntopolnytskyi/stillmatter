@@ -26,18 +26,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // A disposable workspace must never share preferences with another test run.
         let suiteRoot = ProcessInfo.processInfo.environment["STILLMATTER_VALIDATION_APPLICATION_SUPPORT_ROOT"] ?? fixtureRoot
-        let suiteName = "works.stillmatter.validation.\(suiteRoot.utf8.map(String.init).joined(separator: "-"))"
+        let fixtureIdentifier = URL(fileURLWithPath: suiteRoot).deletingLastPathComponent().lastPathComponent
+        let suiteName = "works.stillmatter.validation.\(fixtureIdentifier)"
         let defaults = UserDefaults(suiteName: suiteName)!
         let env = ProcessInfo.processInfo.environment
+        let preserveValidationSettings = env["STILLMATTER_VALIDATION_PRESERVE_SETTINGS"] == "1"
         let calendarProbe = env["STILLMATTER_TASK06_CALENDAR_PROBE"] == "1"
             && env["STILLMATTER_VALIDATION_APPLICATION_SUPPORT_ROOT"] != nil
             && env["STILLMATTER_VALIDATION_RECORDING_MEDIA_ROOT"] != nil
         #if DEBUG
-        if env["STILLMATTER_TASK05_LIFECYCLE"] == nil && !calendarProbe {
+        if env["STILLMATTER_TASK05_LIFECYCLE"] == nil && !calendarProbe && !preserveValidationSettings {
             defaults.removePersistentDomain(forName: suiteName)
         }
         #else
-        if !calendarProbe { defaults.removePersistentDomain(forName: suiteName) }
+        if !calendarProbe && !preserveValidationSettings { defaults.removePersistentDomain(forName: suiteName) }
         #endif
         let store = SettingsStore(userDefaults: defaults)
         var settings = store.settings
@@ -227,6 +229,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         attention.start()
         updateAttentionEnvironment()
         settingsStore.observe { [weak self] settings in
+            if let snapshotPath = ProcessInfo.processInfo.environment["STILLMATTER_VALIDATION_SETTINGS_SNAPSHOT_PATH"],
+               let data = try? JSONEncoder().encode(settings) {
+                try? data.write(to: URL(fileURLWithPath: snapshotPath), options: .atomic)
+            }
             Task { @MainActor [weak self] in
                 guard let self, !self.isShuttingDown, settings == self.settingsStore.settings else { return }
                 _ = self.workspaceRuntime.activate(settings)

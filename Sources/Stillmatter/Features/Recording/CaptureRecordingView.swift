@@ -26,6 +26,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     private let teamsDetectionProvider: () -> TeamsDetectionSnapshot?
     private let teamsRecordingDiagnosticProvider: () -> String
     private let onManualCapture: () -> Void
+    private let onTranscriptionLanguageChanged: (TranscriptLanguage) -> Void
     private let jobRecordsProvider: () -> [JobRecord]
     private let onOpenSettings: () -> Void
     private let confirmDestructiveAction: @MainActor (String, String, String) -> Bool
@@ -81,6 +82,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         teamsDetectionProvider: @escaping () -> TeamsDetectionSnapshot?,
         teamsRecordingDiagnosticProvider: @escaping () -> String = { "Capture policy unavailable" },
         onManualCapture: @escaping () -> Void = {},
+        onTranscriptionLanguageChanged: @escaping (TranscriptLanguage) -> Void = { _ in },
         jobRecordsProvider: @escaping () -> [JobRecord],
         onOpenSettings: @escaping () -> Void,
         confirmDestructiveAction: @escaping @MainActor (String, String, String) -> Bool = { title, detail, action in
@@ -111,6 +113,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         self.teamsDetectionProvider = teamsDetectionProvider
         self.teamsRecordingDiagnosticProvider = teamsRecordingDiagnosticProvider
         self.onManualCapture = onManualCapture
+        self.onTranscriptionLanguageChanged = onTranscriptionLanguageChanged
         self.jobRecordsProvider = jobRecordsProvider
         self.onOpenSettings = onOpenSettings
         self.confirmDestructiveAction = confirmDestructiveAction
@@ -163,7 +166,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
                 ? snapshot.systemAudioRecording?.diagnostics.last
                 : nil
         )
-        languagePopup.selectItem(withTag: service.transcriptionLanguage == .english ? 0 : 1)
+        languagePopup.selectItem(withTag: languageTag(service.transcriptionLanguage))
         renderTeamsDetection()
     }
 
@@ -449,10 +452,12 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         openFolderButton.target = self
         openFolderButton.action = #selector(openMeetingFolder(_:))
 
-        languagePopup.addItem(withTitle: "English")
+        languagePopup.addItem(withTitle: "Auto (mixed-language quality unverified)")
         languagePopup.lastItem?.tag = 0
-        languagePopup.addItem(withTitle: "Ukrainian")
+        languagePopup.addItem(withTitle: "English")
         languagePopup.lastItem?.tag = 1
+        languagePopup.addItem(withTitle: "Ukrainian")
+        languagePopup.lastItem?.tag = 2
         languagePopup.target = self
         languagePopup.action = #selector(languageChanged(_:))
         languagePopup.setAccessibilityLabel("Transcription language")
@@ -964,13 +969,34 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     }
 
     @objc private func languageChanged(_ sender: NSPopUpButton) {
-        let language: TranscriptLanguage = sender.selectedTag() == 1 ? .ukrainian : .english
-        serviceProvider()?.setTranscriptionLanguage(language)
+        let selectedLanguage = language(for: sender.selectedTag())
+        serviceProvider()?.setTranscriptionLanguage(selectedLanguage)
+        onTranscriptionLanguageChanged(selectedLanguage)
     }
 
     @objc private func regenerateTranscript(_ sender: NSButton) {
-        let language: TranscriptLanguage = languagePopup.selectedTag() == 1 ? .ukrainian : .english
+        let language = selectedTranscriptionLanguage
         perform { service in _ = try service.regenerateTranscript(language: language) }
+    }
+
+    private var selectedTranscriptionLanguage: TranscriptLanguage {
+        language(for: languagePopup.selectedTag())
+    }
+
+    private func language(for tag: Int) -> TranscriptLanguage {
+        switch tag {
+        case 0: return .automatic
+        case 2: return .ukrainian
+        default: return .english
+        }
+    }
+
+    private func languageTag(_ language: TranscriptLanguage) -> Int {
+        switch language {
+        case .automatic: return 0
+        case .english: return 1
+        case .ukrainian: return 2
+        }
     }
 
     private func refreshLiveNotes(service: MeetingCaptureService, snapshot: CaptureSnapshot) {

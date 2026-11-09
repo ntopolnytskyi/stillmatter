@@ -53,6 +53,12 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         teamsDetectionProvider: teamsDetectionProvider,
         teamsRecordingDiagnosticProvider: teamsRecordingDiagnosticProvider,
         onManualCapture: onManualCapture,
+        onTranscriptionLanguageChanged: { [weak self] language in
+            guard let self else { return }
+            var settings = self.settingsStore.settings
+            settings.transcriptionLanguage = language
+            self.settingsStore.settings = settings
+        },
         jobRecordsProvider: jobRecordsProvider,
         onOpenSettings: { [weak self] in self?.stateStore.state.select(.settings) }
     )

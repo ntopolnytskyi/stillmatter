@@ -47,6 +47,32 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["recording-start"].waitForExistence(timeout: 10))
     }
 
+    func testTranscriptionLanguageControlOffersAutoAndPersistsSelectionAcrossRelaunch() throws {
+        launch()
+        let language = app.popUpButtons["recording-language"]
+        XCTAssertTrue(language.waitForExistence(timeout: 10))
+        XCTAssertTrue(language.isEnabled)
+        XCTAssertEqual(language.value as? String, "Auto (mixed-language quality unverified)")
+
+        language.click()
+        let ukrainian = app.menuItems["Ukrainian"]
+        XCTAssertTrue(ukrainian.waitForExistence(timeout: 5))
+        ukrainian.click()
+        XCTAssertEqual(language.value as? String, "Ukrainian")
+        XCTAssertEqual(try effectiveSettings()["transcriptionLanguage"] as? String, "uk")
+
+        language.click()
+        let english = app.menuItems["English"]
+        XCTAssertTrue(english.waitForExistence(timeout: 5))
+        english.click()
+        XCTAssertEqual(language.value as? String, "English")
+        XCTAssertEqual(try effectiveSettings()["transcriptionLanguage"] as? String, "en")
+
+        app.terminate()
+        launch()
+        XCTAssertEqual(app.popUpButtons["recording-language"].value as? String, "English")
+    }
+
     func testLiveNotesConflictPreservesDraftAndReloadsExternalFile() throws {
         launch()
         app.buttons["recording-start"].click()

@@ -244,7 +244,7 @@ if sys.argv[1] == "--check":
 
 model_path, audio_path, language, output_path = sys.argv[1:5]
 model = WhisperModel(model_path, device="cpu", compute_type="int8")
-segments, info = model.transcribe(audio_path, language=language, vad_filter=True)
+segments, info = model.transcribe(audio_path, language=None if language == "auto" else language, vad_filter=True)
 result = {
     "language": info.language,
     "segments": [
@@ -300,6 +300,11 @@ public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEng
         )
         guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let output = try JSONDecoder().decode(FasterWhisperOutput.self, from: Data(contentsOf: outputURL))
+        let detectedLanguage = output.language.flatMap(TranscriptLanguage.init(rawValue:))
+        let segmentLanguage = language == .automatic ? detectedLanguage : language
+        guard output.segments.isEmpty || segmentLanguage != nil else {
+            throw TranscriptionError.invalidEngineOutput("automatic language detection returned no supported language")
+        }
         let segments = output.segments.enumerated().compactMap { index, segment -> TranscriptSegment? in
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
@@ -308,14 +313,14 @@ public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEng
                 startSeconds: segment.start,
                 endSeconds: segment.end,
                 text: text,
-                language: language,
+                language: segmentLanguage ?? .english,
                 track: track,
                 speaker: track.speakerLabel
             )
         }
         return TranscriptionEngineResult(
             segments: segments,
-            detectedLanguage: output.language.flatMap(TranscriptLanguage.init(rawValue:)),
+            detectedLanguage: detectedLanguage,
             diagnostics: diagnostics.isEmpty ? [] : [diagnostics]
         )
     }

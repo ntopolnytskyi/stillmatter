@@ -2,6 +2,22 @@ import XCTest
 @testable import StillmatterCore
 
 final class AppSettingsTests: XCTestCase {
+    func testTranscriptionLanguagePersistsAndOldSettingsDefaultToAuto() throws {
+        let suiteName = "StillmatterTests.TranscriptionLanguage.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = SettingsStore(userDefaults: defaults, storageKey: "settings-language")
+        var settings = store.settings
+        settings.transcriptionLanguage = .english
+        store.settings = settings
+
+        XCTAssertEqual(SettingsStore(userDefaults: defaults, storageKey: "settings-language").settings.transcriptionLanguage, .english)
+
+        let oldSettings = Data(#"{"launchAtLoginEnabled":false}"#.utf8)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: oldSettings)
+        XCTAssertEqual(decoded.transcriptionLanguage, .automatic)
+    }
+
     func testDefaultSettingsMatchMvpWorkingTimeAndPreferences() {
         let settings = AppSettings()
 
@@ -12,6 +28,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.calendarSourceSelection.includes(calendarIdentifier: "any-calendar"))
         XCTAssertEqual(settings.searchExcludedPatterns, [])
         XCTAssertEqual(settings.transcriptionModelChoice, .recommended)
+        XCTAssertEqual(settings.transcriptionLanguage, .automatic)
         XCTAssertEqual(settings.teamsRecordingMode, .ask)
     }
 
@@ -59,6 +76,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.calendarSourceSelection, .all)
         XCTAssertTrue(settings.calendarSourceSelection.includes(calendarIdentifier: "work"))
         XCTAssertEqual(settings.transcriptionModelChoice, .recommended)
+        XCTAssertEqual(settings.transcriptionLanguage, .automatic)
         XCTAssertEqual(settings.teamsRecordingMode, .ask)
     }
 

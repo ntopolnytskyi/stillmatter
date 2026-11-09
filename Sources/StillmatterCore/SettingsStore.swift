@@ -130,6 +130,7 @@ public final class SettingsStore {
         do {
             let data = try JSONEncoder().encode(effectiveSettings)
             userDefaults.set(data, forKey: storageKey)
+            userDefaults.synchronize()
         } catch {
             assertionFailure("Failed to persist Stillmatter settings: \(error)")
         }

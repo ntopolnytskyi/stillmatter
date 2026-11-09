@@ -4,6 +4,79 @@ import XCTest
 @testable import StillmatterCore
 
 final class TranscriptionTests: XCTestCase {
+    func testAutomaticLanguageIsPersistedAsAJobSetting() throws {
+        XCTAssertEqual(TranscriptLanguage.automatic.rawValue, "auto")
+        XCTAssertEqual(TranscriptLanguage.automatic.displayName, "Auto")
+
+        let fixture = try TranscriptionFixture()
+        let manifest = TranscriptionJob.manifest(
+            title: "Automatic",
+            bundle: fixture.bundle,
+            selection: fixture.selection,
+            language: .automatic
+        )
+
+        XCTAssertEqual(manifest.metadata["language"], "auto")
+    }
+
+    func testSuccessfulTrackCheckpointIsReusedAfterAnotherTrackFails() throws {
+        let fixture = try TranscriptionFixture()
+        let firstEngine = StubTranscriptionEngine(
+            textByTrack: [.microphone: "Mic words", .systemAudio: "Other words"],
+            failingTracks: [.systemAudio]
+        )
+        let firstPipeline = TranscriptionPipeline(
+            workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(),
+            engine: firstEngine
+        )
+
+        XCTAssertThrowsError(try firstPipeline.generate(from: fixture.bundle, selection: fixture.selection, language: .english))
+        XCTAssertEqual(firstEngine.languages, [.english, .english])
+        XCTAssertEqual(try Data(contentsOf: fixture.microphoneURL), Data("audio".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workspaceRootURL
+            .appendingPathComponent("Meetings/2027/01/15/10-00-roadmap/.transcription-checkpoints.json").path))
+
+        let retryEngine = StubTranscriptionEngine(textByTrack: [.microphone: "Mic words", .systemAudio: "Other words"])
+        let retryPipeline = TranscriptionPipeline(
+            workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(),
+            engine: retryEngine
+        )
+        let artifacts = try retryPipeline.generate(from: fixture.bundle, selection: fixture.selection, language: .english)
+
+        XCTAssertEqual(retryEngine.audioPaths, [fixture.systemAudioURL.path], "The completed microphone track should be reused")
+        XCTAssertEqual(artifacts.document.segments.map(\.text), ["Mic words", "Other words"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceRootURL
+            .appendingPathComponent("Meetings/2027/01/15/10-00-roadmap/.transcription-checkpoints.json").path))
+    }
+
+    func testAutomaticWhisperTranscriptionFailsWhenDetectedLanguageIsUnsupported() throws {
+        let fixture = try TranscriptionFixture()
+        let executable = fixture.rootURL.appendingPathComponent("unknown-language-whisper.sh")
+        let script = """
+        #!/bin/sh
+        prefix=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "-of" ]; then prefix="$2"; shift 2; else shift; fi
+        done
+        cat > "${prefix}.json" <<'JSON'
+        {"result":{"language":"fr"},"transcription":[{"offsets":{"from":250,"to":1500},"text":" Bonjour "}]}
+        JSON
+        """
+        try Data(script.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let model = fixture.rootURL.appendingPathComponent("model.bin")
+        try Data("model".utf8).write(to: model)
+        let engine = WhisperCLITranscriptionEngine(executableURL: executable, modelURL: model)
+
+        XCTAssertThrowsError(try engine.transcribe(audioURL: fixture.echoSidecarURL, language: .automatic, track: .microphone)) { error in
+            guard case TranscriptionError.invalidEngineOutput = error else {
+                return XCTFail("Expected an unsupported detected language failure, got \(error)")
+            }
+        }
+    }
+
     func testPipelineConsumesSelectedSidecarAndSystemTrackAndWritesAllFormatsAndIndex() throws {
         let fixture = try TranscriptionFixture()
         let engine = StubTranscriptionEngine(textByTrack: [
@@ -361,16 +434,19 @@ private final class StubTranscriptionEngine: TranscriptionEngine {
     let engineIdentifier = "test-whisper"
     let modelIdentifier = "test-model"
     var textByTrack: [TranscriptTrack: String]
+    let failingTracks: Set<TranscriptTrack>
     private(set) var audioPaths: [String] = []
     private(set) var languages: [TranscriptLanguage] = []
 
-    init(textByTrack: [TranscriptTrack: String]) {
+    init(textByTrack: [TranscriptTrack: String], failingTracks: Set<TranscriptTrack> = []) {
         self.textByTrack = textByTrack
+        self.failingTracks = failingTracks
     }
 
     func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack) throws -> TranscriptionEngineResult {
         audioPaths.append(audioURL.path)
         languages.append(language)
+        if failingTracks.contains(track) { throw TranscriptionError.engineFailed("fixture failure for \(track.rawValue)") }
         guard let text = textByTrack[track] else { return TranscriptionEngineResult(segments: []) }
         let start = track == .microphone ? 1.0 : 4.0
         return TranscriptionEngineResult(

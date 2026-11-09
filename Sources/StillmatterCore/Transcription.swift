@@ -2,11 +2,13 @@ import Foundation
 import Darwin
 
 public enum TranscriptLanguage: String, Codable, CaseIterable, Equatable {
+    case automatic = "auto"
     case english = "en"
     case ukrainian = "uk"
 
     public var displayName: String {
         switch self {
+        case .automatic: return "Auto"
         case .english: return "English"
         case .ukrainian: return "Ukrainian"
         }
@@ -144,6 +146,51 @@ public struct TranscriptionArtifacts: Equatable {
     }
 }
 
+private struct TranscriptionTrackCheckpoint: Codable {
+    let captureSessionID: String
+    let track: TranscriptTrack
+    let sourcePath: String
+    let sourceSize: Int
+    let sourceModifiedAt: Date?
+    let language: TranscriptLanguage
+    let engine: String
+    let model: String
+    let result: TranscriptionEngineResultRecord
+
+    func matches(sessionID: String, source: TranscriptAudioSource, language: TranscriptLanguage,
+                 engine: TranscriptionEngine, fileManager: FileManager) -> Bool {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: source.filePath) else { return false }
+        return captureSessionID == sessionID
+            && track == source.track
+            && sourcePath == source.filePath
+            && sourceSize == (attributes[.size] as? NSNumber)?.intValue
+            && sourceModifiedAt == attributes[.modificationDate] as? Date
+            && self.language == language
+            && self.engine == engine.engineIdentifier
+            && model == engine.modelIdentifier
+    }
+}
+
+private struct TranscriptionEngineResultRecord: Codable {
+    let segments: [TranscriptSegment]
+    let detectedLanguage: TranscriptLanguage?
+    let diagnostics: [String]
+
+    init(_ result: TranscriptionEngineResult) {
+        segments = result.segments
+        detectedLanguage = result.detectedLanguage
+        diagnostics = result.diagnostics
+    }
+
+    var engineResult: TranscriptionEngineResult {
+        TranscriptionEngineResult(segments: segments, detectedLanguage: detectedLanguage, diagnostics: diagnostics)
+    }
+}
+
+private struct TranscriptionCheckpointFile: Codable {
+    var tracks: [TranscriptionTrackCheckpoint]
+}
+
 public enum TranscriptionError: Error, Equatable, CustomStringConvertible {
     case invalidSidecar(String)
     case missingAudio(String)
@@ -216,17 +263,51 @@ public final class TranscriptionPipeline {
         var segments: [TranscriptSegment] = []
         var diagnostics = selection?.diagnostics ?? []
         var detectedLanguages: [TranscriptLanguage] = []
+        let checkpointURL = workspaceRootURL
+            .appendingPathComponent(bundle.meetingRelativePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent(".transcription-checkpoints.json")
+        var checkpointFile = (try? Data(contentsOf: checkpointURL))
+            .flatMap { try? JSONDecoder().decode(TranscriptionCheckpointFile.self, from: $0) }
+            ?? TranscriptionCheckpointFile(tracks: [])
         for source in sources {
             if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
             guard fileManager.fileExists(atPath: source.filePath) else {
                 throw TranscriptionError.missingAudio(source.filePath)
             }
+            let reusable = checkpointFile.tracks.first {
+                $0.matches(sessionID: bundle.captureSessionID, source: source, language: language,
+                    engine: engine, fileManager: fileManager)
+            }
             let result: TranscriptionEngineResult
-            if let cancellation, let cancellable = engine as? CancellableTranscriptionEngine {
-                result = try cancellable.transcribe(audioURL: URL(fileURLWithPath: source.filePath),
-                    language: language, track: source.track, cancellation: cancellation)
+            if let reusable {
+                result = reusable.result.engineResult
             } else {
-                result = try engine.transcribe(audioURL: URL(fileURLWithPath: source.filePath), language: language, track: source.track)
+                if let cancellation, let cancellable = engine as? CancellableTranscriptionEngine {
+                    result = try cancellable.transcribe(audioURL: URL(fileURLWithPath: source.filePath),
+                        language: language, track: source.track, cancellation: cancellation)
+                } else {
+                    result = try engine.transcribe(audioURL: URL(fileURLWithPath: source.filePath), language: language, track: source.track)
+                }
+                try validate(result.segments, expectedTrack: source.track)
+                let attributes = try fileManager.attributesOfItem(atPath: source.filePath)
+                let checkpoint = TranscriptionTrackCheckpoint(
+                    captureSessionID: bundle.captureSessionID,
+                    track: source.track,
+                    sourcePath: source.filePath,
+                    sourceSize: (attributes[.size] as? NSNumber)?.intValue ?? 0,
+                    sourceModifiedAt: attributes[.modificationDate] as? Date,
+                    language: language,
+                    engine: engine.engineIdentifier,
+                    model: engine.modelIdentifier,
+                    result: TranscriptionEngineResultRecord(result)
+                )
+                checkpointFile.tracks.removeAll { $0.track == source.track }
+                checkpointFile.tracks.append(checkpoint)
+                try fileManager.createDirectory(at: checkpointURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                try encoder.encode(checkpointFile).write(to: checkpointURL, options: .atomic)
             }
             try validate(result.segments, expectedTrack: source.track)
             segments.append(contentsOf: result.segments)
@@ -317,6 +398,7 @@ public final class TranscriptionPipeline {
             }
             throw error
         }
+        try? fileManager.removeItem(at: checkpointURL)
         return artifacts
     }
 
@@ -676,6 +758,13 @@ public final class WhisperCLITranscriptionEngine: CancellableTranscriptionEngine
             throw TranscriptionError.invalidEngineOutput("root JSON value is not an object")
         }
         let rows = (root["transcription"] as? [[String: Any]]) ?? (root["segments"] as? [[String: Any]]) ?? []
+        let result = root["result"] as? [String: Any]
+        let detectedCode = (result?["language"] as? String) ?? (root["language"] as? String)
+        let detectedLanguage = detectedCode.flatMap(TranscriptLanguage.init(rawValue:))
+        let fallbackLanguage = language == .automatic ? (detectedLanguage ?? (rows.isEmpty ? .english : nil)) : language
+        guard let fallbackLanguage, fallbackLanguage != .automatic else {
+            throw TranscriptionError.invalidEngineOutput("automatic language detection returned no supported language")
+        }
         let segments = try rows.enumerated().map { offset, row -> TranscriptSegment in
             guard let text = row["text"] as? String else {
                 throw TranscriptionError.invalidEngineOutput("segment \(offset + 1) has no text")
@@ -688,7 +777,7 @@ public final class WhisperCLITranscriptionEngine: CancellableTranscriptionEngine
             guard let startSeconds = start, let endSeconds = end else {
                 throw TranscriptionError.invalidEngineOutput("segment \(offset + 1) has no timestamps")
             }
-            let segmentLanguage = TranscriptLanguage(rawValue: row["language"] as? String ?? "") ?? language
+            let segmentLanguage = TranscriptLanguage(rawValue: row["language"] as? String ?? "") ?? fallbackLanguage
             return TranscriptSegment(
                 id: "engine-\(offset + 1)",
                 startSeconds: startSeconds,
@@ -699,9 +788,7 @@ public final class WhisperCLITranscriptionEngine: CancellableTranscriptionEngine
                 speaker: track.speakerLabel
             )
         }
-        let result = root["result"] as? [String: Any]
-        let detectedCode = (result?["language"] as? String) ?? (root["language"] as? String)
-        return (segments, detectedCode.flatMap(TranscriptLanguage.init(rawValue:)))
+        return (segments, detectedLanguage)
     }
 
     private static func number(_ value: Any?) -> Double? {

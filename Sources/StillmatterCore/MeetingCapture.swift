@@ -217,7 +217,7 @@ public final class MeetingCaptureService {
         bundleFinalizer: RecordingBundleFinalizing? = nil,
         transcriptionSidecarGenerator: TranscriptionSidecarGenerating? = nil,
         preflight: @escaping () -> AudioCapturePreflightReport,
-        transcriptionLanguage: TranscriptLanguage = .english,
+        transcriptionLanguage: TranscriptLanguage = .automatic,
         now: @escaping () -> Date = Date.init,
         timeZone: TimeZone = .current,
         makeID: @escaping () -> String = { UUID().uuidString }
@@ -575,7 +575,7 @@ public final class MeetingCaptureService {
         notifyObservers()
     }
 
-    /// Selects the only two first-class languages. The next capture uses this language.
+    /// Selects the language used by the next capture or confirmed regeneration.
     public func setTranscriptionLanguage(_ language: TranscriptLanguage) {
         transcriptionLanguage = language
         notifyObservers()

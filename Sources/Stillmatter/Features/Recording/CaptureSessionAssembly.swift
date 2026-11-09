@@ -58,7 +58,8 @@ enum CaptureSessionAssembly {
             vault: vault, jobStore: jobStore, inbox: inbox,
             micRecorder: micRecorder, systemAudioRecorder: systemAudioRecorder,
             bundleFinalizer: bundleFinalizer, transcriptionSidecarGenerator: transcriptionSidecarGenerator,
-            preflight: preflightChecker.check
+            preflight: preflightChecker.check,
+            transcriptionLanguage: settings.transcriptionLanguage
         )
     }
 

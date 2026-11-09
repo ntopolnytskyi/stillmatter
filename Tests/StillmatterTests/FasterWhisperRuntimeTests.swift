@@ -4,6 +4,50 @@ import XCTest
 @testable import StillmatterTranscriptionRuntime
 
 final class FasterWhisperRuntimeTests: XCTestCase {
+    func testEngineUsesDetectedLanguageForAutomaticTranscription() throws {
+        let root = try makeComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let argumentsURL = root.appendingPathComponent("arguments.txt")
+        let executableURL = root.appendingPathComponent("runtime/bin/python3")
+        let script = """
+        #!/bin/sh
+        printf '%s\\n' "$@" > "\(argumentsURL.path)"
+        cat > "$5" <<'JSON'
+        {"language":"uk","segments":[{"start":0.25,"end":1.5,"text":" Привіт "}]}
+        JSON
+        """
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        let result = try FasterWhisperTranscriptionEngine(componentURL: root, modelIdentifier: "fixture")
+            .transcribe(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"), language: .automatic, track: .microphone)
+
+        XCTAssertEqual(result.detectedLanguage, .ukrainian)
+        XCTAssertEqual(result.segments.first?.language, .ukrainian)
+        XCTAssertTrue(try String(contentsOf: argumentsURL, encoding: .utf8).contains("\nauto\n"))
+    }
+
+    func testAutomaticTranscriptionRejectsUnknownDetectedLanguage() throws {
+        let root = try makeComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executableURL = root.appendingPathComponent("runtime/bin/python3")
+        let script = """
+        #!/bin/sh
+        cat > "$5" <<'JSON'
+        {"language":"fr","segments":[{"start":0.25,"end":1.5,"text":" Bonjour "}]}
+        JSON
+        """
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        XCTAssertThrowsError(try FasterWhisperTranscriptionEngine(componentURL: root, modelIdentifier: "fixture")
+            .transcribe(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"), language: .automatic, track: .microphone)) { error in
+                guard case TranscriptionError.invalidEngineOutput = error else {
+                    return XCTFail("Expected an unsupported detected language failure, got \(error)")
+                }
+            }
+    }
+
     func testEngineRunsManagedRuntimeAndNormalizesSegments() throws {
         let root = try makeComponent()
         defer { try? FileManager.default.removeItem(at: root) }

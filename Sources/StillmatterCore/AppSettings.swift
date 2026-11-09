@@ -63,6 +63,7 @@ public struct AppSettings: Codable, Equatable {
     public var calendarSourceSelection: CalendarSourceSelection
     public var searchExcludedPatterns: [String]
     public var transcriptionModelChoice: TranscriptionModelChoice
+    public var transcriptionLanguage: TranscriptLanguage
     public var teamsRecordingMode: TeamsRecordingMode
 
     public init(
@@ -72,6 +73,7 @@ public struct AppSettings: Codable, Equatable {
         calendarSourceSelection: CalendarSourceSelection = .all,
         searchExcludedPatterns: [String] = [],
         transcriptionModelChoice: TranscriptionModelChoice = .recommended,
+        transcriptionLanguage: TranscriptLanguage = .automatic,
         teamsRecordingMode: TeamsRecordingMode = .ask
     ) {
         self.stillmatterRootURL = stillmatterRootURL
@@ -80,6 +82,7 @@ public struct AppSettings: Codable, Equatable {
         self.calendarSourceSelection = calendarSourceSelection
         self.searchExcludedPatterns = searchExcludedPatterns
         self.transcriptionModelChoice = transcriptionModelChoice
+        self.transcriptionLanguage = transcriptionLanguage
         self.teamsRecordingMode = teamsRecordingMode
     }
 
@@ -91,6 +94,7 @@ public struct AppSettings: Codable, Equatable {
         case selectedCalendarIdentifiers
         case searchExcludedPatterns
         case transcriptionModelChoice
+        case transcriptionLanguage
         case teamsRecordingMode
     }
 
@@ -109,6 +113,8 @@ public struct AppSettings: Codable, Equatable {
         searchExcludedPatterns = try container.decodeIfPresent([String].self, forKey: .searchExcludedPatterns) ?? []
         let storedTranscriptionModel = try container.decodeIfPresent(String.self, forKey: .transcriptionModelChoice)
         transcriptionModelChoice = storedTranscriptionModel.flatMap(TranscriptionModelChoice.init(rawValue:)) ?? .recommended
+        let storedTranscriptionLanguage = try container.decodeIfPresent(String.self, forKey: .transcriptionLanguage)
+        transcriptionLanguage = storedTranscriptionLanguage.flatMap(TranscriptLanguage.init(rawValue:)) ?? .automatic
         let storedRecordingMode = try container.decodeIfPresent(String.self, forKey: .teamsRecordingMode)
         teamsRecordingMode = storedRecordingMode.flatMap(TeamsRecordingMode.init(rawValue:)) ?? .ask
     }
@@ -121,6 +127,7 @@ public struct AppSettings: Codable, Equatable {
         try container.encode(calendarSourceSelection, forKey: .calendarSourceSelection)
         try container.encode(searchExcludedPatterns, forKey: .searchExcludedPatterns)
         try container.encode(transcriptionModelChoice, forKey: .transcriptionModelChoice)
+        try container.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
         try container.encode(teamsRecordingMode, forKey: .teamsRecordingMode)
     }
 }

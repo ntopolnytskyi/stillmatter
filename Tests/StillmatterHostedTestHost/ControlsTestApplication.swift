@@ -70,7 +70,8 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
             )
         } else {
             service = MeetingCaptureService(vault: WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support),
-                preflight: { .readyForTesting })
+                preflight: { .readyForTesting },
+                transcriptionLanguage: settingsStore.settings.transcriptionLanguage)
         }
         super.init()
         if scenario == "invalid-setting" {
@@ -88,7 +89,14 @@ final class ControlsTestApplication: NSObject, NSApplicationDelegate {
             guard let self, self.scenario != "unconfigured" else { return nil }
             return self.service
         }, rootURLProvider: { [weak self] in self?.settingsStore.settings.stillmatterRootURL },
-           teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: { [weak self] in self?.showSettings(nil) })
+           teamsDetectionProvider: { nil },
+           onTranscriptionLanguageChanged: { [weak self] language in
+               guard let self else { return }
+               var settings = self.settingsStore.settings
+               settings.transcriptionLanguage = language
+               self.settingsStore.settings = settings
+           },
+           jobRecordsProvider: { [] }, onOpenSettings: { [weak self] in self?.showSettings(nil) })
         settings = SettingsFormView(settingsStore: settingsStore, transcriptionComponentInstaller: installer,
             onRetryPendingWorkspace: { [weak self] in
                 guard let self else { return }
