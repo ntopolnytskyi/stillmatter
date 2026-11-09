@@ -61,7 +61,7 @@ This test aligns language changes exactly with the one-minute windows, so it doe
 
 Raw report: [one-minute Ukrainian/English/Ukrainian result and Auto baseline](capability-asr-minute-language-uk-en-uk-2026-11-09.json).
 
-Validation for the prior implementation: the full package coverage lane passed **438 tests, 4 skipped, 0 failures**. The incremental changed-source gate passed **15/15 executable lines (100%)**: Core 8/8 and transcription runtime 7/7. UI tests were skipped because no UI code changed. The current one-minute changes require another full test and coverage run before completion.
+Validation for the minute-window implementation: all **68** capability-probe tests passed. The full package coverage lane passed **438 tests, 4 skipped, 0 failures**. The incremental changed-source gate passed **23/23 executable lines (100%)**: Core 11/11 and transcription runtime 12/12. Focused Swift tests passed 3/3. UI tests were skipped because no UI code changed.
 
 ## Disposition
 
