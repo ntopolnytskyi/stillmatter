@@ -19,6 +19,82 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(manifest.metadata["language"], "auto")
     }
 
+    func testAutomaticLanguageComparesStartAndMinuteTenInBothLanguagesBeforeWholeTrackDecode() throws {
+        let fixture = try TranscriptionFixture()
+        let engine = SamplingStubTranscriptionEngine()
+        let pipeline = TranscriptionPipeline(
+            workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(),
+            engine: engine
+        )
+
+        let result = try pipeline.generate(from: fixture.makeBundle(system: nil), selection: nil, language: .automatic,
+            cancellation: JobExecutionCancellation())
+
+        XCTAssertEqual(engine.samples.map(\.startSeconds), [0, 0, 600, 600])
+        XCTAssertEqual(engine.samples.map(\.language), [.english, .ukrainian, .english, .ukrainian])
+        XCTAssertEqual(engine.transcriptions, [.ukrainian], "Only the selected language should decode the full track")
+        XCTAssertEqual(result.document.language, .ukrainian)
+        XCTAssertEqual(result.document.segments.map(\.language), [.ukrainian])
+        XCTAssertTrue(result.document.diagnostics.contains { $0.contains("Auto selected uk") })
+    }
+
+    func testAutomaticLanguageChoosesEnglishWhenItsSampleScoresAreHigher() throws {
+        let fixture = try TranscriptionFixture()
+        let engine = SamplingStubTranscriptionEngine(scores: [.english: -0.1, .ukrainian: -0.4])
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: engine)
+
+        let result = try pipeline.generate(from: fixture.makeBundle(system: nil), selection: nil, language: .automatic)
+
+        XCTAssertEqual(engine.transcriptions, [.english])
+        XCTAssertEqual(result.document.language, .english)
+        XCTAssertTrue(result.document.diagnostics.contains { $0.contains("Auto selected en") })
+    }
+
+    func testAutomaticLanguageUsesRecognizerAutoWhenCandidateScoresTie() throws {
+        let fixture = try TranscriptionFixture()
+        let engine = SamplingStubTranscriptionEngine(scores: [.english: -0.2, .ukrainian: -0.2])
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: engine)
+
+        let result = try pipeline.generate(from: fixture.makeBundle(system: nil), selection: nil, language: .automatic)
+
+        XCTAssertEqual(engine.transcriptions, [.automatic])
+        XCTAssertEqual(result.document.language, .automatic)
+        XCTAssertTrue(result.document.diagnostics.contains { $0.contains("scores tied") })
+    }
+
+    func testAutomaticLanguageLeavesSilentRecordingOnRecognizerAutoWhenSamplesHaveNoSpeech() throws {
+        let fixture = try TranscriptionFixture()
+        let engine = SamplingStubTranscriptionEngine(sampleHasSpeech: false)
+        let pipeline = TranscriptionPipeline(
+            workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(),
+            engine: engine
+        )
+
+        let result = try pipeline.generate(from: fixture.makeBundle(system: nil), selection: nil, language: .automatic)
+
+        XCTAssertEqual(engine.transcriptions, [.automatic])
+        XCTAssertEqual(result.document.language, .automatic)
+        XCTAssertTrue(result.document.diagnostics.contains { $0.contains("no speech") })
+    }
+
+    func testAutomaticLanguageReportsUnsupportedEngineBeforeDecodingAudio() throws {
+        let fixture = try TranscriptionFixture()
+        let engine = StubTranscriptionEngine(textByTrack: [.microphone: "Should not run"])
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: engine)
+
+        XCTAssertThrowsError(try pipeline.generate(from: fixture.makeBundle(system: nil), selection: nil, language: .automatic)) { error in
+            guard case TranscriptionError.missingConfiguration = error else {
+                return XCTFail("Expected Auto capability guidance, got \(error)")
+            }
+        }
+        XCTAssertTrue(engine.audioPaths.isEmpty)
+    }
+
     func testSuccessfulTrackCheckpointIsReusedAfterAnotherTrackFails() throws {
         let fixture = try TranscriptionFixture()
         let firstEngine = StubTranscriptionEngine(
@@ -462,6 +538,47 @@ private final class StubTranscriptionEngine: TranscriptionEngine {
             detectedLanguage: language,
             diagnostics: ["fixture transcript"]
         )
+    }
+}
+
+private final class SamplingStubTranscriptionEngine: CancellableTranscriptLanguageSamplingEngine {
+    let engineIdentifier = "sampling-test-whisper"
+    let modelIdentifier = "sampling-test-model"
+    let sampleHasSpeech: Bool
+    let scores: [TranscriptLanguage: Double]
+    private(set) var samples: [TranscriptLanguageSample] = []
+    private(set) var transcriptions: [TranscriptLanguage] = []
+
+    init(sampleHasSpeech: Bool = true, scores: [TranscriptLanguage: Double] = [.english: -0.48, .ukrainian: -0.12]) {
+        self.sampleHasSpeech = sampleHasSpeech
+        self.scores = scores
+    }
+
+    func sampleLanguages(audioURL: URL, starts: [Double], durationSeconds: Double,
+                         languages: [TranscriptLanguage], track: TranscriptTrack) throws -> [TranscriptLanguageSample] {
+        starts.flatMap { start in languages.map { language in
+            let hasSpeech = sampleHasSpeech && start == 0
+            let sample = TranscriptLanguageSample(startSeconds: start, language: language,
+                averageLogProbability: scores[language] ?? -0.48,
+                speechDurationSeconds: hasSpeech ? 30 : 0)
+            samples.append(sample)
+            return sample
+        } }
+    }
+
+    func sampleLanguages(audioURL: URL, starts: [Double], durationSeconds: Double,
+                         languages: [TranscriptLanguage], track: TranscriptTrack,
+                         cancellation: JobExecutionCancellation) throws -> [TranscriptLanguageSample] {
+        try sampleLanguages(audioURL: audioURL, starts: starts, durationSeconds: durationSeconds,
+            languages: languages, track: track)
+    }
+
+    func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack) throws -> TranscriptionEngineResult {
+        transcriptions.append(language)
+        let segmentLanguage = language == .automatic ? .english : language
+        return TranscriptionEngineResult(segments: [TranscriptSegment(id: "full-track", startSeconds: 1,
+            endSeconds: 2, text: "Full track transcript", language: segmentLanguage,
+            track: track, speaker: track.speakerLabel)], detectedLanguage: segmentLanguage)
     }
 }
 

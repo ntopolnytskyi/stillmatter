@@ -78,9 +78,90 @@ final class FasterWhisperRuntimeTests: XCTestCase {
         XCTAssertEqual(result.segments.first?.text, "Привіт")
         XCTAssertEqual(result.segments.first?.speaker, "Me")
         let arguments = try String(contentsOf: argumentsURL, encoding: .utf8)
-        XCTAssertTrue(arguments.contains("transcribe.py"))
+        XCTAssertTrue(arguments.contains("Stillmatter-transcribe-"))
         XCTAssertTrue(arguments.contains("/fixture/audio.wav"))
         XCTAssertTrue(arguments.contains("\nuk\n"))
+    }
+
+    func testEngineComparesRequestedLanguageSamplesInOneModelProcess() throws {
+        let root = try makeComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let argumentsURL = root.appendingPathComponent("arguments.txt")
+        let executableURL = root.appendingPathComponent("runtime/bin/python3")
+        let script = """
+        #!/bin/sh
+        printf '%s\\n' "$@" > "\(argumentsURL.path)"
+        cat > "$5" <<'JSON'
+        {"samples":[
+          {"start":0,"language":"en","average_log_probability":-0.42,"speech_duration_seconds":30},
+          {"start":0,"language":"uk","average_log_probability":-0.15,"speech_duration_seconds":29},
+          {"start":600,"language":"en","average_log_probability":0,"speech_duration_seconds":0},
+          {"start":600,"language":"uk","average_log_probability":0,"speech_duration_seconds":0}
+        ]}
+        JSON
+        """
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        let results = try FasterWhisperTranscriptionEngine(componentURL: root, modelIdentifier: "fixture")
+            .sampleLanguages(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"), starts: [0, 600],
+                durationSeconds: 120, languages: [.english, .ukrainian], track: .microphone)
+
+        XCTAssertEqual(results.map(\.startSeconds), [0, 0, 600, 600])
+        XCTAssertEqual(results.map(\.language), [.english, .ukrainian, .english, .ukrainian])
+        XCTAssertEqual(results[1].averageLogProbability, -0.15)
+        let arguments = try String(contentsOf: argumentsURL, encoding: .utf8)
+        XCTAssertTrue(arguments.contains("--samples"))
+        XCTAssertTrue(arguments.contains("\n600.0\n"))
+        XCTAssertTrue(arguments.contains("\n120.0\n"))
+    }
+
+    func testSampleEngineRejectsInvalidRequestsBeforeStartingRuntime() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("StillmatterFasterWhisperTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = FasterWhisperTranscriptionEngine(componentURL: root, modelIdentifier: "fixture")
+
+        XCTAssertThrowsError(try engine.sampleLanguages(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"),
+            starts: [], durationSeconds: 120, languages: [.english, .ukrainian], track: .microphone)) { error in
+                guard case TranscriptionError.invalidEngineOutput = error else {
+                    return XCTFail("Expected an invalid sample request error, got \(error)")
+                }
+            }
+    }
+
+    func testSampleEngineRejectsIncompleteManagedRuntime() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("StillmatterFasterWhisperTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = FasterWhisperTranscriptionEngine(componentURL: root, modelIdentifier: "fixture")
+
+        XCTAssertThrowsError(try engine.sampleLanguages(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"),
+            starts: [0], durationSeconds: 120, languages: [.english, .ukrainian], track: .microphone)) { error in
+                guard case TranscriptionError.missingConfiguration = error else {
+                    return XCTFail("Expected missing runtime configuration, got \(error)")
+                }
+            }
+    }
+
+    func testSampleEngineRejectsMissingQualityResults() throws {
+        let root = try makeComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executableURL = root.appendingPathComponent("runtime/bin/python3")
+        let script = """
+        #!/bin/sh
+        cat > "$5" <<'JSON'
+        {"samples":[]}
+        JSON
+        """
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        XCTAssertThrowsError(try FasterWhisperTranscriptionEngine(componentURL: root, modelIdentifier: "fixture")
+            .sampleLanguages(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"), starts: [0],
+                durationSeconds: 120, languages: [.english, .ukrainian], track: .microphone)) { error in
+                    guard case TranscriptionError.invalidEngineOutput = error else {
+                        return XCTFail("Expected malformed sample output error, got \(error)")
+                    }
+                }
     }
 
     func testEngineRejectsIncompleteManagedRuntime() throws {
@@ -173,6 +254,10 @@ final class FasterWhisperRuntimeTests: XCTestCase {
         let check = FasterWhisperModelAcquirer.transcriptionScript
         XCTAssertTrue(check.contains("decode_audio(sample.name)"),
                       "A model-only check accepts runtimes that cannot decode recordings")
+        XCTAssertTrue(check.contains("decoded_audio[begin:end]"),
+                      "Auto samples must use the audio decoder API supported by the pinned runtime")
+        XCTAssertFalse(check.contains("decode_audio(audio_path, duration="),
+                       "The pinned faster-whisper decoder does not accept offset/duration arguments")
         if let decode = check.range(of: "decode_audio(sample.name)"),
            let model = check.range(of: "WhisperModel(sys.argv[2]") {
             XCTAssertLessThan(decode.lowerBound, model.lowerBound)

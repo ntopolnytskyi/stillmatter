@@ -20,7 +20,17 @@ private struct FasterWhisperOutput: Decodable {
     }
 
     var language: String?
-    var segments: [Segment]
+    var segments: [Segment]?
+    var average_log_probability: Double?
+    var speech_duration_seconds: Double?
+    var samples: [Sample]?
+
+    struct Sample: Decodable {
+        var start: Double
+        var language: String
+        var average_log_probability: Double
+        var speech_duration_seconds: Double
+    }
 }
 
 private enum FasterWhisperRuntimeError: LocalizedError {
@@ -227,6 +237,36 @@ snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[
 import json
 import sys
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
+
+if sys.argv[1] == "--samples":
+    model_path, audio_path, output_path = sys.argv[2:5]
+    model = WhisperModel(model_path, device="cpu", compute_type="int8")
+    decoded_audio = None
+    results = []
+    for start, duration, language in zip(sys.argv[5::3], sys.argv[6::3], sys.argv[7::3]):
+        start_value, duration_value = float(start), float(duration)
+        if decoded_audio is None:
+            decoded_audio = decode_audio(audio_path)
+        begin = int(round(start_value * 16000))
+        end = min(len(decoded_audio), int(round((start_value + duration_value) * 16000)))
+        audio = decoded_audio[begin:end]
+        if len(audio) == 0:
+            average, speech_seconds = 0.0, 0.0
+        else:
+            segments, info = model.transcribe(audio, language=language, vad_filter=True)
+            scored = []
+            for segment in segments:
+                seconds = max(0.0, segment.end - segment.start)
+                if seconds > 0 and segment.no_speech_prob < 0.5:
+                    scored.append((segment.avg_logprob, seconds))
+            speech_seconds = sum(seconds for _, seconds in scored)
+            average = sum(score * seconds for score, seconds in scored) / speech_seconds if speech_seconds else 0.0
+        results.append({"start": start_value, "language": language,
+                        "average_log_probability": average, "speech_duration_seconds": speech_seconds})
+    with open(output_path, "w", encoding="utf-8") as output:
+        json.dump({"samples": results}, output, ensure_ascii=False)
+    raise SystemExit(0)
 
 if sys.argv[1] == "--check":
     import tempfile
@@ -257,7 +297,7 @@ with open(output_path, "w", encoding="utf-8") as output:
 """#
 }
 
-public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEngine {
+public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEngine, CancellableTranscriptLanguageSamplingEngine {
     public let engineIdentifier = "faster-whisper"
     public let modelIdentifier: String
 
@@ -284,10 +324,11 @@ public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEng
                            cancellation: JobExecutionCancellation) throws -> TranscriptionEngineResult {
         guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let pythonURL = componentURL.appendingPathComponent("runtime/bin/python3")
-        let scriptURL = componentURL.appendingPathComponent("transcribe.py")
+        let scriptURL = try currentTranscriptionScriptURL()
+        defer { try? fileManager.removeItem(at: scriptURL) }
         let modelURL = componentURL.appendingPathComponent("model", isDirectory: true)
         guard fileManager.isExecutableFile(atPath: pythonURL.path),
-              fileManager.fileExists(atPath: scriptURL.path),
+              fileManager.fileExists(atPath: componentURL.appendingPathComponent("transcribe.py").path),
               fileManager.fileExists(atPath: modelURL.appendingPathComponent("model.bin").path) else {
             throw TranscriptionError.missingConfiguration("The faster-whisper component is incomplete.")
         }
@@ -302,10 +343,10 @@ public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEng
         let output = try JSONDecoder().decode(FasterWhisperOutput.self, from: Data(contentsOf: outputURL))
         let detectedLanguage = output.language.flatMap(TranscriptLanguage.init(rawValue:))
         let segmentLanguage = language == .automatic ? detectedLanguage : language
-        guard output.segments.isEmpty || segmentLanguage != nil else {
+        guard (output.segments ?? []).isEmpty || segmentLanguage != nil else {
             throw TranscriptionError.invalidEngineOutput("automatic language detection returned no supported language")
         }
-        let segments = output.segments.enumerated().compactMap { index, segment -> TranscriptSegment? in
+        let segments = (output.segments ?? []).enumerated().compactMap { index, segment -> TranscriptSegment? in
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             return TranscriptSegment(
@@ -323,5 +364,51 @@ public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEng
             detectedLanguage: detectedLanguage,
             diagnostics: diagnostics.isEmpty ? [] : [diagnostics]
         )
+    }
+
+    public func sampleLanguages(audioURL: URL, starts: [Double], durationSeconds: Double,
+                                languages: [TranscriptLanguage], track: TranscriptTrack) throws -> [TranscriptLanguageSample] {
+        try sampleLanguages(audioURL: audioURL, starts: starts, durationSeconds: durationSeconds,
+            languages: languages, track: track, cancellation: JobExecutionCancellation())
+    }
+
+    public func sampleLanguages(audioURL: URL, starts: [Double], durationSeconds: Double,
+                                languages: [TranscriptLanguage], track: TranscriptTrack,
+                                cancellation: JobExecutionCancellation) throws -> [TranscriptLanguageSample] {
+        guard !starts.isEmpty, starts.allSatisfy({ $0 >= 0 && $0.isFinite }), durationSeconds > 0,
+              !languages.isEmpty, languages.allSatisfy({ $0 == .english || $0 == .ukrainian }) else {
+            throw TranscriptionError.invalidEngineOutput("invalid Auto language sample request")
+        }
+        guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
+        let pythonURL = componentURL.appendingPathComponent("runtime/bin/python3")
+        let modelURL = componentURL.appendingPathComponent("model", isDirectory: true)
+        guard fileManager.isExecutableFile(atPath: pythonURL.path),
+              fileManager.fileExists(atPath: componentURL.appendingPathComponent("transcribe.py").path),
+              fileManager.fileExists(atPath: modelURL.appendingPathComponent("model.bin").path) else {
+            throw TranscriptionError.missingConfiguration("The faster-whisper component is incomplete.")
+        }
+        let scriptURL = try currentTranscriptionScriptURL()
+        defer { try? fileManager.removeItem(at: scriptURL) }
+        let outputURL = fileManager.temporaryDirectory.appendingPathComponent("Stillmatter-faster-whisper-samples-\(UUID().uuidString).json")
+        defer { try? fileManager.removeItem(at: outputURL) }
+        let requests = starts.flatMap { start in languages.map { (start, $0) } }
+        let arguments = requests.flatMap { [String($0.0), String(durationSeconds), $0.1.rawValue] }
+        _ = try runner.run(executable: pythonURL,
+            arguments: [scriptURL.path, "--samples", modelURL.path, audioURL.path, outputURL.path] + arguments,
+            jobCancellation: cancellation)
+        let output = try JSONDecoder().decode(FasterWhisperOutput.self, from: Data(contentsOf: outputURL))
+        guard let samples = output.samples, samples.count == requests.count,
+              samples.allSatisfy({ $0.average_log_probability.isFinite && $0.speech_duration_seconds.isFinite && $0.speech_duration_seconds >= 0 }) else {
+            throw TranscriptionError.invalidEngineOutput("Auto language sample omitted its quality score")
+        }
+        return samples.map { TranscriptLanguageSample(startSeconds: $0.start,
+            language: TranscriptLanguage(rawValue: $0.language) ?? .automatic,
+            averageLogProbability: $0.average_log_probability, speechDurationSeconds: $0.speech_duration_seconds) }
+    }
+
+    private func currentTranscriptionScriptURL() throws -> URL {
+        let url = fileManager.temporaryDirectory.appendingPathComponent("Stillmatter-transcribe-\(UUID().uuidString).py")
+        try Data(FasterWhisperModelAcquirer.transcriptionScript.utf8).write(to: url, options: .atomic)
+        return url
     }
 }

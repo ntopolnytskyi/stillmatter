@@ -81,6 +81,20 @@ public struct TranscriptionEngineResult: Equatable {
     }
 }
 
+public struct TranscriptLanguageSample: Equatable {
+    public let startSeconds: Double
+    public let language: TranscriptLanguage
+    public let averageLogProbability: Double
+    public let speechDurationSeconds: Double
+
+    public init(startSeconds: Double, language: TranscriptLanguage, averageLogProbability: Double, speechDurationSeconds: Double) {
+        self.startSeconds = startSeconds
+        self.language = language
+        self.averageLogProbability = averageLogProbability
+        self.speechDurationSeconds = speechDurationSeconds
+    }
+}
+
 public protocol TranscriptionEngine: AnyObject {
     var engineIdentifier: String { get }
     var modelIdentifier: String { get }
@@ -90,6 +104,17 @@ public protocol TranscriptionEngine: AnyObject {
 public protocol CancellableTranscriptionEngine: TranscriptionEngine {
     func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack,
                     cancellation: JobExecutionCancellation) throws -> TranscriptionEngineResult
+}
+
+public protocol TranscriptLanguageSamplingEngine: TranscriptionEngine {
+    func sampleLanguages(audioURL: URL, starts: [Double], durationSeconds: Double,
+                         languages: [TranscriptLanguage], track: TranscriptTrack) throws -> [TranscriptLanguageSample]
+}
+
+public protocol CancellableTranscriptLanguageSamplingEngine: TranscriptLanguageSamplingEngine {
+    func sampleLanguages(audioURL: URL, starts: [Double], durationSeconds: Double,
+                         languages: [TranscriptLanguage], track: TranscriptTrack,
+                         cancellation: JobExecutionCancellation) throws -> [TranscriptLanguageSample]
 }
 
 public struct TranscriptAudioSource: Codable, Equatable {
@@ -263,6 +288,14 @@ public final class TranscriptionPipeline {
         var segments: [TranscriptSegment] = []
         var diagnostics = selection?.diagnostics ?? []
         var detectedLanguages: [TranscriptLanguage] = []
+        let transcriptionLanguage: TranscriptLanguage
+        if language == .automatic {
+            let selection = try selectAutomaticLanguage(sources: sources, cancellation: cancellation)
+            transcriptionLanguage = selection.language
+            diagnostics.append(contentsOf: selection.diagnostics)
+        } else {
+            transcriptionLanguage = language
+        }
         let checkpointURL = workspaceRootURL
             .appendingPathComponent(bundle.meetingRelativePath)
             .deletingLastPathComponent()
@@ -276,7 +309,7 @@ public final class TranscriptionPipeline {
                 throw TranscriptionError.missingAudio(source.filePath)
             }
             let reusable = checkpointFile.tracks.first {
-                $0.matches(sessionID: bundle.captureSessionID, source: source, language: language,
+                $0.matches(sessionID: bundle.captureSessionID, source: source, language: transcriptionLanguage,
                     engine: engine, fileManager: fileManager)
             }
             let result: TranscriptionEngineResult
@@ -285,9 +318,9 @@ public final class TranscriptionPipeline {
             } else {
                 if let cancellation, let cancellable = engine as? CancellableTranscriptionEngine {
                     result = try cancellable.transcribe(audioURL: URL(fileURLWithPath: source.filePath),
-                        language: language, track: source.track, cancellation: cancellation)
+                        language: transcriptionLanguage, track: source.track, cancellation: cancellation)
                 } else {
-                    result = try engine.transcribe(audioURL: URL(fileURLWithPath: source.filePath), language: language, track: source.track)
+                    result = try engine.transcribe(audioURL: URL(fileURLWithPath: source.filePath), language: transcriptionLanguage, track: source.track)
                 }
                 try validate(result.segments, expectedTrack: source.track)
                 let attributes = try fileManager.attributesOfItem(atPath: source.filePath)
@@ -297,7 +330,7 @@ public final class TranscriptionPipeline {
                     sourcePath: source.filePath,
                     sourceSize: (attributes[.size] as? NSNumber)?.intValue ?? 0,
                     sourceModifiedAt: attributes[.modificationDate] as? Date,
-                    language: language,
+                    language: transcriptionLanguage,
                     engine: engine.engineIdentifier,
                     model: engine.modelIdentifier,
                     result: TranscriptionEngineResultRecord(result)
@@ -336,7 +369,7 @@ public final class TranscriptionPipeline {
             schemaVersion: TranscriptDocument.currentSchemaVersion,
             captureSessionID: bundle.captureSessionID,
             meetingRelativePath: bundle.meetingRelativePath,
-            language: language,
+            language: transcriptionLanguage,
             detectedLanguages: detectedLanguages,
             engine: engine.engineIdentifier,
             model: engine.modelIdentifier,
@@ -400,6 +433,54 @@ public final class TranscriptionPipeline {
         }
         try? fileManager.removeItem(at: checkpointURL)
         return artifacts
+    }
+
+    private func selectAutomaticLanguage(sources: [TranscriptAudioSource],
+                                         cancellation: JobExecutionCancellation?) throws
+        -> (language: TranscriptLanguage, diagnostics: [String]) {
+        guard let sampler = engine as? TranscriptLanguageSamplingEngine else {
+            throw TranscriptionError.missingConfiguration(
+                "Auto language selection requires an engine that can compare English and Ukrainian samples. Choose a supported local transcription model."
+            )
+        }
+        let sampleStarts: [Double] = [0, 10 * 60]
+        let sampleDuration = 2 * 60.0
+        var weightedScores: [TranscriptLanguage: (weightedScore: Double, speechDuration: Double)] = [:]
+        var observations: [String] = []
+        for source in sources {
+            if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
+            let samples: [TranscriptLanguageSample]
+            if let cancellation, let cancellable = engine as? CancellableTranscriptLanguageSamplingEngine {
+                samples = try cancellable.sampleLanguages(audioURL: URL(fileURLWithPath: source.filePath),
+                    starts: sampleStarts, durationSeconds: sampleDuration, languages: [.english, .ukrainian],
+                    track: source.track, cancellation: cancellation)
+            } else {
+                samples = try sampler.sampleLanguages(audioURL: URL(fileURLWithPath: source.filePath),
+                    starts: sampleStarts, durationSeconds: sampleDuration, languages: [.english, .ukrainian], track: source.track)
+            }
+            for sample in samples where sample.language == .english || sample.language == .ukrainian {
+                guard sample.averageLogProbability.isFinite,
+                      sample.speechDurationSeconds.isFinite, sample.speechDurationSeconds > 0 else { continue }
+                let previous = weightedScores[sample.language] ?? (0, 0)
+                weightedScores[sample.language] = (previous.weightedScore + sample.averageLogProbability * sample.speechDurationSeconds,
+                                                   previous.speechDuration + sample.speechDurationSeconds)
+                observations.append("\(source.track.rawValue) @ \(Int(sample.startSeconds))s \(sample.language.rawValue)=\(String(format: "%.3f", sample.averageLogProbability))")
+            }
+        }
+        let english = weightedScores[.english].map { $0.weightedScore / $0.speechDuration }
+        let ukrainian = weightedScores[.ukrainian].map { $0.weightedScore / $0.speechDuration }
+        guard let english, let ukrainian else {
+            return (.automatic, ["Auto language samples found no speech; full-track recognition will use automatic detection."])
+        }
+        let selected: TranscriptLanguage
+        if abs(english - ukrainian) < 0.0001 {
+            selected = .automatic
+            observations.append("scores tied; full-track recognition will use automatic detection")
+        } else {
+            selected = english > ukrainian ? .english : .ukrainian
+            observations.append("Auto selected \(selected.rawValue) from sample scores en=\(String(format: "%.3f", english)), uk=\(String(format: "%.3f", ukrainian))")
+        }
+        return (selected, ["Auto language comparison: " + observations.joined(separator: "; ")])
     }
 
     public static func artifactPaths(meetingRelativePath: String) -> (markdown: String, json: String, vtt: String) {
