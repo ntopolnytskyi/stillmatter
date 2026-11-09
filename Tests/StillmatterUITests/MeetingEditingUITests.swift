@@ -1,9 +1,11 @@
 import Foundation
 import XCTest
+import StillmatterCore
 
 extension StillmatterFlowsUITests {
     func testFiveMeetingTabsKeepDecisionsInSummaryAndAudioInTranscript() throws {
-        try seedMeeting(transcript: true)
+        try seedMeeting(transcript: true, myActionItem: "Extracted action title",
+                        savedActionTitle: "Edited proposal title")
         openFixtureMeeting()
 
         let tabs = ["Summary", "Action Items", "Open Items", "My Notes", "Transcript"]
@@ -13,15 +15,18 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(app.staticTexts["Decisions"].exists, "Summary contains the full Decisions section")
         XCTAssertTrue(app.descendants(matching: .any).matching(
             NSPredicate(format: "label CONTAINS %@", "Decision stays in Summary")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Edited proposal title"].exists)
+        XCTAssertFalse(app.staticTexts["Extracted action title"].exists)
         XCTAssertFalse(app.buttons["Play Meeting audio"].isHittable, "Audio controls stay out of Summary")
 
         let summaryTab = app.radioButtons["Summary"]
         summaryTab.click()
         summaryTab.typeKey(.rightArrow, modifierFlags: [.command, .option])
-        XCTAssertTrue(app.staticTexts["No personal Action Items yet."].waitForExistence(timeout: 5))
+        let editAction = app.buttons["meeting-action-edit-meeting-action:ui-fixture:action-fixture"]
+        XCTAssertTrue(editAction.waitForExistence(timeout: 5))
         summaryTab.click()
         app.buttons["meeting-open-action-items"].click()
-        XCTAssertTrue(app.staticTexts["No personal Action Items yet."].waitForExistence(timeout: 5))
+        XCTAssertTrue(editAction.waitForExistence(timeout: 5))
         app.radioButtons["Open Items"].click()
         XCTAssertTrue(app.descendants(matching: .any).matching(
             NSPredicate(format: "label CONTAINS %@", "Question stays in Open Items")).firstMatch.waitForExistence(timeout: 5))
@@ -352,7 +357,8 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(app.buttons["meeting-overview-edit-summary"].waitForExistence(timeout: 10))
     }
 
-    func seedMeeting(transcript: Bool = false, notes: String = "Original notes.") throws {
+    func seedMeeting(transcript: Bool = false, notes: String = "Original notes.",
+                     myActionItem: String? = nil, savedActionTitle: String? = nil) throws {
         // Prepare before launch so discovery does not depend on filesystem watcher timing.
         app.terminate()
         let directory = meetingURL.deletingLastPathComponent()
@@ -371,7 +377,21 @@ extension StillmatterFlowsUITests {
                 "audio_sources": [], "segments": segments, "diagnostics": []]
             try JSONSerialization.data(withJSONObject: document).write(to: directory.appendingPathComponent("transcript.json"))
             let extraction = #"{"schema_version":1,"meeting":"Meetings/ui-fixture/meeting.md","transcript":"Meetings/ui-fixture/transcript.json","decisions":[{"id":"decision-fixture","text":"Decision stays in Summary","citations":[]}],"my_action_items":[],"other_action_items":[],"open_questions":[{"id":"question-fixture","text":"Question stays in Open Items","citations":[]}] }"#
-            try extraction.write(to: directory.appendingPathComponent("summary-extraction.json"), atomically: true, encoding: .utf8)
+            let myActionItems = myActionItem.map {
+                #"[{"id":"action-fixture","text":"\#($0)","citations":[]}]"#
+            } ?? "[]"
+            let extractionWithAction = extraction.replacingOccurrences(
+                of: "\"my_action_items\":[]", with: "\"my_action_items\":\(myActionItems)")
+            try extractionWithAction.write(to: directory.appendingPathComponent("summary-extraction.json"), atomically: true, encoding: .utf8)
+        }
+        if let myActionItem, let savedActionTitle {
+            let workspace = fixtureRoot.appendingPathComponent("workspace")
+            let inbox = try TasksInbox(databaseURL: fixtureRoot.appendingPathComponent("support/operational.sqlite"))
+                .scoped(to: workspace)
+            let proposalID = "meeting-action:ui-fixture:action-fixture"
+            let sourceRef = "[[Meetings/ui-fixture/summary#My action items|ref]]"
+            XCTAssertTrue(try inbox.queueProposal(id: proposalID, title: myActionItem, sourceRef: sourceRef))
+            try inbox.saveProposalDraft(id: proposalID, title: savedActionTitle, comment: "")
         }
         relaunch()
     }

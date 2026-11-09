@@ -28,6 +28,7 @@ final class MeetingManagementView: NSView {
     private let openWorkspaceFile: (String) -> Void
     private let presentConfirmationAlert: (NSAlert) -> NSApplication.ModalResponse
     private var meetingTabNavigationMonitor: Any?
+    private weak var meetingDetailDocumentView: NSView?
     #if DEBUG
     var task05AlertResponse: ((NSAlert) -> NSApplication.ModalResponse)?
     private var task05DeferredRenders: [() -> Void] = []
@@ -205,8 +206,14 @@ final class MeetingManagementView: NSView {
 
     private func navigateMeetingTab(for event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let responderIsInDetail = (window?.firstResponder as? NSView).map { responder in
+            responder === pageSelector || (meetingDetailDocumentView.map { responder.isDescendant(of: $0) } ?? false)
+        } ?? false
         guard featureIsVisible, selectedID != nil, !pageSelector.isHidden, !textEditPanel.isOpen,
-              !(window?.firstResponder is NSTextView), modifiers == [.command, .option],
+              let firstResponder = window?.firstResponder as? NSView,
+              !(firstResponder is NSTextView),
+              responderIsInDetail,
+              modifiers == [.command, .option],
               event.keyCode == 123 || event.keyCode == 124,
               let current = MeetingDetailPage.allCases.firstIndex(of: meetingsModel.detail.page) else { return false }
         let destination = current + (event.keyCode == 123 ? -1 : 1)
@@ -592,6 +599,7 @@ final class MeetingManagementView: NSView {
             container.alignment = .leading
         }
         let stack = MeetingDetailDocumentView(views: [overviewPage, actionItemsPage, openItemsPage, notesPage, timelinePage, status])
+        meetingDetailDocumentView = stack
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = GraphiteFocusPresentation.Space.page
@@ -1302,6 +1310,7 @@ final class MeetingManagementView: NSView {
     @objc private func selectDetailPage(_ sender: NSSegmentedControl) {
         guard MeetingDetailPage.allCases.indices.contains(sender.selectedSegment) else { return }
         selectPage(MeetingDetailPage.allCases[sender.selectedSegment])
+        window?.makeFirstResponder(sender)
     }
 
     @objc private func openActionItems() { selectPage(.actionItems) }
@@ -1676,7 +1685,11 @@ final class MeetingManagementView: NSView {
                             provenance: "Generated from meeting", citations: $0.element.citations)
                 }))
         }
-        renderSummaryOutcomePreviews(detail)
+        let summaryActionItems = detail.myActionItems.map { item in
+            let proposalID = "meeting-action:\(detail.row.id):\(item.id)"
+            return detail.actionDrafts[proposalID]?.title ?? item.text
+        }
+        renderSummaryOutcomePreviews(detail, myActionItems: summaryActionItems)
         let reviewRows = groups.filter { $0.kind.isReviewWorkspace }.flatMap(\.rows)
         actionRows = Dictionary(uniqueKeysWithValues: reviewRows.map { ($0.id, $0) })
         pendingActionIDs = reviewRows.filter(\.isPendingReview).map(\.id)
@@ -1792,7 +1805,7 @@ final class MeetingManagementView: NSView {
         }
     }
 
-    private func renderSummaryOutcomePreviews(_ detail: MeetingBrowserDetail) {
+    private func renderSummaryOutcomePreviews(_ detail: MeetingBrowserDetail, myActionItems: [String]) {
         func populate(_ container: NSStackView, title: String, empty: String, rows: [String]) {
             container.addArrangedSubview(sectionHeading(title))
             let content = rows.isEmpty ? empty : rows.joined(separator: "\n")
@@ -1803,7 +1816,7 @@ final class MeetingManagementView: NSView {
             container.addArrangedSubview(label)
         }
         populate(summaryActionItems, title: "My Action Items", empty: "No personal action items yet.",
-                 rows: detail.myActionItems.map(\.text))
+                 rows: myActionItems)
         populate(summaryOtherItems, title: "People & Other Action Items", empty: "No other action items yet.",
                  rows: detail.otherActionItems.map(\.text))
         for (container, identifier) in [(summaryActionItems, "meeting-open-action-items"),
