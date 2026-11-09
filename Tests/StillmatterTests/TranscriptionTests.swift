@@ -30,6 +30,8 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(persisted.speakerTurns?.map(\.track), [.microphone, .systemAudio, .systemAudio])
         XCTAssertEqual(persisted.speakerTurns?.map(\.clusterID), [8, 3, 1])
         XCTAssertEqual(persisted.speakerTurns?.map(\.startSeconds), [1.0, 1.4, 1.8])
+        XCTAssertEqual(persisted.speakerTurns?.map(\.attributionMethod),
+                       [.localAcousticDiarization, .localAcousticDiarization, .localAcousticDiarization])
         XCTAssertEqual(roundTripDocument.speakerTurns, persisted.speakerTurns)
         XCTAssertTrue((persisted.speakerTurns?[1].endSeconds ?? 0) > (persisted.speakerTurns?[2].startSeconds ?? .infinity),
                       "Overlapping acoustic turns must remain overlapping in the canonical Transcript")
@@ -133,6 +135,20 @@ final class TranscriptionTests: XCTestCase {
             "method": "user-corrected", "source": "transcript-review"
         ])
         XCTAssertEqual(actualTurns, expectedTurns)
+    }
+
+    func testSpeakerTurnsRecordAttributionMethodAndReadEarlierTurnJSON() throws {
+        let encoded = try JSONEncoder().encode(TranscriptSpeakerTurn(
+            startSeconds: 0.2, endSeconds: 1.0, track: .systemAudio, clusterID: 6))
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(value["attribution_method"] as? String, "local-acoustic-diarization")
+        XCTAssertEqual(value["cluster_id"] as? Int, 6)
+        XCTAssertEqual(value["start"] as? Double, 0.2)
+
+        let earlier = Data(#"{"startSeconds":0.2,"endSeconds":1.0,"track":"system-audio","clusterID":6}"#.utf8)
+        let decoded = try JSONDecoder().decode(TranscriptSpeakerTurn.self, from: earlier)
+        XCTAssertEqual(decoded.attributionMethod, .localAcousticDiarization)
+        XCTAssertEqual(decoded.clusterID, 6)
     }
 
     func testDiarizationFailureKeepsAudioAndReusesCompletedTrackCheckpointOnRetry() throws {
@@ -548,6 +564,41 @@ final class TranscriptionTests: XCTestCase {
 
         wait(for: [handedOff, completed], timeout: 2)
         XCTAssertEqual(handedOffPath, "Meetings/2027/01/15/10-00-roadmap/transcript.json")
+    }
+
+    func testJobExecutorSurfacesDiarizationFailureWithoutPublishingTranscript() throws {
+        let fixture = try TranscriptionFixture()
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(),
+            engine: StubTranscriptionEngine(textByTrack: [.microphone: "Me", .systemAudio: "Remote"]),
+            diarizationEngine: StubSpeakerDiarizationEngine(turnsByTrack: [.microphone: [
+                SpeakerDiarizationTurn(startSeconds: 0.2, endSeconds: 0.8, clusterID: 0)
+            ]], failingTracks: [.systemAudio]))
+        let executor = TranscriptionJobExecutor(pipeline: pipeline, onTranscriptGenerated: { _, _ in
+            XCTFail("A failed speaker-attribution stage must not publish a complete Transcript")
+        })
+        let manifest = try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(
+            title: "Roadmap", bundle: fixture.bundle, selection: fixture.selection, language: .english))
+        let job = JobRecord(id: "diarization-failure", manifest: manifest, status: .running, stages: [],
+            createdAt: "2027-01-15T10:00:00Z", updatedAt: "2027-01-15T10:00:00Z", failureDetails: nil)
+        let completed = expectation(description: "attribution stage failed")
+        executor.execute(job: job, stage: manifest.stages[0]) { result in
+            guard case let .failure(error) = result else {
+                XCTFail("A partial diarization run must return a failed Job stage")
+                completed.fulfill()
+                return
+            }
+            XCTAssertTrue(error.localizedDescription.contains("fixture failure for system-audio"))
+            XCTAssertEqual(manifest.stages[0].id, TranscriptionJob.stageID)
+            XCTAssertTrue(manifest.stages[0].title.localizedCaseInsensitiveContains("speaker turns"))
+            completed.fulfill()
+        }
+
+        wait(for: [completed], timeout: 2)
+        let paths = TranscriptionPipeline.artifactPaths(meetingRelativePath: fixture.bundle.meetingRelativePath)
+        for path in [paths.markdown, paths.json, paths.vtt] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceRootURL.appendingPathComponent(path).path))
+        }
     }
 
     func testProductionTranscriptionExecutorQuiescesCancellationBeforePublishing() throws {

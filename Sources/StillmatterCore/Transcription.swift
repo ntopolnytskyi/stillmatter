@@ -126,17 +126,57 @@ public struct TranscriptAudioSource: Codable, Equatable {
     public let selection: String
 }
 
+public enum TranscriptSpeakerAttributionMethod: String, Codable, Equatable {
+    case localAcousticDiarization = "local-acoustic-diarization"
+}
+
 public struct TranscriptSpeakerTurn: Codable, Equatable {
     public let startSeconds: Double
     public let endSeconds: Double
     public let track: TranscriptTrack
     public let clusterID: Int
+    public let attributionMethod: TranscriptSpeakerAttributionMethod
 
-    public init(startSeconds: Double, endSeconds: Double, track: TranscriptTrack, clusterID: Int) {
+    public init(startSeconds: Double, endSeconds: Double, track: TranscriptTrack, clusterID: Int,
+                attributionMethod: TranscriptSpeakerAttributionMethod = .localAcousticDiarization) {
         self.startSeconds = startSeconds
         self.endSeconds = endSeconds
         self.track = track
         self.clusterID = clusterID
+        self.attributionMethod = attributionMethod
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case startSeconds = "start"
+        case endSeconds = "end"
+        case track
+        case clusterID = "cluster_id"
+        case attributionMethod = "attribution_method"
+        case legacyStartSeconds = "startSeconds"
+        case legacyEndSeconds = "endSeconds"
+        case legacyClusterID = "clusterID"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        startSeconds = try container.decodeIfPresent(Double.self, forKey: .startSeconds)
+            ?? container.decode(Double.self, forKey: .legacyStartSeconds)
+        endSeconds = try container.decodeIfPresent(Double.self, forKey: .endSeconds)
+            ?? container.decode(Double.self, forKey: .legacyEndSeconds)
+        track = try container.decode(TranscriptTrack.self, forKey: .track)
+        clusterID = try container.decodeIfPresent(Int.self, forKey: .clusterID)
+            ?? container.decode(Int.self, forKey: .legacyClusterID)
+        attributionMethod = try container.decodeIfPresent(TranscriptSpeakerAttributionMethod.self,
+            forKey: .attributionMethod) ?? .localAcousticDiarization
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(startSeconds, forKey: .startSeconds)
+        try container.encode(endSeconds, forKey: .endSeconds)
+        try container.encode(track, forKey: .track)
+        try container.encode(clusterID, forKey: .clusterID)
+        try container.encode(attributionMethod, forKey: .attributionMethod)
     }
 }
 
