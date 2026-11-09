@@ -20,7 +20,12 @@ enum MeetingTranscriptCodec {
                   document.segments.allSatisfy({ segment in
                       !segment.id.isEmpty && ids.insert(segment.id).inserted && segment.startSeconds.isFinite &&
                       segment.endSeconds.isFinite && segment.startSeconds >= 0 && segment.endSeconds >= segment.startSeconds
-                  }) else { throw MeetingManagementError.malformed("Invalid Transcript version, segment identity or timing in \(path).") }
+                  }),
+                  (document.speakerTurns ?? []).allSatisfy({ turn in
+                      turn.startSeconds.isFinite && turn.endSeconds.isFinite && turn.startSeconds >= 0 &&
+                      turn.endSeconds > turn.startSeconds && turn.clusterID >= 0 &&
+                      document.audioSources.contains(where: { $0.track == turn.track })
+                  }) else { throw MeetingManagementError.malformed("Invalid Transcript version, segment identity, speaker provenance or timing in \(path).") }
             return document
         } catch {
             throw MeetingManagementError.malformed("Could not read Transcript \(path): \(error.localizedDescription) Restore valid JSON or text and Reload Latest.")

@@ -165,7 +165,7 @@ final class ProcessingRuntimeHostedTests: XCTestCase {
             try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data("synthetic readiness fixture; not usable model weights".utf8).write(to: path)
         }
-        try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "variant": "large-v3-turbo",
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 2, "variant": "large-v3-turbo",
             "runtimeVersion": TranscriptionComponentPaths.runtimeVersion, "modelDirectory": "faster-whisper-large-v3-turbo"])
             .write(to: paths.readinessMarkerURL)
         let installed = ProcessingRuntime(applicationSupportURL: support, componentInstaller: installer(),

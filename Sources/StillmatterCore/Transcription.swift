@@ -126,6 +126,20 @@ public struct TranscriptAudioSource: Codable, Equatable {
     public let selection: String
 }
 
+public struct TranscriptSpeakerTurn: Codable, Equatable {
+    public let startSeconds: Double
+    public let endSeconds: Double
+    public let track: TranscriptTrack
+    public let clusterID: Int
+
+    public init(startSeconds: Double, endSeconds: Double, track: TranscriptTrack, clusterID: Int) {
+        self.startSeconds = startSeconds
+        self.endSeconds = endSeconds
+        self.track = track
+        self.clusterID = clusterID
+    }
+}
+
 public struct TranscriptDocument: Codable, Equatable {
     public static let currentSchemaVersion = 1
 
@@ -140,6 +154,26 @@ public struct TranscriptDocument: Codable, Equatable {
     public let audioSources: [TranscriptAudioSource]
     public let segments: [TranscriptSegment]
     public let diagnostics: [String]
+    public let speakerTurns: [TranscriptSpeakerTurn]?
+
+    public init(schemaVersion: Int, captureSessionID: String, meetingRelativePath: String,
+                language: TranscriptLanguage, detectedLanguages: [TranscriptLanguage], engine: String,
+                model: String, generatedAt: Date, audioSources: [TranscriptAudioSource],
+                segments: [TranscriptSegment], diagnostics: [String],
+                speakerTurns: [TranscriptSpeakerTurn]? = nil) {
+        self.schemaVersion = schemaVersion
+        self.captureSessionID = captureSessionID
+        self.meetingRelativePath = meetingRelativePath
+        self.language = language
+        self.detectedLanguages = detectedLanguages
+        self.engine = engine
+        self.model = model
+        self.generatedAt = generatedAt
+        self.audioSources = audioSources
+        self.segments = segments
+        self.diagnostics = diagnostics
+        self.speakerTurns = speakerTurns
+    }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -153,6 +187,7 @@ public struct TranscriptDocument: Codable, Equatable {
         case audioSources = "audio_sources"
         case segments
         case diagnostics
+        case speakerTurns = "speaker_turns"
     }
 }
 
@@ -221,6 +256,30 @@ private struct TranscriptionCheckpointFile: Codable {
     var tracks: [TranscriptionTrackCheckpoint]
 }
 
+private struct DiarizationTrackCheckpoint: Codable {
+    let captureSessionID: String
+    let track: TranscriptTrack
+    let sourcePath: String
+    let sourceSize: Int
+    let sourceModifiedAt: Date?
+    let engine: String
+    let model: String
+    let turns: [SpeakerDiarizationTurn]
+
+    func matches(sessionID: String, source: TranscriptAudioSource, engine: SpeakerDiarizationEngine,
+                 fileManager: FileManager) -> Bool {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: source.filePath) else { return false }
+        return captureSessionID == sessionID && track == source.track && sourcePath == source.filePath
+            && sourceSize == (attributes[.size] as? NSNumber)?.intValue
+            && sourceModifiedAt == attributes[.modificationDate] as? Date
+            && self.engine == engine.engineIdentifier && model == engine.modelIdentifier
+    }
+}
+
+private struct DiarizationCheckpointFile: Codable {
+    var tracks: [DiarizationTrackCheckpoint]
+}
+
 public enum TranscriptionError: Error, Equatable, CustomStringConvertible {
     case invalidSidecar(String)
     case missingAudio(String)
@@ -251,6 +310,7 @@ public final class TranscriptionPipeline {
     private let workspaceRootURL: URL
     private let bundleValidator: RecordingBundleFinalizing
     private let engine: TranscriptionEngine
+    private let diarizationEngine: SpeakerDiarizationEngine?
     private let searchIndex: SearchIndex?
     private let fileManager: FileManager
     private let now: () -> Date
@@ -259,6 +319,7 @@ public final class TranscriptionPipeline {
         workspaceRootURL: URL,
         bundleValidator: RecordingBundleFinalizing,
         engine: TranscriptionEngine,
+        diarizationEngine: SpeakerDiarizationEngine? = nil,
         searchIndex: SearchIndex? = nil,
         fileManager: FileManager = .default,
         now: @escaping () -> Date = Date.init
@@ -266,6 +327,7 @@ public final class TranscriptionPipeline {
         self.workspaceRootURL = workspaceRootURL.standardizedFileURL
         self.bundleValidator = bundleValidator
         self.engine = engine
+        self.diarizationEngine = diarizationEngine
         self.searchIndex = searchIndex
         self.fileManager = fileManager
         self.now = now
@@ -291,6 +353,7 @@ public final class TranscriptionPipeline {
         }
 
         var segments: [TranscriptSegment] = []
+        var speakerTurns: [TranscriptSpeakerTurn] = []
         var diagnostics = selection?.diagnostics ?? []
         var detectedLanguages: [TranscriptLanguage] = []
         let transcriptionLanguage: TranscriptLanguage
@@ -313,6 +376,11 @@ public final class TranscriptionPipeline {
         var checkpointFile = (try? Data(contentsOf: checkpointURL))
             .flatMap { try? JSONDecoder().decode(TranscriptionCheckpointFile.self, from: $0) }
             ?? TranscriptionCheckpointFile(tracks: [])
+        let diarizationCheckpointURL = checkpointURL.deletingLastPathComponent()
+            .appendingPathComponent(".diarization-checkpoints.json")
+        var diarizationCheckpointFile = (try? Data(contentsOf: diarizationCheckpointURL))
+            .flatMap { try? JSONDecoder().decode(DiarizationCheckpointFile.self, from: $0) }
+            ?? DiarizationCheckpointFile(tracks: [])
         let languageStrategy = transcriptionLanguage == .automatic
             && engine is WindowedAutomaticTranscriptLanguageEngine ? "first-15-minute-language-selection-v2" : nil
         for source in sources {
@@ -356,6 +424,43 @@ public final class TranscriptionPipeline {
                 try encoder.encode(checkpointFile).write(to: checkpointURL, options: .atomic)
             }
             try validate(result.segments, expectedTrack: source.track)
+            if let diarizationEngine {
+                let saved = diarizationCheckpointFile.tracks.first {
+                    $0.matches(sessionID: bundle.captureSessionID, source: source,
+                        engine: diarizationEngine, fileManager: fileManager)
+                }
+                let turns: [SpeakerDiarizationTurn]
+                if let saved {
+                    turns = saved.turns
+                } else {
+                    if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
+                    if let cancellation, let cancellable = diarizationEngine as? CancellableSpeakerDiarizationEngine {
+                        turns = try cancellable.diarize(audioURL: URL(fileURLWithPath: source.filePath), cancellation: cancellation)
+                    } else {
+                        turns = try diarizationEngine.diarize(audioURL: URL(fileURLWithPath: source.filePath))
+                    }
+                    guard turns.allSatisfy({ $0.startSeconds.isFinite && $0.endSeconds.isFinite
+                        && $0.startSeconds >= 0 && $0.endSeconds > $0.startSeconds && $0.clusterID >= 0 }) else {
+                        throw SpeakerDiarizationError.invalidOutput("Local speaker diarization returned invalid turn timing or cluster IDs.")
+                    }
+                    let attributes = try fileManager.attributesOfItem(atPath: source.filePath)
+                    let checkpoint = DiarizationTrackCheckpoint(captureSessionID: bundle.captureSessionID,
+                        track: source.track, sourcePath: source.filePath,
+                        sourceSize: (attributes[.size] as? NSNumber)?.intValue ?? 0,
+                        sourceModifiedAt: attributes[.modificationDate] as? Date,
+                        engine: diarizationEngine.engineIdentifier, model: diarizationEngine.modelIdentifier,
+                        turns: turns)
+                    diarizationCheckpointFile.tracks.removeAll { $0.track == source.track }
+                    diarizationCheckpointFile.tracks.append(checkpoint)
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.sortedKeys]
+                    try encoder.encode(diarizationCheckpointFile).write(to: diarizationCheckpointURL, options: .atomic)
+                }
+                speakerTurns.append(contentsOf: turns.map {
+                    TranscriptSpeakerTurn(startSeconds: $0.startSeconds, endSeconds: $0.endSeconds,
+                        track: source.track, clusterID: $0.clusterID)
+                })
+            }
             segments.append(contentsOf: result.segments)
             diagnostics.append(contentsOf: result.diagnostics.map { "\(source.track.rawValue): \($0)" })
             let segmentLanguages = result.segments.map(\.language).filter { $0 != .automatic }
@@ -391,7 +496,11 @@ public final class TranscriptionPipeline {
             generatedAt: generatedAt,
             audioSources: sources,
             segments: ordered,
-            diagnostics: diagnostics
+            diagnostics: diagnostics,
+            speakerTurns: speakerTurns.isEmpty && diarizationEngine == nil ? nil : speakerTurns.sorted {
+                if $0.startSeconds == $1.startSeconds { return $0.track.rawValue < $1.track.rawValue }
+                return $0.startSeconds < $1.startSeconds
+            }
         )
         let paths = Self.artifactPaths(meetingRelativePath: bundle.meetingRelativePath)
         let encoder = JSONEncoder()
@@ -628,7 +737,8 @@ public enum TranscriptionJob {
             type: type,
             title: "Transcribe \(title)",
             executionClass: .heavy,
-            stages: [JobStageDefinition(id: stageID, title: "Transcribe English/Ukrainian audio and index timestamped chunks")],
+            stages: [JobStageDefinition(id: stageID,
+                title: "Transcribe audio, identify anonymous speaker turns, and index timestamped chunks")],
             sourceArtifacts: sourceArtifacts,
             expectedOutputs: [
                 GeneratedArtifactExpectation(

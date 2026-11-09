@@ -271,14 +271,76 @@ final class FasterWhisperRuntimeTests: XCTestCase {
 
     func testModelChoicesUsePinnedFasterWhisperRepositoriesAndRuntime() {
         XCTAssertEqual(FasterWhisperModelAcquirer.packageVersion, "1.2.1")
-        XCTAssertEqual(TranscriptionComponentPaths.runtimeVersion, "faster-whisper-1.2.1")
+        XCTAssertEqual(TranscriptionComponentPaths.runtimeVersion, "faster-whisper-1.2.1+sherpa-onnx-2.0.1")
+        XCTAssertEqual(SpeakerDiarizationModelManifest.runtimeVersion, "sherpa-onnx-2.0.1")
+        XCTAssertEqual(SpeakerDiarizationModelManifest.downloadBytes, 47_215_727)
+        XCTAssertEqual(SpeakerDiarizationModelManifest.segmentationArchiveSHA256,
+                       "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488")
+        XCTAssertEqual(SpeakerDiarizationModelManifest.embeddingModelSHA256,
+                       "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e")
         XCTAssertEqual(TranscriptionModelChoice.recommended.repository, "dropbox-dash/faster-whisper-large-v3-turbo")
         XCTAssertEqual(TranscriptionModelChoice.full.repository, "Systran/faster-whisper-large-v3")
     }
 
+    func testAcquirerInstallsPinnedSpeakerPackagesAndBothHashCheckedModelAssets() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("StillmatterSpeakerAcquirer-\(UUID().uuidString)")
+        let python = root.appendingPathComponent("fake-python3")
+        let stage = root.appendingPathComponent("stage")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fakeRuntime = #"""
+        #!/bin/sh
+        if [ "$1" = "-c" ]; then printf '3.12'; exit 0; fi
+        if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
+          mkdir -p "$3/bin"
+          cp "$0" "$3/bin/python3"
+          chmod +x "$3/bin/python3"
+          exit 0
+        fi
+        case "$1" in
+          */setup_speakers.py)
+            mkdir -p "$6" "$7"
+            printf 'segmentation' > "$6/model.onnx"
+            printf 'license' > "$6/LICENSE"
+            printf 'embedding' > "$7/titanet-small.onnx"
+            ;;
+          */setup.py)
+            mkdir -p "$4"
+            printf '{}' > "$4/config.json"
+            printf 'weights' > "$4/model.bin"
+            printf 'tokens' > "$4/tokenizer.json"
+            ;;
+        esac
+        exit 0
+        """#
+        try fakeRuntime.write(to: python, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
+        let acquiring = FasterWhisperModelAcquirer(
+            fileManager: .default,
+            environment: ["STILLMATTER_PYTHON": python.path]
+        )
+        var updates: [TranscriptionInstallProgress] = []
+
+        let component = try acquiring.acquireModel(.recommended, in: stage,
+            cancellation: TranscriptionInstallCancellation(), progress: { updates.append($0) })
+
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: component.appendingPathComponent("runtime/bin/python3").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: component.appendingPathComponent("speaker-segmentation/model.onnx").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: component.appendingPathComponent("speaker-segmentation/LICENSE").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: component.appendingPathComponent("speaker-embedding/titanet-small.onnx").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: component.appendingPathComponent("diarize.py").path))
+        XCTAssertTrue(updates.contains { $0.phase.contains("speaker models") })
+        XCTAssertEqual(updates.last?.completedBytes, TranscriptionModelChoice.recommended.downloadBytes)
+    }
+
     func testInstallerConstrainsPyAVAndChecksAudioDecodeBeforePromotingModel() {
         XCTAssertEqual(FasterWhisperModelAcquirer.pythonPackageRequirements,
-                       ["faster-whisper==1.2.1", "av>=11,<19"])
+                       ["faster-whisper==1.2.1", "av>=11,<19", "sherpa-onnx==2.0.1", "sherpa-onnx-bin==2.0.1"])
+        XCTAssertTrue(FasterWhisperModelAcquirer.speakerModelSetupScript.contains("hashlib.sha256"))
+        XCTAssertTrue(FasterWhisperModelAcquirer.speakerModelSetupScript.contains("getmember(name)"))
+        XCTAssertTrue(FasterWhisperModelAcquirer.diarizationScript.contains("OfflineSpeakerDiarizationConfig"))
+        XCTAssertTrue(FasterWhisperModelAcquirer.diarizationScript.contains("provider=\"cpu\""))
+        XCTAssertTrue(FasterWhisperModelAcquirer.diarizationScript.contains("np.asarray(wave, dtype=np.float32)"))
         let check = FasterWhisperModelAcquirer.transcriptionScript
         XCTAssertTrue(check.contains("decode_audio(sample.name)"),
                       "A model-only check accepts runtimes that cannot decode recordings")

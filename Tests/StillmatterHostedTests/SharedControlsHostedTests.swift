@@ -5,6 +5,23 @@ import StillmatterCore
 
 final class SharedControlsHostedTests: XCTestCase {
     @MainActor
+    func testLocalMeetingModelRowExplainsSpeakerModelInstallAndReadyState() throws {
+        let fixture = try ControlsHostedFixture()
+        defer { fixture.cleanup() }
+        let settings = fixture.settings()
+
+        let title: NSTextField = try control("settings-diagnostic-title-localTranscription", in: settings)
+        let status: GraphiteFocusStatusLabel = try control("settings-status-localTranscription", in: settings)
+        let detail: NSTextField = try control("settings-detail-localTranscription", in: settings)
+        let install: NSButton = try control("settings-diagnostic-localTranscription", in: settings)
+        XCTAssertEqual(title.stringValue, "Local transcription and speaker turns")
+        XCTAssertEqual(status.statusText, "Missing")
+        XCTAssertTrue(detail.stringValue.contains("speaker models"))
+        XCTAssertTrue(detail.stringValue.contains("speaker attribution"))
+        XCTAssertEqual(install.title, "Install")
+    }
+
+    @MainActor
     func testSystemTeamsPermissionAdapterCanReadStatusWithoutOpeningPrompt() throws {
         let fixture = try ControlsHostedFixture()
         defer { fixture.cleanup() }

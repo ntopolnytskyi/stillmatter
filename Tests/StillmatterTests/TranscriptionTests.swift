@@ -4,6 +4,97 @@ import XCTest
 @testable import StillmatterCore
 
 final class TranscriptionTests: XCTestCase {
+    func testDiarizationTurnsRetainTrackTimingOverlapAndAnonymousClustersInTranscriptJSON() throws {
+        let fixture = try TranscriptionFixture()
+        let diarizer = StubSpeakerDiarizationEngine(turnsByTrack: [
+            .microphone: [SpeakerDiarizationTurn(startSeconds: 1.0, endSeconds: 2.0, clusterID: 8)],
+            .systemAudio: [
+                SpeakerDiarizationTurn(startSeconds: 1.4, endSeconds: 2.2, clusterID: 3),
+                SpeakerDiarizationTurn(startSeconds: 1.8, endSeconds: 2.5, clusterID: 1)
+            ]
+        ])
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(),
+            engine: StubTranscriptionEngine(textByTrack: [.microphone: "Mic", .systemAudio: "Remote"]),
+            diarizationEngine: diarizer)
+
+        let result = try pipeline.generate(from: fixture.makeBundle(system: fixture.bundle.system), selection: nil, language: .english)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let persisted = try decoder.decode(TranscriptDocument.self, from: result.json)
+        let plainText = try MeetingTranscriptCodec.text(result.json)
+        let roundTrip = try MeetingTranscriptCodec.json(plainText, path: "Meetings/fixture/transcript.txt")
+        let roundTripDocument = try MeetingTranscriptCodec.document(roundTrip, path: "Meetings/fixture/transcript.json")
+
+        XCTAssertEqual(diarizer.audioTracks, [.microphone, .systemAudio])
+        XCTAssertEqual(persisted.speakerTurns?.map(\.track), [.microphone, .systemAudio, .systemAudio])
+        XCTAssertEqual(persisted.speakerTurns?.map(\.clusterID), [8, 3, 1])
+        XCTAssertEqual(persisted.speakerTurns?.map(\.startSeconds), [1.0, 1.4, 1.8])
+        XCTAssertEqual(roundTripDocument.speakerTurns, persisted.speakerTurns)
+        XCTAssertTrue((persisted.speakerTurns?[1].endSeconds ?? 0) > (persisted.speakerTurns?[2].startSeconds ?? .infinity),
+                      "Overlapping acoustic turns must remain overlapping in the canonical Transcript")
+        XCTAssertTrue(persisted.segments.allSatisfy { $0.speaker == $0.track.speakerLabel },
+                      "Anonymous cluster ordinals must not be presented as known Person identities")
+    }
+
+    func testDiarizerLabelReorderingDoesNotChangeTranscriptIdentityLabels() throws {
+        func transcript(clusterIDs: [Int]) throws -> TranscriptDocument {
+            let fixture = try TranscriptionFixture()
+            let diarizer = StubSpeakerDiarizationEngine(turnsByTrack: [
+                .microphone: [SpeakerDiarizationTurn(startSeconds: 0.2, endSeconds: 0.8, clusterID: clusterIDs[0])],
+                .systemAudio: [
+                    SpeakerDiarizationTurn(startSeconds: 1.0, endSeconds: 1.7, clusterID: clusterIDs[1]),
+                    SpeakerDiarizationTurn(startSeconds: 2.0, endSeconds: 2.8, clusterID: clusterIDs[2])
+                ]
+            ])
+            let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+                bundleValidator: AcceptingBundleValidator(),
+                engine: StubTranscriptionEngine(textByTrack: [.microphone: "Me", .systemAudio: "One, then two"]),
+                diarizationEngine: diarizer)
+            return try pipeline.generate(from: fixture.makeBundle(system: fixture.bundle.system), selection: nil,
+                language: .english).document
+        }
+
+        let first = try transcript(clusterIDs: [0, 0, 1])
+        let reordered = try transcript(clusterIDs: [0, 1, 0])
+
+        XCTAssertEqual(first.segments.map(\.speaker), reordered.segments.map(\.speaker))
+        XCTAssertEqual(first.segments.map(\.speaker), ["Me", "Meeting audio"])
+        XCTAssertEqual(first.speakerTurns?.map(\.clusterID), [0, 0, 1])
+        XCTAssertEqual(reordered.speakerTurns?.map(\.clusterID), [0, 1, 0])
+        XCTAssertFalse(first.segments.contains { $0.speaker.contains("0") || $0.speaker.contains("1") })
+    }
+
+    func testDiarizationFailureKeepsAudioAndReusesCompletedTrackCheckpointOnRetry() throws {
+        let fixture = try TranscriptionFixture()
+        let bundle = fixture.makeBundle(system: fixture.bundle.system)
+        let meetingFolder = fixture.workspaceRootURL.appendingPathComponent(bundle.meetingRelativePath).deletingLastPathComponent()
+        let transcriptURL = meetingFolder.appendingPathComponent("transcript.json")
+        let failingDiarizer = StubSpeakerDiarizationEngine(turnsByTrack: [.microphone: [
+            SpeakerDiarizationTurn(startSeconds: 0.1, endSeconds: 0.8, clusterID: 0)
+        ]], failingTracks: [.systemAudio])
+        let transcriber = StubTranscriptionEngine(textByTrack: [.microphone: "Mic", .systemAudio: "Remote"])
+        let firstAttempt = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: transcriber, diarizationEngine: failingDiarizer)
+
+        XCTAssertThrowsError(try firstAttempt.generate(from: bundle, selection: nil, language: .english))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path),
+                       "A partial attribution run must not publish a completed Transcript")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.microphoneURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.systemAudioURL.path))
+
+        let retryDiarizer = StubSpeakerDiarizationEngine(turnsByTrack: [.systemAudio: [
+            SpeakerDiarizationTurn(startSeconds: 0.3, endSeconds: 1.0, clusterID: 2)
+        ]])
+        let retry = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: transcriber, diarizationEngine: retryDiarizer)
+        let result = try retry.generate(from: bundle, selection: nil, language: .english)
+
+        XCTAssertEqual(retryDiarizer.audioTracks, [.systemAudio], "The successful microphone attribution checkpoint should be reused")
+        XCTAssertEqual(result.document.speakerTurns?.map(\.track), [.microphone, .systemAudio])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: transcriptURL.path))
+    }
+
     func testAutomaticLanguageIsPersistedAsAJobSetting() throws {
         XCTAssertEqual(TranscriptLanguage.automatic.rawValue, "auto")
         XCTAssertEqual(TranscriptLanguage.automatic.displayName, "Auto")
@@ -338,6 +429,7 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(manifest.type, "meeting.transcription")
         XCTAssertEqual(manifest.executionClass, .heavy)
         XCTAssertEqual(manifest.stages.map(\.id), ["transcribe"])
+        XCTAssertTrue(manifest.stages[0].title.localizedCaseInsensitiveContains("speaker turns"))
         XCTAssertEqual(manifest.metadata["language"], "uk")
         XCTAssertEqual(Set(manifest.expectedOutputs.map(\.validatorID)), ["markdown", "json", "webvtt"])
         XCTAssertEqual(manifest.maxAutomaticRetries, 1)
@@ -557,6 +649,26 @@ private final class StubTranscriptionEngine: TranscriptionEngine {
             detectedLanguage: language,
             diagnostics: ["fixture transcript"]
         )
+    }
+}
+
+private final class StubSpeakerDiarizationEngine: SpeakerDiarizationEngine {
+    let engineIdentifier = "test-sherpa-onnx"
+    let modelIdentifier = "test-pyannote+titanet"
+    let turnsByTrack: [TranscriptTrack: [SpeakerDiarizationTurn]]
+    let failingTracks: Set<TranscriptTrack>
+    private(set) var audioTracks: [TranscriptTrack] = []
+
+    init(turnsByTrack: [TranscriptTrack: [SpeakerDiarizationTurn]], failingTracks: Set<TranscriptTrack> = []) {
+        self.turnsByTrack = turnsByTrack
+        self.failingTracks = failingTracks
+    }
+
+    func diarize(audioURL: URL) throws -> [SpeakerDiarizationTurn] {
+        let track: TranscriptTrack = audioURL.lastPathComponent == "mic.m4a" ? .microphone : .systemAudio
+        audioTracks.append(track)
+        if failingTracks.contains(track) { throw SpeakerDiarizationError.invalidOutput("fixture failure for \(track.rawValue)") }
+        return turnsByTrack[track] ?? []
     }
 }
 

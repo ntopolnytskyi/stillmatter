@@ -30,8 +30,8 @@ public enum TranscriptionModelChoice: String, Codable, CaseIterable {
 
     public var downloadBytes: Int64 {
         switch self {
-        case .recommended: return 1_620_000_000
-        case .full: return 3_100_000_000
+        case .recommended: return 1_620_000_000 + SpeakerDiarizationModelManifest.downloadBytes
+        case .full: return 3_100_000_000 + SpeakerDiarizationModelManifest.downloadBytes
         }
     }
 
@@ -51,7 +51,7 @@ public struct TranscriptionModelCompatibility {
 }
 
 public struct TranscriptionComponentPaths {
-    public static let runtimeVersion = "faster-whisper-1.2.1"
+    public static let runtimeVersion = "faster-whisper-1.2.1+\(SpeakerDiarizationModelManifest.runtimeVersion)"
 
     public let applicationSupportURL: URL
 
@@ -159,9 +159,9 @@ public enum TranscriptionComponentInstallError: LocalizedError, Equatable {
         case .cancelled:
             return "Setup was cancelled. Temporary download files were removed; choose Retry when ready."
         case let .incompleteModel(path):
-            return "The downloaded model is incomplete or invalid (missing \(path))."
+            return "The downloaded local meeting models are incomplete or invalid (missing \(path))."
         case let .insufficientDiskSpace(required, available):
-            return "Local transcription needs at least \(Self.gigabytes(required)) GB free during setup; only \(Self.gigabytes(available)) GB is available."
+            return "Local meeting models need at least \(Self.gigabytes(required)) GB free during setup; only \(Self.gigabytes(available)) GB is available."
         }
     }
 
@@ -193,9 +193,13 @@ public final class TranscriptionComponentInstaller {
     public static let requiredModelEntries = [
         "runtime/bin/python3",
         "transcribe.py",
+        "diarize.py",
         "model/config.json",
         "model/model.bin",
-        "model/tokenizer.json"
+        "model/tokenizer.json",
+        "speaker-segmentation/model.onnx",
+        "speaker-segmentation/LICENSE",
+        "speaker-embedding/titanet-small.onnx"
     ]
 
     public let paths: TranscriptionComponentPaths
@@ -278,7 +282,7 @@ public final class TranscriptionComponentInstaller {
 
     public func installedModelChoice() -> TranscriptionModelChoice? {
         guard let marker = try? readMarker(),
-              marker.schemaVersion == 1,
+              marker.schemaVersion == 2,
               let choice = TranscriptionModelChoice.allCases.first(where: { $0.variant == marker.variant }),
               marker.runtimeVersion == TranscriptionComponentPaths.runtimeVersion,
               marker.modelDirectory == choice.modelDirectoryName,
@@ -343,7 +347,7 @@ public final class TranscriptionComponentInstaller {
         do {
             try fileManager.moveItem(at: candidateVersionURL, to: installedVersionURL)
             let marker = Marker(
-                schemaVersion: 1,
+                schemaVersion: 2,
                 variant: model.variant,
                 runtimeVersion: TranscriptionComponentPaths.runtimeVersion,
                 modelDirectory: model.modelDirectoryName
@@ -367,7 +371,7 @@ public final class TranscriptionComponentInstaller {
         }
         do {
             let marker = try readMarker()
-            guard marker.schemaVersion == 1,
+            guard marker.schemaVersion == 2,
                   let choice = TranscriptionModelChoice.allCases.first(where: { $0.variant == marker.variant }),
                   marker.runtimeVersion == TranscriptionComponentPaths.runtimeVersion,
                   marker.modelDirectory == choice.modelDirectoryName else {
@@ -447,11 +451,11 @@ public struct TranscriptionComponentDiagnostic {
         switch state {
         case .notInstalled:
             status = .missing
-            explanation = "Install \(selectedModel.displayName) for local English and Ukrainian transcription. No Homebrew or Terminal is required."
+            explanation = "Install \(selectedModel.displayName) and the local speaker models for English/Ukrainian transcription and speaker turns. No Homebrew or Terminal is required."
             action = "Install"
         case .partial:
             status = .missing
-            explanation = "Local transcription setup is incomplete. Repair downloads into temporary storage and only activates a fully validated model."
+            explanation = "Local transcription and speaker model setup is incomplete. Repair downloads into temporary storage and only activates fully validated models."
             action = "Repair"
         case let .installing(progress):
             status = .unknown
@@ -473,7 +477,7 @@ public struct TranscriptionComponentDiagnostic {
                 explanation = "\(installedModel.displayName) remains ready at \(url.path). Install the selected \(selectedModel.displayName) to switch after validation."
                 action = "Install Selected"
             } else {
-                explanation = "Local English and Ukrainian transcription is ready at \(url.path)."
+                explanation = "Local transcription and anonymous speaker-turn models are ready at \(url.path)."
                 action = nil
             }
         case let .failed(message):
@@ -488,10 +492,10 @@ public struct TranscriptionComponentDiagnostic {
         }
         return DiagnosticItem(
             id: "localTranscription",
-            title: "Local transcription",
+            title: "Local transcription and speaker turns",
             status: status,
             explanation: explanation,
-            affectedFeatures: installedModel != nil || status == .granted ? [] : ["local meeting transcription"],
+            affectedFeatures: installedModel != nil || status == .granted ? [] : ["local meeting transcription", "speaker attribution"],
             actionTitle: action
         )
     }

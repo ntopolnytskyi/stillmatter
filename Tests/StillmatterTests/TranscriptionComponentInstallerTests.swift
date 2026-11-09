@@ -211,7 +211,9 @@ final class TranscriptionComponentInstallerTests: XCTestCase {
         let missing = TranscriptionComponentDiagnostic.item(for: .notInstalled)
         XCTAssertEqual(missing.status, .missing)
         XCTAssertEqual(missing.actionTitle, "Install")
-        XCTAssertEqual(missing.affectedFeatures, ["local meeting transcription"])
+        XCTAssertEqual(missing.title, "Local transcription and speaker turns")
+        XCTAssertEqual(missing.affectedFeatures, ["local meeting transcription", "speaker attribution"])
+        XCTAssertTrue(missing.explanation.contains("speaker models"))
 
         let installing = TranscriptionComponentDiagnostic.item(for: .installing(
             TranscriptionInstallProgress(phase: "Downloading…", completedBytes: 50, totalBytes: 100)
@@ -227,6 +229,7 @@ final class TranscriptionComponentInstallerTests: XCTestCase {
         XCTAssertEqual(ready.status, .granted)
         XCTAssertNil(ready.actionTitle)
         XCTAssertTrue(ready.affectedFeatures.isEmpty)
+        XCTAssertTrue(ready.explanation.contains("anonymous speaker-turn models"))
 
         let switching = TranscriptionComponentDiagnostic.item(
             for: .ready(URL(fileURLWithPath: "/recommended")),

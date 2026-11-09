@@ -131,7 +131,7 @@ final class PermissionDiagnosticsProvider {
                     return
                 }
                 transcriptionComponentInstaller.install(model: model)
-                completion("Local transcription setup started. You can keep using Stillmatter while the model downloads.")
+                completion("Local transcription and speaker model setup started. You can keep using Stillmatter while the models download.")
             }
         case "pi":
             DispatchQueue.global(qos: .userInitiated).async { [piIntegration] in

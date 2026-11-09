@@ -120,7 +120,10 @@ final class ProcessingRuntime {
         } else {
             return UnavailableJobHandler(guidance: "Install the local transcription model in Settings, then Retry. The recording is retained.")
         }
+        let diarizationComponent = componentInstaller.installedModelURL() ?? componentInstaller.paths.modelURL
+        let diarization = SherpaOnnxSpeakerDiarizationEngine(componentURL: diarizationComponent)
         return TranscriptionJobExecutor(pipeline: TranscriptionPipeline(workspaceRootURL: root,
-            bundleValidator: RecordingBundleFinalizer(), engine: engine, searchIndex: index))
+            bundleValidator: RecordingBundleFinalizer(), engine: engine,
+            diarizationEngine: diarization, searchIndex: index))
     }
 }

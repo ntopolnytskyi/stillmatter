@@ -200,7 +200,7 @@ final class SettingsFormView: NSView {
         stack.addArrangedSubview(diagnosticsRow(id: "launchAtLogin", title: "Launch at login", buttonTitle: nil))
         stack.addArrangedSubview(diagnosticsRow(id: "pi", title: "Pi CLI detection", buttonTitle: "Test Pi"))
         stack.addArrangedSubview(transcriptionModelRow())
-        stack.addArrangedSubview(diagnosticsRow(id: "localTranscription", title: "Local transcription", buttonTitle: "Install"))
+        stack.addArrangedSubview(diagnosticsRow(id: "localTranscription", title: "Local transcription and speaker turns", buttonTitle: "Install"))
 
         stack.arrangedSubviews.forEach { arrangedSubview in
             arrangedSubview.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -260,6 +260,7 @@ final class SettingsFormView: NSView {
 
     private func diagnosticsRow(id: String, title: String, buttonTitle: String?) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.setAccessibilityIdentifier("settings-diagnostic-title-\(id)")
         titleLabel.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
         let statusLabel = GraphiteFocusStatusLabel()
@@ -268,6 +269,7 @@ final class SettingsFormView: NSView {
         statusLabel.widthAnchor.constraint(equalToConstant: 130).isActive = true
 
         let detailLabel = NSTextField(wrappingLabelWithString: "")
+        detailLabel.setAccessibilityIdentifier("settings-detail-\(id)")
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

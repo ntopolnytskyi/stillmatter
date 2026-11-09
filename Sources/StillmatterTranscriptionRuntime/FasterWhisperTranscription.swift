@@ -178,9 +178,30 @@ public final class FasterWhisperModelAcquirer: TranscriptionModelAcquiring {
             cancellation: cancellation
         )
 
+        let diarizationRoot = componentURL.appendingPathComponent("speaker-segmentation", isDirectory: true)
+        let embeddingRoot = componentURL.appendingPathComponent("speaker-embedding", isDirectory: true)
+        try fileManager.createDirectory(at: diarizationRoot, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: embeddingRoot, withIntermediateDirectories: true)
+        let speakerSetupURL = componentURL.appendingPathComponent("setup_speakers.py")
+        try Self.speakerModelSetupScript.data(using: .utf8)!.write(to: speakerSetupURL, options: .atomic)
+        progress(.init(phase: "Downloading local speaker models…", completedBytes: 0, totalBytes: nil))
+        _ = try runner.run(executable: runtimePython,
+            arguments: [speakerSetupURL.path,
+                SpeakerDiarizationModelManifest.segmentationModelURL,
+                SpeakerDiarizationModelManifest.segmentationArchiveSHA256,
+                SpeakerDiarizationModelManifest.embeddingModelURL,
+                SpeakerDiarizationModelManifest.embeddingModelSHA256,
+                diarizationRoot.path, embeddingRoot.path],
+            cancellation: cancellation)
+        progress(.init(phase: "Speaker models downloaded…",
+            completedBytes: SpeakerDiarizationModelManifest.downloadBytes,
+            totalBytes: model.downloadBytes))
+        try? fileManager.removeItem(at: speakerSetupURL)
+
         let setupScriptURL = componentURL.appendingPathComponent("setup.py")
         try Self.setupScript.data(using: .utf8)!.write(to: setupScriptURL, options: .atomic)
-        progress(.init(phase: "Downloading \(model.displayName)…", completedBytes: 0, totalBytes: model.downloadBytes))
+        progress(.init(phase: "Downloading \(model.displayName)…",
+            completedBytes: SpeakerDiarizationModelManifest.downloadBytes, totalBytes: model.downloadBytes))
         _ = try runner.run(
             executable: runtimePython,
             arguments: [setupScriptURL.path, model.repository, model.revision, modelURL.path],
@@ -192,6 +213,8 @@ public final class FasterWhisperModelAcquirer: TranscriptionModelAcquiring {
 
         let transcriptionScriptURL = componentURL.appendingPathComponent("transcribe.py")
         try Self.transcriptionScript.data(using: .utf8)!.write(to: transcriptionScriptURL, options: .atomic)
+        let diarizationScriptURL = componentURL.appendingPathComponent("diarize.py")
+        try Self.diarizationScript.data(using: .utf8)!.write(to: diarizationScriptURL, options: .atomic)
         progress(.init(phase: "Checking faster-whisper model…", completedBytes: model.downloadBytes, totalBytes: model.downloadBytes))
         _ = try runner.run(
             executable: runtimePython,
@@ -199,6 +222,14 @@ public final class FasterWhisperModelAcquirer: TranscriptionModelAcquiring {
             cancellation: cancellation,
             environment: pythonEnvironment(cacheURL: componentURL.appendingPathComponent("cache", isDirectory: true))
         )
+        progress(.init(phase: "Checking local speaker models…", completedBytes: model.downloadBytes, totalBytes: model.downloadBytes))
+        _ = try runner.run(executable: runtimePython,
+            arguments: [diarizationScriptURL.path, "--check",
+                componentURL.appendingPathComponent("speaker-segmentation/model.onnx").path,
+                componentURL.appendingPathComponent("speaker-embedding/titanet-small.onnx").path],
+            cancellation: cancellation)
+        progress(.init(phase: "Local meeting models downloaded…",
+            completedBytes: model.downloadBytes, totalBytes: model.downloadBytes))
         return componentURL
     }
 
@@ -239,7 +270,10 @@ public final class FasterWhisperModelAcquirer: TranscriptionModelAcquiring {
     }
 
     // faster-whisper 1.2.1 passes metadata_errors to av.open; PyAV 19 removed it.
-    public static let pythonPackageRequirements = ["faster-whisper==\(packageVersion)", "av>=11,<19"]
+    public static let pythonPackageRequirements = [
+        "faster-whisper==\(packageVersion)", "av>=11,<19",
+        "sherpa-onnx==2.0.1", "sherpa-onnx-bin==2.0.1"
+    ]
 
     private static let setupScript = #"""
 import sys
@@ -360,6 +394,111 @@ else:
     }
 with open(output_path, "w", encoding="utf-8") as output:
     json.dump(result, output, ensure_ascii=False)
+"""#
+
+    public static let speakerModelSetupScript = #"""
+import hashlib
+import pathlib
+import sys
+import tarfile
+import urllib.request
+
+def fetch(url, destination, expected_hash):
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(url, timeout=60) as response, open(destination, "wb") as output:
+        while True:
+            block = response.read(1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+            output.write(block)
+    if digest.hexdigest() != expected_hash:
+        pathlib.Path(destination).unlink(missing_ok=True)
+        raise RuntimeError("Downloaded speaker model hash does not match its pinned value")
+
+def extract_regular_member(archive, name, destination):
+    with tarfile.open(archive, "r:bz2") as source:
+        member = source.getmember(name)
+        if not member.isfile():
+            raise RuntimeError("Speaker model archive contains an unexpected file type")
+        stream = source.extractfile(member)
+        if stream is None:
+            raise RuntimeError("Speaker model archive is missing a required file")
+        with stream, open(destination, "wb") as output:
+            while True:
+                block = stream.read(1024 * 1024)
+                if not block:
+                    break
+                output.write(block)
+
+def main():
+    segmentation_url, segmentation_hash, embedding_url, embedding_hash, segmentation_path, embedding_path = sys.argv[1:]
+    segmentation_dir = pathlib.Path(segmentation_path)
+    embedding_dir = pathlib.Path(embedding_path)
+    archive = segmentation_dir.parent / "segmentation.tar.bz2"
+    fetch(segmentation_url, archive, segmentation_hash)
+    try:
+        root = "sherpa-onnx-pyannote-segmentation-3-0/"
+        extract_regular_member(archive, root + "model.onnx", segmentation_dir / "model.onnx")
+        extract_regular_member(archive, root + "LICENSE", segmentation_dir / "LICENSE")
+    finally:
+        archive.unlink(missing_ok=True)
+    fetch(embedding_url, embedding_dir / "titanet-small.onnx", embedding_hash)
+
+if __name__ == "__main__":
+    main()
+"""#
+
+    public static let diarizationScript = #"""
+import json
+import pathlib
+import sys
+
+if sys.argv[1] == "--check":
+    import importlib.metadata
+    import numpy as np
+    import sherpa_onnx
+    for path in sys.argv[2:]:
+        if not pathlib.Path(path).is_file():
+            raise RuntimeError("Required local speaker model is missing: " + path)
+    segmentation_path, embedding_path = sys.argv[2:4]
+    config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+        segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+            pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=segmentation_path),
+            num_threads=2, provider="cpu"),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+            model=embedding_path, num_threads=2, provider="cpu"),
+        clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=0.5),
+        min_duration_on=0.3, min_duration_off=0.5)
+    if not config.validate():
+        raise RuntimeError("Local speaker model configuration is invalid")
+    diarizer = sherpa_onnx.OfflineSpeakerDiarization(config)
+    diarizer.process(np.zeros(80000, dtype=np.float32)).sort_by_start_time()
+    print(importlib.metadata.version("sherpa-onnx"))
+    raise SystemExit(0)
+
+import numpy as np
+import sherpa_onnx
+from faster_whisper.audio import decode_audio
+
+segmentation_path, embedding_path, audio_path, output_path = sys.argv[1:5]
+wave = decode_audio(audio_path, sampling_rate=16000)
+config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+    segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+        pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=segmentation_path),
+        num_threads=2, provider="cpu"),
+    embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+        model=embedding_path, num_threads=2, provider="cpu"),
+    clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=0.5),
+    min_duration_on=0.3, min_duration_off=0.5)
+if not config.validate():
+    raise RuntimeError("Local speaker model configuration is invalid")
+model = sherpa_onnx.OfflineSpeakerDiarization(config)
+segments = model.process(np.asarray(wave, dtype=np.float32)).sort_by_start_time()
+result = {"duration_seconds": len(wave) / 16000,
+          "segments": [{"start": float(row.start), "end": float(row.end), "speaker": int(row.speaker)}
+                       for row in segments]}
+pathlib.Path(output_path).write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
 """#
 }
 
