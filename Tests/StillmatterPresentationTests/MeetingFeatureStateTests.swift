@@ -597,6 +597,9 @@ final class MeetingFeatureStateTests: XCTestCase {
         let transport = FakePlaybackTransport()
         let readModel = makeReadModel("workspace", source: source, executor: executor)
         let detailModel = MeetingDetailModel()
+        XCTAssertEqual(detailModel.page, .summary, "A completed Meeting opens its Summary tab")
+        XCTAssertEqual(MeetingDetailPage.allCases.map(\.rawValue),
+                       ["Summary", "Action Items", "Open Items", "My Notes", "Transcript"])
         detailModel.bind(readModel: readModel, mutationExecutor: nil, playbackTransport: transport)
         readModel.readBrowser(filters: MeetingBrowserFilters()) { _ in }
         await drain(executor)
@@ -608,11 +611,12 @@ final class MeetingFeatureStateTests: XCTestCase {
         detailModel.refreshSelectedDetail()
         await drain(executor)
         XCTAssertEqual(detailModel.page, .transcript)
-        detailModel.setPage(.overview)
+        detailModel.setPage(.summary)
         XCTAssertEqual(transport.stopCount, 0)
         XCTAssertEqual(transport.playerGeneration, 1, "Unchanged detail must not recreate the player")
 
         detailModel.select(MeetingReference(row: rowB))
+        XCTAssertEqual(detailModel.page, .summary, "Changing Meetings returns to Summary")
         XCTAssertEqual(transport.stopCount, 1)
         await drain(executor)
         XCTAssertEqual(detailModel.playbackState.source?.message, "No recording")

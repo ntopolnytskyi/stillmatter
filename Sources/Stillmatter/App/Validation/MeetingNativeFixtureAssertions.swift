@@ -88,11 +88,11 @@ extension MeetingManagementView {
         precondition(MeetingTimelineSelection.visible(moments, included: kinds, position: 0, query: "no match").isEmpty,
                      "Missing search terms must produce an empty result")
         openTimeline()
-        precondition(!caption.isHidden && !pinnedAudio.isHidden && pageSelector.selectedSegment == 1 && overviewPage.isHidden && !timelinePage.isHidden,
+        precondition(!caption.isHidden && !pinnedAudio.isHidden && pageSelector.selectedSegment == 4 && overviewPage.isHidden && !timelinePage.isHidden,
                      "Transcript replaces overview but keeps the header and transport")
         closeTimeline()
         precondition(!overviewPage.isHidden && timelinePage.isHidden && pageSelector.selectedSegment == 0,
-                     "Overview selection must restore meeting details")
+                     "Summary selection must restore meeting details")
     }
 
     #if DEBUG
@@ -172,7 +172,7 @@ extension MeetingManagementView {
                      meetingsModel.detail.hasDirtyDrafts,
                      "Compact Back must retain Meeting selection, Transcript page, and unsaved notes")
         meetingsModel.detail.discardDrafts()
-        meetingsModel.detail.setPage(.overview)
+        meetingsModel.detail.setPage(.summary)
     }
 
     /// The shell fixture must exercise a selected detail, not placeholder geometry.

@@ -27,6 +27,7 @@ final class MeetingManagementView: NSView {
     private let openRecording: () -> Void
     private let openWorkspaceFile: (String) -> Void
     private let presentConfirmationAlert: (NSAlert) -> NSApplication.ModalResponse
+    private var meetingTabNavigationMonitor: Any?
     #if DEBUG
     var task05AlertResponse: ((NSAlert) -> NSApplication.ModalResponse)?
     private var task05DeferredRenders: [() -> Void] = []
@@ -78,9 +79,12 @@ final class MeetingManagementView: NSView {
     private var modalOriginalText = ""
     private enum EditableTextField { case notes, summary }
     let overviewPage = NSStackView()
+    let actionItemsPage = NSStackView()
+    let openItemsPage = NSStackView()
+    let notesPage = NSStackView()
     let timelinePage = NSStackView()
     let pinnedAudio = NSStackView()
-    lazy var pageSelector = controls.segments(["Overview", "Transcript"], identifier: "meeting-page-selector")
+    lazy var pageSelector = controls.segments(MeetingDetailPage.allCases.map(\.rawValue), identifier: "meeting-page-selector")
     let reviewPrompt = NSStackView()
     let reviewCount = NSTextField(labelWithString: "")
     lazy var reviewButton = controls.button("Review", identifier: "meeting-review")
@@ -89,6 +93,8 @@ final class MeetingManagementView: NSView {
     let decisionsContainer = NSStackView()
     let othersContainer = NSStackView()
     let questionsContainer = NSStackView()
+    private let summaryActionItems = NSStackView()
+    private let summaryOtherItems = NSStackView()
     private var overviewScrollTop: NSLayoutConstraint?
     private var timelineScrollTop: NSLayoutConstraint?
     let timelineRows = NSStackView()
@@ -171,9 +177,18 @@ final class MeetingManagementView: NSView {
         buildBrowser()
         buildDetail()
         observeFeatureState()
+        pageSelector.setAccessibilityHelp("Use Option-Command-Left or Right Arrow to move between Meeting tabs.")
+        meetingTabNavigationMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard self?.navigateMeetingTab(for: event) == true else { return event }
+            return nil
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit {
+        if let meetingTabNavigationMonitor { NSEvent.removeMonitor(meetingTabNavigationMonitor) }
+    }
 
     func setOnOpenSelection(_ handler: @escaping () -> Void) {
         onOpenSelection = handler
@@ -187,6 +202,18 @@ final class MeetingManagementView: NSView {
     }
 
     private var featureIsVisible = false
+
+    private func navigateMeetingTab(for event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard featureIsVisible, selectedID != nil, !pageSelector.isHidden, !textEditPanel.isOpen,
+              !(window?.firstResponder is NSTextView), modifiers == [.command, .option],
+              event.keyCode == 123 || event.keyCode == 124,
+              let current = MeetingDetailPage.allCases.firstIndex(of: meetingsModel.detail.page) else { return false }
+        let destination = current + (event.keyCode == 123 ? -1 : 1)
+        guard MeetingDetailPage.allCases.indices.contains(destination) else { return true }
+        selectPage(MeetingDetailPage.allCases[destination])
+        return true
+    }
 
     private func currentReadModel() -> MeetingReadModel? { readModelProvider() }
 
@@ -463,11 +490,12 @@ final class MeetingManagementView: NSView {
         pinnedAudio.orientation = .vertical
         pinnedAudio.alignment = .leading
         pinnedAudio.spacing = GraphiteFocusPresentation.Space.compact
+        pinnedAudio.isHidden = true
         pinnedAudio.addArrangedSubview(section("Meeting audio", body: audioSection))
         pageSelector.target = self
         pageSelector.action = #selector(selectDetailPage(_:))
         pageSelector.selectedSegment = 0
-        pageSelector.setAccessibilityLabel("Meeting page")
+        pageSelector.setAccessibilityLabel("Meeting tabs")
         reviewPrompt.orientation = .horizontal
         reviewPrompt.alignment = .centerY
         reviewPrompt.spacing = GraphiteFocusPresentation.Space.compact
@@ -498,6 +526,12 @@ final class MeetingManagementView: NSView {
             bottom: GraphiteFocusPresentation.Space.panel,
             right: GraphiteFocusPresentation.Space.panel
         )
+        for page in [actionItemsPage, openItemsPage, notesPage] {
+            page.orientation = .vertical
+            page.alignment = .leading
+            page.spacing = GraphiteFocusPresentation.Space.page + GraphiteFocusPresentation.Space.compact
+            page.edgeInsets = overviewPage.edgeInsets
+        }
         let titleGroup = NSStackView(views: [eyebrow, meetingTitle])
         titleGroup.orientation = .vertical
         titleGroup.alignment = .leading
@@ -511,11 +545,15 @@ final class MeetingManagementView: NSView {
         titleBar.alignment = .width
         titleBar.spacing = GraphiteFocusPresentation.Space.flush
         headerRow.widthAnchor.constraint(equalTo: titleBar.widthAnchor).isActive = true
+        let summarySection = textSection("Summary")
         let notesSection = textSection("My notes")
         self.notesSection = notesSection
-        [reviewPrompt, textSection("Summary"),
-         decisionsContainer, myActionsContainer, othersContainer, notesSection, questionsContainer,
+        [reviewPrompt, summarySection, summaryActionItems, summaryOtherItems,
+         decisionsContainer,
          retryRows, diagnosticsDisclosure, diagnostics, openRecordingButton].forEach { overviewPage.addArrangedSubview($0) }
+        [myActionsContainer, othersContainer].forEach { actionItemsPage.addArrangedSubview($0) }
+        openItemsPage.addArrangedSubview(questionsContainer)
+        notesPage.addArrangedSubview(notesSection)
         diagnostics.addArrangedSubview(section("Source files", body: files))
         metadataBar.addArrangedSubview(overview)
         metadataBar.orientation = .horizontal
@@ -548,22 +586,20 @@ final class MeetingManagementView: NSView {
         metadataBar.widthAnchor.constraint(lessThanOrEqualTo: caption.widthAnchor).isActive = true
         caption.translatesAutoresizingMaskIntoConstraints = false
         addSubview(caption)
-        for container in [myActionsContainer, decisionsContainer, othersContainer, questionsContainer] {
+        for container in [myActionsContainer, decisionsContainer, othersContainer, questionsContainer,
+                          summaryActionItems, summaryOtherItems] {
             container.orientation = .vertical
             container.alignment = .leading
-            container.widthAnchor.constraint(equalTo: overviewPage.widthAnchor,
-                constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
         }
-        let stack = MeetingDetailDocumentView(views: [overviewPage, timelinePage, status])
+        let stack = MeetingDetailDocumentView(views: [overviewPage, actionItemsPage, openItemsPage, notesPage, timelinePage, status])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = GraphiteFocusPresentation.Space.page
-        overviewPage.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        timelinePage.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        for page in [overviewPage, timelinePage] {
+        for page in [overviewPage, actionItemsPage, openItemsPage, notesPage, timelinePage] {
+            page.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
             for item in page.arrangedSubviews where item is NSStackView && item !== retryRows {
-                let inset = page === overviewPage ? 2 * GraphiteFocusPresentation.Space.panel : 0
-                item.widthAnchor.constraint(equalTo: page.widthAnchor, constant: -inset).isActive = true
+                item.widthAnchor.constraint(equalTo: page.widthAnchor,
+                    constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
             }
         }
         status.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -1056,16 +1092,22 @@ final class MeetingManagementView: NSView {
             defer { isApplyingFeatureState = false }
             let changedMeeting = renderedMeetingID != selected.row.id
             renderedMeetingID = selected.row.id
+            if changedMeeting {
+                meetingsModel.detail.setPage(.summary)
+                renderPage(.summary)
+            }
             waveform.colors = presentationColors
             playButton.updateAppearance()
             GraphiteFocusPageHeader.setTitle(selected.row.title, on: meetingTitle)
             statusBadge.isHidden = false
-            pinnedAudio.isHidden = false
             configureMeetingState(selected.row)
             let inProgress = selected.row.captureState == .live || selected.row.processingState == .processing
             if inProgress {
                 overview.stringValue = selected.row.captureState == .live ? "Recording" : "Processing"
                 overviewPage.isHidden = true
+                actionItemsPage.isHidden = true
+                openItemsPage.isHidden = true
+                notesPage.isHidden = true
                 timelinePage.isHidden = true
                 pageSelector.isHidden = true
                 pinnedAudio.isHidden = true
@@ -1258,8 +1300,11 @@ final class MeetingManagementView: NSView {
     }
 
     @objc private func selectDetailPage(_ sender: NSSegmentedControl) {
-        if sender.selectedSegment == 1 { openTimeline() } else { closeTimeline() }
+        guard MeetingDetailPage.allCases.indices.contains(sender.selectedSegment) else { return }
+        selectPage(MeetingDetailPage.allCases[sender.selectedSegment])
     }
+
+    @objc private func openActionItems() { selectPage(.actionItems) }
 
     @objc private func toggleDiagnostics() {
         diagnostics.isHidden = diagnosticsDisclosure.state != .on
@@ -1267,7 +1312,7 @@ final class MeetingManagementView: NSView {
 
     @objc private func jumpToReview() {
         guard !pendingActionIDs.isEmpty else { return }
-        if meetingsModel.detail.page != .overview { closeTimeline() }
+        selectPage(.actionItems)
         if let review = actionReviewControls[pendingActionIDs[0]]?.review {
             review.scrollToVisible(review.bounds)
             window?.makeFirstResponder(review)
@@ -1275,23 +1320,29 @@ final class MeetingManagementView: NSView {
     }
 
     @objc func openTimeline() {
-        if meetingsModel.detail.page != .transcript { meetingsModel.detail.setPage(.transcript) }
-        renderPage(.transcript)
+        selectPage(.transcript)
     }
 
     @objc func closeTimeline() {
-        if meetingsModel.detail.page != .overview { meetingsModel.detail.setPage(.overview) }
-        renderPage(.overview)
+        selectPage(.summary)
+    }
+
+    private func selectPage(_ page: MeetingDetailPage) {
+        meetingsModel.detail.setPage(page)
+        renderPage(page)
     }
 
     private func renderPage(_ page: MeetingDetailPage) {
-        let isTranscript = page == .transcript
-        overviewPage.isHidden = isTranscript
-        status.isHidden = isTranscript
-        timelinePage.isHidden = !isTranscript
-        overviewScrollTop?.isActive = !isTranscript
-        timelineScrollTop?.isActive = isTranscript
-        pageSelector.selectedSegment = isTranscript ? 1 : 0
+        let pages: [(MeetingDetailPage, NSStackView)] = [
+            (.summary, overviewPage), (.actionItems, actionItemsPage), (.openItems, openItemsPage),
+            (.notes, notesPage), (.transcript, timelinePage)
+        ]
+        for (candidate, view) in pages { view.isHidden = page != candidate }
+        pinnedAudio.isHidden = page != .transcript
+        status.isHidden = page == .transcript
+        overviewScrollTop?.isActive = page != .transcript
+        timelineScrollTop?.isActive = page == .transcript
+        pageSelector.selectedSegment = MeetingDetailPage.allCases.firstIndex(of: page) ?? 0
     }
 
     private func showUnavailableOverviewSections() {
@@ -1581,6 +1632,9 @@ final class MeetingManagementView: NSView {
         for container in [myActionsContainer, decisionsContainer, othersContainer, questionsContainer] {
             container.arrangedSubviews.forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
+        for container in [summaryActionItems, summaryOtherItems] {
+            container.arrangedSubviews.forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
+        }
         func makeRow(
             _ id: String,
             _ text: String,
@@ -1622,6 +1676,7 @@ final class MeetingManagementView: NSView {
                             provenance: "Generated from meeting", citations: $0.element.citations)
                 }))
         }
+        renderSummaryOutcomePreviews(detail)
         let reviewRows = groups.filter { $0.kind.isReviewWorkspace }.flatMap(\.rows)
         actionRows = Dictionary(uniqueKeysWithValues: reviewRows.map { ($0.id, $0) })
         pendingActionIDs = reviewRows.filter(\.isPendingReview).map(\.id)
@@ -1722,6 +1777,40 @@ final class MeetingManagementView: NSView {
             }
             container.addArrangedSubview(section)
             section.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        }
+        let emptyMessages: [(NSStackView, String)] = [
+            (myActionsContainer, "No personal Action Items yet."),
+            (othersContainer, "No other Action Items yet."),
+            (decisionsContainer, "No Decisions recorded yet."),
+            (questionsContainer, "No Open Items yet.")
+        ]
+        for (container, message) in emptyMessages where container.arrangedSubviews.isEmpty {
+            let empty = NSTextField(wrappingLabelWithString: message)
+            empty.font = GraphiteFocusPresentation.Typography.body
+            empty.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textSecondary
+            container.addArrangedSubview(empty)
+        }
+    }
+
+    private func renderSummaryOutcomePreviews(_ detail: MeetingBrowserDetail) {
+        func populate(_ container: NSStackView, title: String, empty: String, rows: [String]) {
+            container.addArrangedSubview(sectionHeading(title))
+            let content = rows.isEmpty ? empty : rows.joined(separator: "\n")
+            let label = NSTextField(wrappingLabelWithString: content)
+            label.maximumNumberOfLines = 0
+            label.font = GraphiteFocusPresentation.Typography.body
+            GraphiteFocusOverflow.configureWrappingText(label, fullText: content)
+            container.addArrangedSubview(label)
+        }
+        populate(summaryActionItems, title: "My Action Items", empty: "No personal action items yet.",
+                 rows: detail.myActionItems.map(\.text))
+        populate(summaryOtherItems, title: "People & Other Action Items", empty: "No other action items yet.",
+                 rows: detail.otherActionItems.map(\.text))
+        for (container, identifier) in [(summaryActionItems, "meeting-open-action-items"),
+                                        (summaryOtherItems, "meeting-open-other-action-items")] {
+            let button = controls.button("View all Action Items", identifier: identifier,
+                                         target: self, action: #selector(openActionItems))
+            container.addArrangedSubview(button)
         }
     }
 

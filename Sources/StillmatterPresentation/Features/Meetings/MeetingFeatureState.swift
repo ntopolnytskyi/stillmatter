@@ -70,7 +70,13 @@ public struct MeetingTextDraft: Equatable {
     }
 }
 
-public enum MeetingDetailPage: Equatable { case overview, transcript }
+public enum MeetingDetailPage: String, CaseIterable, Equatable {
+    case summary = "Summary"
+    case actionItems = "Action Items"
+    case openItems = "Open Items"
+    case notes = "My Notes"
+    case transcript = "Transcript"
+}
 
 public enum MeetingDetailLoadState: Equatable {
     case idle
@@ -151,7 +157,7 @@ public final class MeetingDetailModel: ObservableObject {
     @Published public private(set) var detail: MeetingBrowserDetail?
     @Published public private(set) var loadState: MeetingDetailLoadState = .idle
     @Published public private(set) var isShowingStaleDetail = false
-    @Published public private(set) var page: MeetingDetailPage = .overview
+    @Published public private(set) var page: MeetingDetailPage = .summary
     @Published public private(set) var notesDraft: MeetingTextDraft?
     @Published public private(set) var summaryDraft: MeetingTextDraft?
     @Published public private(set) var mutationState: MeetingMutationState = .idle
@@ -213,7 +219,7 @@ public final class MeetingDetailModel: ObservableObject {
         mutationGeneration &+= 1
         mutationInFlight = false
         mutationState = .idle
-        page = .overview
+        page = .summary
         guard let reference else {
             detail = nil
             notesDraft = nil

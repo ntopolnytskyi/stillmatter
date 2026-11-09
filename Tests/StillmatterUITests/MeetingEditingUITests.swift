@@ -2,9 +2,61 @@ import Foundation
 import XCTest
 
 extension StillmatterFlowsUITests {
+    func testFiveMeetingTabsKeepDecisionsInSummaryAndAudioInTranscript() throws {
+        try seedMeeting(transcript: true)
+        openFixtureMeeting()
+
+        let tabs = ["Summary", "Action Items", "Open Items", "My Notes", "Transcript"]
+        for tab in tabs {
+            XCTAssertTrue(app.radioButtons[tab].waitForExistence(timeout: 10), "Missing Meeting tab: \(tab)")
+        }
+        XCTAssertTrue(app.staticTexts["Decisions"].exists, "Summary contains the full Decisions section")
+        XCTAssertTrue(app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Decision stays in Summary")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["Play Meeting audio"].isHittable, "Audio controls stay out of Summary")
+
+        let summaryTab = app.radioButtons["Summary"]
+        summaryTab.click()
+        summaryTab.typeKey(.rightArrow, modifierFlags: [.command, .option])
+        XCTAssertTrue(app.staticTexts["No personal Action Items yet."].waitForExistence(timeout: 5))
+        summaryTab.click()
+        app.buttons["meeting-open-action-items"].click()
+        XCTAssertTrue(app.staticTexts["No personal Action Items yet."].waitForExistence(timeout: 5))
+        app.radioButtons["Open Items"].click()
+        XCTAssertTrue(app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Question stays in Open Items")).firstMatch.waitForExistence(timeout: 5))
+        app.radioButtons["My Notes"].click()
+        XCTAssertTrue(app.buttons["meeting-overview-edit-notes"].waitForExistence(timeout: 5))
+        app.radioButtons["Transcript"].click()
+        XCTAssertTrue(app.buttons["Play Meeting audio"].waitForExistence(timeout: 5))
+        app.radioButtons["Summary"].click()
+        XCTAssertTrue(app.staticTexts["Decisions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Decision stays in Summary")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["Play Meeting audio"].isHittable)
+    }
+
+    func testLongNotesRemainReadableAndEditableInTheirOwnTab() throws {
+        let notes = (0..<80).map { "Long note line \($0): preserved meeting context." }.joined(separator: "\n\n")
+        try seedMeeting(notes: notes)
+        openFixtureMeeting()
+        app.radioButtons["My Notes"].click()
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.99)).press(
+            forDuration: 0.1,
+            thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.8)))
+        let edit = app.buttons["meeting-overview-edit-notes"]
+        XCTAssertTrue(edit.exists)
+        XCTAssertTrue(edit.isEnabled)
+        edit.click()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue((editor.value as? String)?.contains("Long note line 79") == true)
+    }
+
     func testReassignNoteAuthoredTaskKeepsItInMeetingAndRemovesItFromTodo() throws {
         try seedMeeting(notes: "- [ ] Assign this task\n")
         openFixtureMeeting()
+        app.radioButtons["My Notes"].click()
         let reassign = app.buttons["meeting-note-task-reassign"]
         XCTAssertTrue(reassign.waitForExistence(timeout: 10))
         reassign.click()
@@ -165,10 +217,11 @@ extension StillmatterFlowsUITests {
         row.click()
         let notes = app.buttons["meeting-overview-edit-notes"]
         let summary = app.buttons["meeting-overview-edit-summary"]
-        XCTAssertTrue(notes.waitForExistence(timeout: 10))
         XCTAssertTrue(summary.waitForExistence(timeout: 10))
-        XCTAssertFalse(notes.isEnabled)
         XCTAssertFalse(summary.isEnabled)
+        app.radioButtons["My Notes"].click()
+        XCTAssertTrue(notes.waitForExistence(timeout: 5))
+        XCTAssertFalse(notes.isEnabled)
         XCTAssertFalse(app.buttons["meeting-edit-notes"].isEnabled)
         XCTAssertFalse(app.buttons["meeting-edit-summary"].isEnabled)
         XCTAssertFalse(editor.exists)
@@ -262,6 +315,7 @@ extension StillmatterFlowsUITests {
     var meetingURL: URL { fixtureRoot.appendingPathComponent("workspace/Meetings/ui-fixture/meeting.md") }
 
     func openEditor(_ field: String) {
+        app.radioButtons[field == "notes" ? "My Notes" : "Summary"].click()
         let button = app.buttons["meeting-overview-edit-\(field)"]
         XCTAssertTrue(button.waitForExistence(timeout: 10))
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: button)
@@ -295,7 +349,7 @@ extension StillmatterFlowsUITests {
         let row = app.tables["Meetings"].staticTexts["UI fixture meeting"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.click()
-        XCTAssertTrue(app.buttons["meeting-overview-edit-notes"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["meeting-overview-edit-summary"].waitForExistence(timeout: 10))
     }
 
     func seedMeeting(transcript: Bool = false, notes: String = "Original notes.") throws {
@@ -316,6 +370,8 @@ extension StillmatterFlowsUITests {
                 "engine": "fixture", "model": "fixture", "generated_at": "2026-01-01T00:00:00Z",
                 "audio_sources": [], "segments": segments, "diagnostics": []]
             try JSONSerialization.data(withJSONObject: document).write(to: directory.appendingPathComponent("transcript.json"))
+            let extraction = #"{"schema_version":1,"meeting":"Meetings/ui-fixture/meeting.md","transcript":"Meetings/ui-fixture/transcript.json","decisions":[{"id":"decision-fixture","text":"Decision stays in Summary","citations":[]}],"my_action_items":[],"other_action_items":[],"open_questions":[{"id":"question-fixture","text":"Question stays in Open Items","citations":[]}] }"#
+            try extraction.write(to: directory.appendingPathComponent("summary-extraction.json"), atomically: true, encoding: .utf8)
         }
         relaunch()
     }

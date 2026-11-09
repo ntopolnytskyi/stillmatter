@@ -121,7 +121,8 @@ extension MeetingManagementView {
             liveView.show(row: liveIndex)
             await waitForMeetingFixture("live Meeting detail") { liveView.displayedDetail?.row.id == "first" }
             precondition(liveView.displayedDetail?.row.captureState == .live &&
-                         liveView.overviewPage.isHidden && liveView.timelinePage.isHidden &&
+                         liveView.overviewPage.isHidden && liveView.actionItemsPage.isHidden &&
+                         liveView.openItemsPage.isHidden && liveView.notesPage.isHidden && liveView.timelinePage.isHidden &&
                          liveView.pageSelector.isHidden && liveView.pinnedAudio.isHidden &&
                          liveView.toolbar.isHidden && liveView.status.stringValue.contains("Recording is active"),
                          "Recording detail must show guidance without exposing prior Meeting content or playback")
@@ -143,7 +144,8 @@ extension MeetingManagementView {
             queuedView.show(row: queuedIndex)
             await waitForMeetingFixture("queued Meeting detail") { queuedView.displayedDetail?.row.id == "second" }
             precondition(queuedView.displayedDetail?.row.processingState == .processing &&
-                         queuedView.overviewPage.isHidden && queuedView.timelinePage.isHidden &&
+                         queuedView.overviewPage.isHidden && queuedView.actionItemsPage.isHidden &&
+                         queuedView.openItemsPage.isHidden && queuedView.notesPage.isHidden && queuedView.timelinePage.isHidden &&
                          queuedView.pageSelector.isHidden && queuedView.pinnedAudio.isHidden &&
                          queuedView.toolbar.isHidden && !queuedView.processingProgress.isHidden &&
                          queuedView.processingProgress.accessibilityLabel() == "Processing" &&
