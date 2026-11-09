@@ -103,6 +103,38 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fixture.microphoneURL), rawMicrophone)
     }
 
+    func testSpeakerCorrectionEvidenceSurvivesCanonicalTranscriptRoundTrip() throws {
+        let fixture = try TranscriptionFixture()
+        let diarizer = StubSpeakerDiarizationEngine(turnsByTrack: [.microphone: [
+            SpeakerDiarizationTurn(startSeconds: 0.25, endSeconds: 1.1, clusterID: 4)
+        ]])
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(),
+            engine: StubTranscriptionEngine(textByTrack: [.microphone: "Me"]), diarizationEngine: diarizer)
+        let generated = try pipeline.generate(from: fixture.makeBundle(system: nil), selection: nil,
+            language: .english).json
+        var document = try XCTUnwrap(JSONSerialization.jsonObject(with: generated) as? [String: Any])
+        var segments = try XCTUnwrap(document["segments"] as? [[String: Any]])
+        segments[0]["person_id"] = "person-42"
+        segments[0]["attribution_evidence"] = ["method": "user-corrected", "source": "transcript-review"]
+        document["segments"] = segments
+        let correctedJSON = try MeetingTranscriptCodec.encodeJSON(document)
+
+        let text = try MeetingTranscriptCodec.text(correctedJSON)
+        let roundTripJSON = try MeetingTranscriptCodec.json(text, path: "Meetings/fixture/transcript.txt")
+        let roundTrip = try XCTUnwrap(JSONSerialization.jsonObject(with: roundTripJSON) as? [String: Any])
+        let roundTripSegments = try XCTUnwrap(roundTrip["segments"] as? [[String: Any]])
+        let evidence = try XCTUnwrap(roundTripSegments.first)
+        let expectedTurns = try MeetingTranscriptCodec.encodeJSON(try XCTUnwrap(document["speaker_turns"]))
+        let actualTurns = try MeetingTranscriptCodec.encodeJSON(try XCTUnwrap(roundTrip["speaker_turns"]))
+
+        XCTAssertEqual(evidence["person_id"] as? String, "person-42")
+        XCTAssertEqual(evidence["attribution_evidence"] as? [String: String], [
+            "method": "user-corrected", "source": "transcript-review"
+        ])
+        XCTAssertEqual(actualTurns, expectedTurns)
+    }
+
     func testDiarizationFailureKeepsAudioAndReusesCompletedTrackCheckpointOnRetry() throws {
         let fixture = try TranscriptionFixture()
         let bundle = fixture.makeBundle(system: fixture.bundle.system)
