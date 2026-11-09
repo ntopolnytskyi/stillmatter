@@ -76,17 +76,20 @@ python3 experiments/meeting-ai-capabilities/make_three_minute_asr_fixture.py \
 
 The fixture is synthesized afresh from 40 unique, responsive dialogue turns with local macOS Samantha (English) and Lesya (Ukrainian) voices. The exact transcript is saved for WER scoring, and turn pauses are spread across an exact 180-second duration. This is more varied than repeating phrases, but remains TTS: it does not establish quality on recorded human conversation, accents, overlapping speakers, or room noise. The full decode takes several minutes on the measured CPU configuration. Results for the varied dialogue are in the [sample-selection report](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-dialogue-2026-11-09.json) and [same-audio Auto baseline](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-dialogue-auto-2026-11-09.json). The earlier repeated-phrase stress results remain in the [repetition report](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-2026-11-09.json).
 
-Test faster-whisper's per-segment language detection on that same fixture:
+Generate the requested three-minute Ukrainian/English/Ukrainian fixture and test one language sample per minute:
 
 ```sh
-'<component>/runtime/bin/python3' experiments/meeting-ai-capabilities/asr_auto_baseline_probe.py \
-  --component '<component>' --fixture experiments/meeting-ai-capabilities/fixtures/mixed-three-minute.wav \
-  --reference-file .build/capabilities/mixed-three-minute-reference.txt \
-  --output .build/capabilities/asr-auto-multilingual-dialogue-5s.json \
-  --multilingual --chunk-length 5
+python3 experiments/meeting-ai-capabilities/make_three_minute_uk_en_uk_fixture.py \
+  --output experiments/meeting-ai-capabilities/fixtures/mixed-three-minute-uk-en-uk.wav \
+  --reference-output .build/capabilities/mixed-three-minute-uk-en-uk-reference.txt
+'<component>/runtime/bin/python3' experiments/meeting-ai-capabilities/asr_minute_language_probe.py \
+  --component '<component>' \
+  --fixture experiments/meeting-ai-capabilities/fixtures/mixed-three-minute-uk-en-uk.wav \
+  --reference-file .build/capabilities/mixed-three-minute-uk-en-uk-reference.txt \
+  --output .build/capabilities/asr-minute-language-uk-en-uk.json --compare-auto
 ```
 
-The pinned faster-whisper 1.2.1 runtime can redetect language for each decoder segment. Five-second chunks lowered WER on this synthetic dialogue but took about 6.8 minutes and sometimes rendered Ukrainian speech as Russian. Ten-second chunks ran faster but gave little improvement. See the [5-second report](../../docs/meeting_ai_handoff/capability-asr-auto-multilingual-dialogue-5s-2026-11-09.json) and [10-second report](../../docs/meeting_ai_handoff/capability-asr-auto-multilingual-dialogue-10s-2026-11-09.json). These are candidate settings, not validated human-meeting quality.
+The fixture contains exactly 60 seconds each of Ukrainian, English, then Ukrainian speech. Auto detects one language for each minute and transcribes that window in English only when detection is English; Russian and all other language detections are routed to Ukrainian. The installed runtime's `detect_language` accepts 30-second encoder segments; the probe allows two per one-minute window. Results are in the [minute-window report](../../docs/meeting_ai_handoff/capability-asr-minute-language-uk-en-uk-2026-11-09.json). This aligned synthetic test does not establish arbitrary language-switch timing or human-meeting quality.
 
 ## Ticket 03 downloaded-model evaluation
 

@@ -48,14 +48,18 @@ final class FasterWhisperRuntimeTests: XCTestCase {
             }
     }
 
-    func testAutomaticEnginePreservesAutomaticSegmentLanguageForPerSegmentDetection() throws {
+    func testAutomaticEngineUsesSelectedWindowLanguageAndReportsRussianOverride() throws {
         let root = try makeComponent()
         defer { try? FileManager.default.removeItem(at: root) }
         let executableURL = root.appendingPathComponent("runtime/bin/python3")
         let script = """
         #!/bin/sh
         cat > "$5" <<'JSON'
-        {"language":"en","segmentwise_language_detection":true,"segments":[{"start":0,"end":1,"text":"Hello"}]}
+        {"language":"uk","window_language_selection":true,
+         "language_windows":[{"start":0,"end":60,"detected_language":"ru","language_probability":0.8,
+          "selected_language":"uk","russian_mapped_to_ukrainian":true}],
+         "segments":[{"start":0,"end":1,"text":"Привіт","language":"uk"},
+          {"start":60,"end":61,"text":"Hello","language":"en"}]}
         JSON
         """
         try script.write(to: executableURL, atomically: true, encoding: .utf8)
@@ -65,8 +69,9 @@ final class FasterWhisperRuntimeTests: XCTestCase {
             .transcribe(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"), language: .automatic,
                 track: .microphone)
 
-        XCTAssertEqual(result.detectedLanguage, .english)
-        XCTAssertEqual(result.segments.first?.language, .automatic)
+        XCTAssertEqual(result.detectedLanguage, .ukrainian)
+        XCTAssertEqual(result.segments.map(\.language), [.ukrainian, .english])
+        XCTAssertTrue(result.diagnostics.contains { $0.contains("Russian mapped to Ukrainian") })
     }
 
     func testEngineRunsManagedRuntimeAndNormalizesSegments() throws {
@@ -277,12 +282,14 @@ final class FasterWhisperRuntimeTests: XCTestCase {
                       "A model-only check accepts runtimes that cannot decode recordings")
         XCTAssertTrue(check.contains("decoded_audio[begin:end]"),
                       "Auto samples must use the audio decoder API supported by the pinned runtime")
-        XCTAssertTrue(check.contains("transcribe_options[\"multilingual\"] = True"),
-                      "Automatic transcription must redetect language for each decoder segment")
-        XCTAssertTrue(check.contains("transcribe_options[\"chunk_length\"] = 5"),
-                      "Automatic transcription uses the evaluated five-second chunk size")
-        XCTAssertTrue(check.contains("segmentwise_language_detection"),
-                      "Transcript metadata must not label every chunk with only the initial language")
+        XCTAssertTrue(check.contains("window_samples = 60 * 16000"),
+                      "Auto selects one language for each minute of audio")
+        XCTAssertTrue(check.contains("selected_language = \"en\" if detected_language == \"en\" else \"uk\""),
+                      "Russian and other unsupported detections must be transcribed as Ukrainian")
+        XCTAssertTrue(check.contains("russian_mapped_to_ukrainian = detected_language == \"ru\""),
+                      "Russian language detection must be recorded as an explicit Ukrainian override")
+        XCTAssertTrue(check.contains("window_language_selection"),
+                      "The output must identify window-based Auto results")
         XCTAssertFalse(check.contains("decode_audio(audio_path, duration="),
                        "The pinned faster-whisper decoder does not accept offset/duration arguments")
         if let decode = check.range(of: "decode_audio(sample.name)"),

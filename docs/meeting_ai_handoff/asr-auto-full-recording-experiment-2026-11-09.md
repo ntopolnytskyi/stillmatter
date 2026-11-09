@@ -49,23 +49,19 @@ With the installed large-v3-turbo model on CPU/int8, sample selection scored Eng
 
 This is still synthesized speech with one voice assigned to each language, not recorded human conversation. The test does not establish accent, overlap, microphone, room-noise, or actual code-switching quality. Ticket 19 remains open; these results do not establish a generally reliable mixed-language Auto policy.
 
-### Per-segment language detection candidate
+### One-minute language samples and Ukrainian fallback
 
-The user asked to improve Auto selection. faster-whisper 1.2.1 exposes `multilingual=True`, which detects language for each decoder segment, plus a configurable `chunk_length`. This avoids choosing one language for a full mixed recording. Tested the same 180-second dialogue and exact reference with five- and ten-second chunks.
+The user requested one-minute language decisions, with Russian mapped to Ukrainian, and a test clip containing one minute of Ukrainian, one minute of English, and one final minute of Ukrainian. The new clip has 30 unique turns (10 per block), is exactly 180 seconds, and has SHA-256 `a4433a68fe4298cd8b43be5701a906bccb1f3e8308a32529f1a984df63082fc5`.
 
-| Mode | WER | Decode time | Peak RSS | Observation |
-| --- | ---: | ---: | ---: | --- |
-| Whole-track Auto, one initial language | 53.68% | 100.89 s | 3.44 GB | Detected Ukrainian, omitted all 20 English turns. |
-| Per-segment Auto, 10 s chunks | 50.65% | 210.40 s | 3.44 GB | Small WER gain, about twice the runtime. |
-| Per-segment Auto, 5 s chunks | **26.19%** | 406.91 s | 3.41 GB | Recovered English turns, but several Ukrainian phrases were rendered as Russian. |
+For each 60-second window, the pipeline runs faster-whisper language detection (up to two 30-second encoder segments), restricts the selected transcription language to English or Ukrainian, then transcribes that full window. `en` selects English; `ru` and other non-English detections select Ukrainian. The transcript segment carries the selected window language and source-time offset. Russian-detection overrides are recorded in diagnostics. Explicit English and Ukrainian settings remain fixed-language full-recording transcriptions.
 
-The five-second setting is the strongest candidate so far on this dialogue. It is still much slower than normal Auto, and language identification is imperfect. The production Auto path now uses this setting for faster-whisper and marks segment language as Auto rather than mislabeling every segment with the initial language. Explicit English and Ukrainian choices still use a fixed language. The pinned Whisper CLI has no per-segment mode and remains unsupported for Auto in this pipeline.
+On the requested fixture, detections were `uk` (0.9963), `en` (0.9998), and `uk` (0.9964), with no Russian overrides needed. The minute-window transcription scored **4.34% WER** and took **168.85 seconds**. Ordinary whole-recording Auto detected Ukrainian, omitted the English minute, and scored **42.82% WER** in **62.56 seconds**. The new policy is substantially more accurate for the aligned three-block fixture and about 2.7 times slower than ordinary Auto; it is still faster than the earlier five-second-per-segment candidate, which took 406.91 seconds on a different dialogue fixture.
 
-Raw reports: [5-second per-segment Auto](capability-asr-auto-multilingual-dialogue-5s-2026-11-09.json), [10-second per-segment Auto](capability-asr-auto-multilingual-dialogue-10s-2026-11-09.json).
+This test aligns language changes exactly with the one-minute windows, so it does not establish arbitrary switch timing, human speech, accents, overlap, room noise, or Ukrainian fallback quality on actual Russian detections. The production path is a candidate and the UI disclosure stays; Ticket 19 remains open pending human-audio validation.
 
-This is a synthetic two-voice test, not human-recorded conversation. Accent, room noise, overlapping speech, and real within-speaker code-switching remain untested. Keep the UI disclosure and Ticket 19 open until manual human-audio evaluation verifies useful transcript quality and acceptable runtime.
+Raw report: [one-minute Ukrainian/English/Ukrainian result and Auto baseline](capability-asr-minute-language-uk-en-uk-2026-11-09.json).
 
-Validation for the implementation: the full package coverage lane passed **438 tests, 4 skipped, 0 failures**. The incremental changed-source gate passed **15/15 executable lines (100%)**: Core 8/8 and transcription runtime 7/7. UI tests were skipped because no UI code changed. The focused clean-worktree Swift run passed 3/3 tests.
+Validation for the prior implementation: the full package coverage lane passed **438 tests, 4 skipped, 0 failures**. The incremental changed-source gate passed **15/15 executable lines (100%)**: Core 8/8 and transcription runtime 7/7. UI tests were skipped because no UI code changed. The current one-minute changes require another full test and coverage run before completion.
 
 ## Disposition
 

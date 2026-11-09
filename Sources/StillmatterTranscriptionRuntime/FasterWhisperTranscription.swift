@@ -17,11 +17,22 @@ private struct FasterWhisperOutput: Decodable {
         var start: Double
         var end: Double
         var text: String
+        var language: String?
+    }
+
+    struct LanguageWindow: Decodable {
+        var start: Double
+        var end: Double
+        var detected_language: String
+        var language_probability: Double
+        var selected_language: String
+        var russian_mapped_to_ukrainian: Bool
     }
 
     var language: String?
-    var segmentwise_language_detection: Bool?
+    var window_language_selection: Bool?
     var segments: [Segment]?
+    var language_windows: [LanguageWindow]?
     var average_log_probability: Double?
     var speech_duration_seconds: Double?
     var samples: [Sample]?
@@ -285,31 +296,61 @@ if sys.argv[1] == "--check":
 
 model_path, audio_path, language, output_path = sys.argv[1:5]
 model = WhisperModel(model_path, device="cpu", compute_type="int8")
-segmentwise_language_detection = language == "auto"
-transcribe_options = {
-    "language": None if segmentwise_language_detection else language,
-    "vad_filter": True,
-    "condition_on_previous_text": False,
-}
-if segmentwise_language_detection:
-    transcribe_options["multilingual"] = True
-    transcribe_options["chunk_length"] = 5
-segments, info = model.transcribe(audio_path, **transcribe_options)
-result = {
-    "language": info.language,
-    "segmentwise_language_detection": segmentwise_language_detection,
-    "segments": [
-        {"start": segment.start, "end": segment.end, "text": segment.text}
-        for segment in segments
-    ],
-}
+window_language_selection = language == "auto"
+if window_language_selection:
+    decoded_audio = decode_audio(audio_path)
+    window_samples = 60 * 16000
+    segments = []
+    language_windows = []
+    for start_sample in range(0, len(decoded_audio), window_samples):
+        end_sample = min(start_sample + window_samples, len(decoded_audio))
+        window_audio = decoded_audio[start_sample:end_sample]
+        if len(window_audio) == 0:
+            continue
+        detected_language, language_probability, _ = model.detect_language(
+            audio=window_audio, language_detection_segments=2)
+        selected_language = "en" if detected_language == "en" else "uk"
+        russian_mapped_to_ukrainian = detected_language == "ru"
+        window_segments, _ = model.transcribe(
+            window_audio, language=selected_language, vad_filter=True,
+            condition_on_previous_text=False)
+        offset = start_sample / 16000
+        for segment in window_segments:
+            segments.append({"start": segment.start + offset, "end": segment.end + offset,
+                             "text": segment.text, "language": selected_language})
+        language_windows.append({
+            "start": offset,
+            "end": end_sample / 16000,
+            "detected_language": detected_language,
+            "language_probability": language_probability,
+            "selected_language": selected_language,
+            "russian_mapped_to_ukrainian": russian_mapped_to_ukrainian,
+        })
+    result = {
+        "language": language_windows[0]["selected_language"] if language_windows else None,
+        "window_language_selection": True,
+        "language_windows": language_windows,
+        "segments": segments,
+    }
+else:
+    segments, info = model.transcribe(audio_path, language=language, vad_filter=True,
+                                      condition_on_previous_text=False)
+    result = {
+        "language": info.language,
+        "window_language_selection": False,
+        "segments": [
+            {"start": segment.start, "end": segment.end, "text": segment.text,
+             "language": language}
+            for segment in segments
+        ],
+    }
 with open(output_path, "w", encoding="utf-8") as output:
     json.dump(result, output, ensure_ascii=False)
 """#
 }
 
 public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEngine,
-    CancellableTranscriptLanguageSamplingEngine, SegmentwiseAutomaticTranscriptLanguageEngine {
+    CancellableTranscriptLanguageSamplingEngine, WindowedAutomaticTranscriptLanguageEngine {
     public let engineIdentifier = "faster-whisper"
     public let modelIdentifier: String
 
@@ -354,33 +395,40 @@ public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEng
         guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let output = try JSONDecoder().decode(FasterWhisperOutput.self, from: Data(contentsOf: outputURL))
         let detectedLanguage = output.language.flatMap(TranscriptLanguage.init(rawValue:))
-        let segmentLanguage: TranscriptLanguage? = if language != .automatic {
+        let defaultSegmentLanguage: TranscriptLanguage? = if language != .automatic {
             language
-        } else if output.segmentwise_language_detection == true {
+        } else if output.window_language_selection == true {
             .automatic
         } else {
             detectedLanguage
         }
-        guard (output.segments ?? []).isEmpty || segmentLanguage != nil else {
+        guard (output.segments ?? []).isEmpty || defaultSegmentLanguage != nil else {
             throw TranscriptionError.invalidEngineOutput("automatic language detection returned no supported language")
         }
         let segments = (output.segments ?? []).enumerated().compactMap { index, segment -> TranscriptSegment? in
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
+            let segmentLanguage = segment.language.flatMap(TranscriptLanguage.init(rawValue:))
+                ?? defaultSegmentLanguage ?? .english
             return TranscriptSegment(
                 id: "faster-whisper-\(index + 1)",
                 startSeconds: segment.start,
                 endSeconds: segment.end,
                 text: text,
-                language: segmentLanguage ?? .english,
+                language: segmentLanguage,
                 track: track,
                 speaker: track.speakerLabel
             )
         }
+        var resultDiagnostics = diagnostics.isEmpty ? [] : [diagnostics]
+        resultDiagnostics.append(contentsOf: (output.language_windows ?? []).map { window in
+            let override = window.russian_mapped_to_ukrainian ? ", Russian mapped to Ukrainian" : ""
+            return "Auto language window \(Int(window.start))–\(Int(window.end))s: detected \(window.detected_language), selected \(window.selected_language)\(override)"
+        })
         return TranscriptionEngineResult(
             segments: segments,
             detectedLanguage: detectedLanguage,
-            diagnostics: diagnostics.isEmpty ? [] : [diagnostics]
+            diagnostics: resultDiagnostics
         )
     }
 

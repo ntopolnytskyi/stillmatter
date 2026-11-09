@@ -19,9 +19,9 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(manifest.metadata["language"], "auto")
     }
 
-    func testSegmentwiseAutomaticEngineSkipsGlobalLanguageSampling() throws {
+    func testWindowedAutomaticEngineSkipsGlobalLanguageSampling() throws {
         let fixture = try TranscriptionFixture()
-        let engine = SegmentwiseAutoStubTranscriptionEngine()
+        let engine = WindowedAutoStubTranscriptionEngine()
         let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
             bundleValidator: AcceptingBundleValidator(), engine: engine)
 
@@ -30,9 +30,9 @@ final class TranscriptionTests: XCTestCase {
 
         XCTAssertEqual(engine.languages, [.automatic])
         XCTAssertEqual(result.document.language, .automatic)
-        XCTAssertEqual(result.document.detectedLanguages, [.english])
-        XCTAssertEqual(result.document.segments.map(\.language), [.automatic])
-        XCTAssertTrue(result.document.diagnostics.contains { $0.contains("per-segment") })
+        XCTAssertEqual(result.document.detectedLanguages, [.ukrainian, .english])
+        XCTAssertEqual(result.document.segments.map(\.language), [.ukrainian, .english])
+        XCTAssertTrue(result.document.diagnostics.contains { $0.contains("60-second window") })
     }
 
     func testAutomaticLanguageComparesStartAndMinuteTenInBothLanguagesBeforeWholeTrackDecode() throws {
@@ -598,18 +598,21 @@ private final class SamplingStubTranscriptionEngine: CancellableTranscriptLangua
     }
 }
 
-private final class SegmentwiseAutoStubTranscriptionEngine: TranscriptionEngine,
-    SegmentwiseAutomaticTranscriptLanguageEngine {
-    let engineIdentifier = "segmentwise-test-whisper"
-    let modelIdentifier = "segmentwise-test-model"
+private final class WindowedAutoStubTranscriptionEngine: TranscriptionEngine,
+    WindowedAutomaticTranscriptLanguageEngine {
+    let engineIdentifier = "windowed-test-whisper"
+    let modelIdentifier = "windowed-test-model"
     private(set) var languages: [TranscriptLanguage] = []
 
     func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack) throws
         -> TranscriptionEngineResult {
         languages.append(language)
-        return TranscriptionEngineResult(segments: [TranscriptSegment(id: "automatic", startSeconds: 1,
-            endSeconds: 2, text: "Mixed words", language: .automatic, track: track,
-            speaker: track.speakerLabel)], detectedLanguage: .english)
+        return TranscriptionEngineResult(segments: [
+            TranscriptSegment(id: "ukrainian-window", startSeconds: 1, endSeconds: 2,
+                text: "Українські слова", language: .ukrainian, track: track, speaker: track.speakerLabel),
+            TranscriptSegment(id: "english-window", startSeconds: 61, endSeconds: 62,
+                text: "English words", language: .english, track: track, speaker: track.speakerLabel),
+        ], detectedLanguage: .ukrainian)
     }
 }
 

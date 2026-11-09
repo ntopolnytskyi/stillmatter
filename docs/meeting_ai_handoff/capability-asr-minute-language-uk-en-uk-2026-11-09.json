@@ -1,0 +1,303 @@
+{
+  "kind": "synthetic-one-minute-language-window-probe",
+  "source": "mixed-three-minute-uk-en-uk.wav",
+  "sourceSha256": "a4433a68fe4298cd8b43be5701a906bccb1f3e8308a32529f1a984df63082fc5",
+  "model": "faster-whisper-large-v3-turbo",
+  "runtime": {
+    "device": "cpu",
+    "computeType": "int8",
+    "cpuThreads": 4
+  },
+  "windowSeconds": 60,
+  "languageRule": "detected en selects en; every other detected code selects uk; ru is explicitly recorded as mapped to uk",
+  "modelLoadSeconds": 4.767229403951205,
+  "windows": [
+    {
+      "startSeconds": 0.0,
+      "endSeconds": 60.0,
+      "detectedLanguage": "uk",
+      "languageProbability": 0.9963247179985046,
+      "topAlternatives": [
+        {
+          "language": "uk",
+          "probability": 0.9963247179985046
+        },
+        {
+          "language": "ru",
+          "probability": 0.003112380625680089
+        },
+        {
+          "language": "it",
+          "probability": 8.046428411034867e-05
+        },
+        {
+          "language": "en",
+          "probability": 8.016335777938366e-05
+        },
+        {
+          "language": "bg",
+          "probability": 5.78447688894812e-05
+        }
+      ],
+      "selectedLanguage": "uk",
+      "russianMappedToUkrainian": false,
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 4.32,
+          "text": " Почнімо з плану запуску. Нам потрібно перевірити строки, ризики та відповідальних за кожен етап.",
+          "language": "uk"
+        },
+        {
+          "start": 6.75,
+          "end": 10.51,
+          "text": " Найбільшими не торбує переклад інструкцій. Підрядник обіцяв готовий текст до середи.",
+          "language": "uk"
+        },
+        {
+          "start": 12.97,
+          "end": 17.19,
+          "text": " Я вже написала редакторці. Вона надійшла першу частину сьогодні, а решту завтра вранці.",
+          "language": "uk"
+        },
+        {
+          "start": 19.68,
+          "end": 23.2,
+          "text": " Добре, попросив Андрія перевірити назви кнопок і кроки початкового налаштування.",
+          "language": "uk"
+        },
+        {
+          "start": 23.66,
+          "end": 29.7,
+          "text": " Він погодився. Я надійшлю йому посилання та коротко поясню, як залишати коментарі.",
+          "language": "uk"
+        },
+        {
+          "start": 32.09,
+          "end": 35.71,
+          "text": " Ще треба вирішити, чи запрошуємо всіх клієнтів, чи спершу кілька команд.",
+          "language": "uk"
+        },
+        {
+          "start": 35.71,
+          "end": 41.98,
+          "text": " Пропоную почати з 10 команд. Так ми швидше помітимо помилки без зайвого ризику.",
+          "language": "uk"
+        },
+        {
+          "start": 44.42,
+          "end": 48.12,
+          "text": " Підтримку забезпечать двоє колег. Я також чергуватиму в робочому чаті в татницю.",
+          "language": "uk"
+        },
+        {
+          "start": 50.53,
+          "end": 53.73,
+          "text": " Тоді до четверга підготуємо форму відгуків і короткий опис нового процесу.",
+          "language": "uk"
+        },
+        {
+          "start": 56.11,
+          "end": 59.95,
+          "text": " Так, а запрошення надійшлемо після перевірки тексту та підтвердження графіка підтримки.",
+          "language": "uk"
+        }
+      ]
+    },
+    {
+      "startSeconds": 60.0,
+      "endSeconds": 120.0,
+      "detectedLanguage": "en",
+      "languageProbability": 0.9998283386230469,
+      "topAlternatives": [
+        {
+          "language": "en",
+          "probability": 0.9998283386230469
+        },
+        {
+          "language": "es",
+          "probability": 3.372427090653218e-05
+        },
+        {
+          "language": "de",
+          "probability": 1.9486235032672994e-05
+        },
+        {
+          "language": "ru",
+          "probability": 1.5600555343553424e-05
+        },
+        {
+          "language": "ja",
+          "probability": 1.4844773431832436e-05
+        }
+      ],
+      "selectedLanguage": "en",
+      "russianMappedToUkrainian": false,
+      "segments": [
+        {
+          "start": 60.0,
+          "end": 62.74,
+          "text": " For the first release, let us invite 10 teams and review their feedback on Monday.",
+          "language": "en"
+        },
+        {
+          "start": 66.36,
+          "end": 69.34,
+          "text": " That gives support a manageable group while we check setup problems and confusing instructions.",
+          "language": "en"
+        },
+        {
+          "start": 73.05,
+          "end": 75.51,
+          "text": " I will ask two colleagues to cover the help channel throughout Friday afternoon.",
+          "language": "en"
+        },
+        {
+          "start": 79.2,
+          "end": 82.4,
+          "text": " Please make sure the invitation explains that this is a limited preview, not the final launch.",
+          "language": "en"
+        },
+        {
+          "start": 86.0,
+          "end": 88.38,
+          "text": " The feedback form should ask where people stopped and how long setup took.",
+          "language": "en"
+        },
+        {
+          "start": 91.96000000000001,
+          "end": 94.86,
+          "text": " We can include an optional comment box, but keep the required questions short.",
+          "language": "en"
+        },
+        {
+          "start": 98.27000000000001,
+          "end": 101.13,
+          "text": " I will update the calendar and send the draft agenda to everyone tomorrow morning.",
+          "language": "en"
+        },
+        {
+          "start": 104.8,
+          "end": 107.3,
+          "text": " Could you also prepare one slide comparing the old workflow with the new one?",
+          "language": "en"
+        },
+        {
+          "start": 110.93,
+          "end": 113.57,
+          "text": " Yes, and I will include a checklist with an owner and due date for every task.",
+          "language": "en"
+        },
+        {
+          "start": 117.2,
+          "end": 119.94,
+          "text": " After the review, we can decide whether to invite 20 more teams next week.",
+          "language": "en"
+        }
+      ]
+    },
+    {
+      "startSeconds": 120.0,
+      "endSeconds": 180.0,
+      "detectedLanguage": "uk",
+      "languageProbability": 0.9964019060134888,
+      "topAlternatives": [
+        {
+          "language": "uk",
+          "probability": 0.9964019060134888
+        },
+        {
+          "language": "ru",
+          "probability": 0.003036362584680319
+        },
+        {
+          "language": "en",
+          "probability": 8.729945693630725e-05
+        },
+        {
+          "language": "it",
+          "probability": 7.447262032655999e-05
+        },
+        {
+          "language": "bg",
+          "probability": 5.25103387190029e-05
+        }
+      ],
+      "selectedLanguage": "uk",
+      "russianMappedToUkrainian": false,
+      "segments": [
+        {
+          "start": 120.0,
+          "end": 124.06,
+          "text": " Повернімося до перекладу. Андрій уже переглянув перші сторінки і залишив кілька корисних правок.",
+          "language": "uk"
+        },
+        {
+          "start": 126.86,
+          "end": 130.26,
+          "text": " Я прийму його пропозиції та перевірю, щоб назви кнопок збігалися з додатком.",
+          "language": "uk"
+        },
+        {
+          "start": 133.11,
+          "end": 136.23,
+          "text": " Редакторка підтвердила, що завершить решту інструкцій завтра до обіду.",
+          "language": "uk"
+        },
+        {
+          "start": 139.05,
+          "end": 142.25,
+          "text": " Чудово, після цього перевіримо налаштування на новому обліковому записі.",
+          "language": "uk"
+        },
+        {
+          "start": 142.57,
+          "end": 148.32,
+          "text": " Для відгуків я додала питання про помилки, зрозумілість і витрачений час.",
+          "language": "uk"
+        },
+        {
+          "start": 151.15,
+          "end": 154.39,
+          "text": " Форма коротка, а поле для додаткових коментарів залишила необов'язковим.",
+          "language": "uk"
+        },
+        {
+          "start": 157.2,
+          "end": 160.57999999999998,
+          "text": " Я також склала список десяти команд із новими та досвідченими користувачами.",
+          "language": "uk"
+        },
+        {
+          "start": 163.44,
+          "end": 167.18,
+          "text": " Надійшли мені список сьогодні, я перевірю, чи всі підтвердили участь у татницю.",
+          "language": "uk"
+        },
+        {
+          "start": 170.0,
+          "end": 173.6,
+          "text": " Якщо хтось відмовиться, запросимо іншу команду до початку тестового запуску.",
+          "language": "uk"
+        },
+        {
+          "start": 176.41,
+          "end": 179.91,
+          "text": " Домовились, у понеділок переглянемо відповіді та вирішимо, чи розширювати доступ.",
+          "language": "uk"
+        }
+      ]
+    }
+  ],
+  "transcript": "Почнімо з плану запуску. Нам потрібно перевірити строки, ризики та відповідальних за кожен етап.  Найбільшими не торбує переклад інструкцій. Підрядник обіцяв готовий текст до середи.  Я вже написала редакторці. Вона надійшла першу частину сьогодні, а решту завтра вранці.  Добре, попросив Андрія перевірити назви кнопок і кроки початкового налаштування.  Він погодився. Я надійшлю йому посилання та коротко поясню, як залишати коментарі.  Ще треба вирішити, чи запрошуємо всіх клієнтів, чи спершу кілька команд.  Пропоную почати з 10 команд. Так ми швидше помітимо помилки без зайвого ризику.  Підтримку забезпечать двоє колег. Я також чергуватиму в робочому чаті в татницю.  Тоді до четверга підготуємо форму відгуків і короткий опис нового процесу.  Так, а запрошення надійшлемо після перевірки тексту та підтвердження графіка підтримки.  For the first release, let us invite 10 teams and review their feedback on Monday.  That gives support a manageable group while we check setup problems and confusing instructions.  I will ask two colleagues to cover the help channel throughout Friday afternoon.  Please make sure the invitation explains that this is a limited preview, not the final launch.  The feedback form should ask where people stopped and how long setup took.  We can include an optional comment box, but keep the required questions short.  I will update the calendar and send the draft agenda to everyone tomorrow morning.  Could you also prepare one slide comparing the old workflow with the new one?  Yes, and I will include a checklist with an owner and due date for every task.  After the review, we can decide whether to invite 20 more teams next week.  Повернімося до перекладу. Андрій уже переглянув перші сторінки і залишив кілька корисних правок.  Я прийму його пропозиції та перевірю, щоб назви кнопок збігалися з додатком.  Редакторка підтвердила, що завершить решту інструкцій завтра до обіду.  Чудово, після цього перевіримо налаштування на новому обліковому записі.  Для відгуків я додала питання про помилки, зрозумілість і витрачений час.  Форма коротка, а поле для додаткових коментарів залишила необов'язковим.  Я також склала список десяти команд із новими та досвідченими користувачами.  Надійшли мені список сьогодні, я перевірю, чи всі підтвердили участь у татницю.  Якщо хтось відмовиться, запросимо іншу команду до початку тестового запуску.  Домовились, у понеділок переглянемо відповіді та вирішимо, чи розширювати доступ.",
+  "reference": "Почнімо з плану запуску. Нам потрібно перевірити строки, ризики та відповідальних за кожен етап. Найбільше мене турбує переклад інструкцій. Підрядник обіцяв готовий текст до середи. Я вже написала редакторці. Вона надішле першу частину сьогодні, а решту завтра вранці. Добре, попроси Андрія перевірити назви кнопок і кроки початкового налаштування. Він погодився. Я надішлю йому посилання та коротко поясню, як залишати коментарі. Ще треба вирішити, чи запрошуємо всіх клієнтів, чи спершу кілька команд. Пропоную почати з десяти команд. Так ми швидше помітимо помилки без зайвого ризику. Підтримку забезпечать двоє колег. Я також чергуватиму в робочому чаті в п’ятницю. Тоді до четверга підготуємо форму відгуків і короткий опис нового процесу. Так, а запрошення надішлемо після перевірки тексту та підтвердження графіка підтримки. For the first release, let us invite ten teams and review their feedback on Monday. That gives support a manageable group while we check setup problems and confusing instructions. I will ask two colleagues to cover the help channel throughout Friday afternoon. Please make sure the invitation explains that this is a limited preview, not the final launch. The feedback form should ask where people stopped and how long setup took. We can include an optional comment box, but keep the required questions short. I will update the calendar and send the draft agenda to everyone tomorrow morning. Could you also prepare one slide comparing the old workflow with the new one? Yes, and I will include a checklist with an owner and due date for every task. After the review, we can decide whether to invite twenty more teams next week. Повернімося до перекладу. Андрій уже переглянув перші сторінки й залишив кілька корисних правок. Я прийму його пропозиції та перевірю, щоб назви кнопок збігалися з додатком. Редакторка підтвердила, що завершить решту інструкцій завтра до обіду. Чудово. Після цього перевіримо налаштування на новому обліковому записі. Для відгуків я додала питання про помилки, зрозумілість і витрачений час. Форма коротка, а поле для додаткових коментарів залишила необов’язковим. Я також склала список десяти команд із новими та досвідченими користувачами. Надішли мені список сьогодні. Я перевірю, чи всі підтвердили участь у п’ятницю. Якщо хтось відмовиться, запросимо іншу команду до початку тестового запуску. Домовились. У понеділок переглянемо відповіді та вирішимо, чи розширювати доступ.\n",
+  "wordErrorRate": 0.04336043360433604,
+  "autoBaseline": {
+    "detectedLanguage": "uk",
+    "transcript": "Почнімо з плану запуску. Нам потрібно перевірити строки, ризики та відповідальних за кожен етап.  Найбільшими не торбує переклад інструкцій. Підрядник обіцяв готовий текст до середи.  Я вже написала редакторці. Вона надійшла першу частину сьогодні, а решту завтра вранці.  Добре, попросу Андрія перевірити назви кнопок і кроки початкового налаштування.  Він погодився. Я надійшлю йому посилання та коротко поясню, як залишати коментарі.  Ще треба вирішити, чи запрошуємо всіх клієнтів, чи спершу кілька команд.  Пропоную почати з 10 команд. Так ми швидше помітимо помилки без зайвого ризику.  Підтримку забезпечать двоє колег. Я також чергуватиму в робочому чаті в татницю.  Тоді до четверга підготуємо форму відгуків і короткий опис нового процесу.  Так, а запрошення надійшлемо після перевірки тексту та підтвердження графіка підтримки.  Повернімося до перекладу. Андрій уже переглянув перші сторінки і залишив кілька корисних правок.  Я прийму його пропозиції та перевірю, щоб назви кнопок збігалися з додатком.  Редакторка підтвердила, що завершить решту інструкцій завтра до обіду.  Чудово, після цього перевіримо налаштування на новому обліковому записі.  Для відгуків я додала питання про помилки, зрозумілість і витрачений час.  Форма коротка, а поле для додаткових коментарів залишила необов'язковим.  Я також склала список десяти команди з новими та досвідченими користувачами.  Надійшли мені список сьогодні, я перевірю, чи всі підтвердили участь у татницю.  Якщо хтось відмовиться, запросимо іншу команду до початку тестового запуску.  Домовились, у понеділок переглянемо відповіді та вирішимо, чи розширювати доступ.",
+    "wordErrorRate": 0.4281842818428184,
+    "elapsedSeconds": 62.55868538701907
+  },
+  "elapsedSeconds": 168.84843045193702,
+  "peakRSSBytes": 3481481216
+}

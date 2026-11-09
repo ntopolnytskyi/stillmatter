@@ -111,8 +111,8 @@ public protocol TranscriptLanguageSamplingEngine: TranscriptionEngine {
                          languages: [TranscriptLanguage], track: TranscriptTrack) throws -> [TranscriptLanguageSample]
 }
 
-/// Engines conform when Auto can detect language independently for each decoded segment.
-public protocol SegmentwiseAutomaticTranscriptLanguageEngine: TranscriptionEngine {}
+/// Engines conform when Auto samples and transcribes fixed audio windows independently.
+public protocol WindowedAutomaticTranscriptLanguageEngine: TranscriptionEngine {}
 
 public protocol CancellableTranscriptLanguageSamplingEngine: TranscriptLanguageSamplingEngine {
     func sampleLanguages(audioURL: URL, starts: [Double], durationSeconds: Double,
@@ -181,12 +181,13 @@ private struct TranscriptionTrackCheckpoint: Codable {
     let sourceSize: Int
     let sourceModifiedAt: Date?
     let language: TranscriptLanguage
+    let languageStrategy: String?
     let engine: String
     let model: String
     let result: TranscriptionEngineResultRecord
 
     func matches(sessionID: String, source: TranscriptAudioSource, language: TranscriptLanguage,
-                 engine: TranscriptionEngine, fileManager: FileManager) -> Bool {
+                 languageStrategy: String?, engine: TranscriptionEngine, fileManager: FileManager) -> Bool {
         guard let attributes = try? fileManager.attributesOfItem(atPath: source.filePath) else { return false }
         return captureSessionID == sessionID
             && track == source.track
@@ -194,6 +195,7 @@ private struct TranscriptionTrackCheckpoint: Codable {
             && sourceSize == (attributes[.size] as? NSNumber)?.intValue
             && sourceModifiedAt == attributes[.modificationDate] as? Date
             && self.language == language
+            && self.languageStrategy == languageStrategy
             && self.engine == engine.engineIdentifier
             && model == engine.modelIdentifier
     }
@@ -293,9 +295,9 @@ public final class TranscriptionPipeline {
         var detectedLanguages: [TranscriptLanguage] = []
         let transcriptionLanguage: TranscriptLanguage
         if language == .automatic {
-            if engine is SegmentwiseAutomaticTranscriptLanguageEngine {
+            if engine is WindowedAutomaticTranscriptLanguageEngine {
                 transcriptionLanguage = .automatic
-                diagnostics.append("Auto uses per-segment language detection; segment language labels remain Auto.")
+                diagnostics.append("Auto selects a language for each 60-second window; Russian detection maps to Ukrainian.")
             } else {
                 let selection = try selectAutomaticLanguage(sources: sources, cancellation: cancellation)
                 transcriptionLanguage = selection.language
@@ -311,6 +313,8 @@ public final class TranscriptionPipeline {
         var checkpointFile = (try? Data(contentsOf: checkpointURL))
             .flatMap { try? JSONDecoder().decode(TranscriptionCheckpointFile.self, from: $0) }
             ?? TranscriptionCheckpointFile(tracks: [])
+        let languageStrategy = transcriptionLanguage == .automatic
+            && engine is WindowedAutomaticTranscriptLanguageEngine ? "minute-window-language-selection-v1" : nil
         for source in sources {
             if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
             guard fileManager.fileExists(atPath: source.filePath) else {
@@ -318,7 +322,7 @@ public final class TranscriptionPipeline {
             }
             let reusable = checkpointFile.tracks.first {
                 $0.matches(sessionID: bundle.captureSessionID, source: source, language: transcriptionLanguage,
-                    engine: engine, fileManager: fileManager)
+                    languageStrategy: languageStrategy, engine: engine, fileManager: fileManager)
             }
             let result: TranscriptionEngineResult
             if let reusable {
@@ -339,6 +343,7 @@ public final class TranscriptionPipeline {
                     sourceSize: (attributes[.size] as? NSNumber)?.intValue ?? 0,
                     sourceModifiedAt: attributes[.modificationDate] as? Date,
                     language: transcriptionLanguage,
+                    languageStrategy: languageStrategy,
                     engine: engine.engineIdentifier,
                     model: engine.modelIdentifier,
                     result: TranscriptionEngineResultRecord(result)
@@ -353,7 +358,9 @@ public final class TranscriptionPipeline {
             try validate(result.segments, expectedTrack: source.track)
             segments.append(contentsOf: result.segments)
             diagnostics.append(contentsOf: result.diagnostics.map { "\(source.track.rawValue): \($0)" })
-            if let detected = result.detectedLanguage, !detectedLanguages.contains(detected) {
+            let segmentLanguages = result.segments.map(\.language).filter { $0 != .automatic }
+            let trackLanguages = segmentLanguages.isEmpty ? result.detectedLanguage.map { [$0] } ?? [] : segmentLanguages
+            for detected in trackLanguages where !detectedLanguages.contains(detected) {
                 detectedLanguages.append(detected)
             }
         }
