@@ -49,6 +49,22 @@ With the installed large-v3-turbo model on CPU/int8, sample selection scored Eng
 
 This is still synthesized speech with one voice assigned to each language, not recorded human conversation. The test does not establish accent, overlap, microphone, room-noise, or actual code-switching quality. Ticket 19 remains open; these results do not establish a generally reliable mixed-language Auto policy.
 
+### Per-segment language detection candidate
+
+The user asked to improve Auto selection. faster-whisper 1.2.1 exposes `multilingual=True`, which detects language for each decoder segment, plus a configurable `chunk_length`. This avoids choosing one language for a full mixed recording. Tested the same 180-second dialogue and exact reference with five- and ten-second chunks.
+
+| Mode | WER | Decode time | Peak RSS | Observation |
+| --- | ---: | ---: | ---: | --- |
+| Whole-track Auto, one initial language | 53.68% | 100.89 s | 3.44 GB | Detected Ukrainian, omitted all 20 English turns. |
+| Per-segment Auto, 10 s chunks | 50.65% | 210.40 s | 3.44 GB | Small WER gain, about twice the runtime. |
+| Per-segment Auto, 5 s chunks | **26.19%** | 406.91 s | 3.41 GB | Recovered English turns, but several Ukrainian phrases were rendered as Russian. |
+
+The five-second setting is the strongest candidate so far on this dialogue. It is still much slower than normal Auto, and language identification is imperfect. The production Auto path now uses this setting for faster-whisper and marks segment language as Auto rather than mislabeling every segment with the initial language. Explicit English and Ukrainian choices still use a fixed language. The pinned Whisper CLI has no per-segment mode and remains unsupported for Auto in this pipeline.
+
+Raw reports: [5-second per-segment Auto](capability-asr-auto-multilingual-dialogue-5s-2026-11-09.json), [10-second per-segment Auto](capability-asr-auto-multilingual-dialogue-10s-2026-11-09.json).
+
+This is a synthetic two-voice test, not human-recorded conversation. Accent, room noise, overlapping speech, and real within-speaker code-switching remain untested. Keep the UI disclosure and Ticket 19 open until manual human-audio evaluation verifies useful transcript quality and acceptable runtime.
+
 ## Disposition
 
 VAD chunking with independent Auto detection remains a candidate, not a validated approach. It improved the first fixture, did not improve the second, and missed words at language boundaries. Results change with chunk length; a short window emitted a hallucination; Ukrainian text still has errors; and runtime cost was high. The close 2 s boundary match is specific to one concatenated fixture. These TTS fixtures do not test arbitrary human switch positions, accents, noise, overlap, long recordings, or checkpoint/restart behavior. No production policy or quality threshold is selected.

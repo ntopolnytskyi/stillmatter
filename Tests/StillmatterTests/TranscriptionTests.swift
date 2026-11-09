@@ -19,6 +19,22 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(manifest.metadata["language"], "auto")
     }
 
+    func testSegmentwiseAutomaticEngineSkipsGlobalLanguageSampling() throws {
+        let fixture = try TranscriptionFixture()
+        let engine = SegmentwiseAutoStubTranscriptionEngine()
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: engine)
+
+        let result = try pipeline.generate(from: fixture.makeBundle(system: nil), selection: nil,
+            language: .automatic)
+
+        XCTAssertEqual(engine.languages, [.automatic])
+        XCTAssertEqual(result.document.language, .automatic)
+        XCTAssertEqual(result.document.detectedLanguages, [.english])
+        XCTAssertEqual(result.document.segments.map(\.language), [.automatic])
+        XCTAssertTrue(result.document.diagnostics.contains { $0.contains("per-segment") })
+    }
+
     func testAutomaticLanguageComparesStartAndMinuteTenInBothLanguagesBeforeWholeTrackDecode() throws {
         let fixture = try TranscriptionFixture()
         let engine = SamplingStubTranscriptionEngine()
@@ -579,6 +595,21 @@ private final class SamplingStubTranscriptionEngine: CancellableTranscriptLangua
         return TranscriptionEngineResult(segments: [TranscriptSegment(id: "full-track", startSeconds: 1,
             endSeconds: 2, text: "Full track transcript", language: segmentLanguage,
             track: track, speaker: track.speakerLabel)], detectedLanguage: segmentLanguage)
+    }
+}
+
+private final class SegmentwiseAutoStubTranscriptionEngine: TranscriptionEngine,
+    SegmentwiseAutomaticTranscriptLanguageEngine {
+    let engineIdentifier = "segmentwise-test-whisper"
+    let modelIdentifier = "segmentwise-test-model"
+    private(set) var languages: [TranscriptLanguage] = []
+
+    func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack) throws
+        -> TranscriptionEngineResult {
+        languages.append(language)
+        return TranscriptionEngineResult(segments: [TranscriptSegment(id: "automatic", startSeconds: 1,
+            endSeconds: 2, text: "Mixed words", language: .automatic, track: track,
+            speaker: track.speakerLabel)], detectedLanguage: .english)
     }
 }
 

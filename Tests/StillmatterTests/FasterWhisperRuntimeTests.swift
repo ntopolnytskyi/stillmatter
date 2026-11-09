@@ -48,6 +48,27 @@ final class FasterWhisperRuntimeTests: XCTestCase {
             }
     }
 
+    func testAutomaticEnginePreservesAutomaticSegmentLanguageForPerSegmentDetection() throws {
+        let root = try makeComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executableURL = root.appendingPathComponent("runtime/bin/python3")
+        let script = """
+        #!/bin/sh
+        cat > "$5" <<'JSON'
+        {"language":"en","segmentwise_language_detection":true,"segments":[{"start":0,"end":1,"text":"Hello"}]}
+        JSON
+        """
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        let result = try FasterWhisperTranscriptionEngine(componentURL: root, modelIdentifier: "fixture")
+            .transcribe(audioURL: URL(fileURLWithPath: "/fixture/audio.wav"), language: .automatic,
+                track: .microphone)
+
+        XCTAssertEqual(result.detectedLanguage, .english)
+        XCTAssertEqual(result.segments.first?.language, .automatic)
+    }
+
     func testEngineRunsManagedRuntimeAndNormalizesSegments() throws {
         let root = try makeComponent()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -256,6 +277,12 @@ final class FasterWhisperRuntimeTests: XCTestCase {
                       "A model-only check accepts runtimes that cannot decode recordings")
         XCTAssertTrue(check.contains("decoded_audio[begin:end]"),
                       "Auto samples must use the audio decoder API supported by the pinned runtime")
+        XCTAssertTrue(check.contains("transcribe_options[\"multilingual\"] = True"),
+                      "Automatic transcription must redetect language for each decoder segment")
+        XCTAssertTrue(check.contains("transcribe_options[\"chunk_length\"] = 5"),
+                      "Automatic transcription uses the evaluated five-second chunk size")
+        XCTAssertTrue(check.contains("segmentwise_language_detection"),
+                      "Transcript metadata must not label every chunk with only the initial language")
         XCTAssertFalse(check.contains("decode_audio(audio_path, duration="),
                        "The pinned faster-whisper decoder does not accept offset/duration arguments")
         if let decode = check.range(of: "decode_audio(sample.name)"),

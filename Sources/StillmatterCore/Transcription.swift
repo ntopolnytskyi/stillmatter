@@ -111,6 +111,9 @@ public protocol TranscriptLanguageSamplingEngine: TranscriptionEngine {
                          languages: [TranscriptLanguage], track: TranscriptTrack) throws -> [TranscriptLanguageSample]
 }
 
+/// Engines conform when Auto can detect language independently for each decoded segment.
+public protocol SegmentwiseAutomaticTranscriptLanguageEngine: TranscriptionEngine {}
+
 public protocol CancellableTranscriptLanguageSamplingEngine: TranscriptLanguageSamplingEngine {
     func sampleLanguages(audioURL: URL, starts: [Double], durationSeconds: Double,
                          languages: [TranscriptLanguage], track: TranscriptTrack,
@@ -290,9 +293,14 @@ public final class TranscriptionPipeline {
         var detectedLanguages: [TranscriptLanguage] = []
         let transcriptionLanguage: TranscriptLanguage
         if language == .automatic {
-            let selection = try selectAutomaticLanguage(sources: sources, cancellation: cancellation)
-            transcriptionLanguage = selection.language
-            diagnostics.append(contentsOf: selection.diagnostics)
+            if engine is SegmentwiseAutomaticTranscriptLanguageEngine {
+                transcriptionLanguage = .automatic
+                diagnostics.append("Auto uses per-segment language detection; segment language labels remain Auto.")
+            } else {
+                let selection = try selectAutomaticLanguage(sources: sources, cancellation: cancellation)
+                transcriptionLanguage = selection.language
+                diagnostics.append(contentsOf: selection.diagnostics)
+            }
         } else {
             transcriptionLanguage = language
         }

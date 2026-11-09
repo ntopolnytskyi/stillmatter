@@ -20,6 +20,7 @@ private struct FasterWhisperOutput: Decodable {
     }
 
     var language: String?
+    var segmentwise_language_detection: Bool?
     var segments: [Segment]?
     var average_log_probability: Double?
     var speech_duration_seconds: Double?
@@ -284,9 +285,19 @@ if sys.argv[1] == "--check":
 
 model_path, audio_path, language, output_path = sys.argv[1:5]
 model = WhisperModel(model_path, device="cpu", compute_type="int8")
-segments, info = model.transcribe(audio_path, language=None if language == "auto" else language, vad_filter=True)
+segmentwise_language_detection = language == "auto"
+transcribe_options = {
+    "language": None if segmentwise_language_detection else language,
+    "vad_filter": True,
+    "condition_on_previous_text": False,
+}
+if segmentwise_language_detection:
+    transcribe_options["multilingual"] = True
+    transcribe_options["chunk_length"] = 5
+segments, info = model.transcribe(audio_path, **transcribe_options)
 result = {
     "language": info.language,
+    "segmentwise_language_detection": segmentwise_language_detection,
     "segments": [
         {"start": segment.start, "end": segment.end, "text": segment.text}
         for segment in segments
@@ -297,7 +308,8 @@ with open(output_path, "w", encoding="utf-8") as output:
 """#
 }
 
-public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEngine, CancellableTranscriptLanguageSamplingEngine {
+public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEngine,
+    CancellableTranscriptLanguageSamplingEngine, SegmentwiseAutomaticTranscriptLanguageEngine {
     public let engineIdentifier = "faster-whisper"
     public let modelIdentifier: String
 
@@ -342,7 +354,13 @@ public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEng
         guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let output = try JSONDecoder().decode(FasterWhisperOutput.self, from: Data(contentsOf: outputURL))
         let detectedLanguage = output.language.flatMap(TranscriptLanguage.init(rawValue:))
-        let segmentLanguage = language == .automatic ? detectedLanguage : language
+        let segmentLanguage: TranscriptLanguage? = if language != .automatic {
+            language
+        } else if output.segmentwise_language_detection == true {
+            .automatic
+        } else {
+            detectedLanguage
+        }
         guard (output.segments ?? []).isEmpty || segmentLanguage != nil else {
             throw TranscriptionError.invalidEngineOutput("automatic language detection returned no supported language")
         }
