@@ -99,6 +99,51 @@ extension MeetingManagementView {
             firstPlayer.seek(to: 0.5)
             precondition(selectionView.audioTime.stringValue == secondTimeline,
                          "A stale Meeting player must not update the selected Meeting timeline")
+
+            let liveSnapshot = CaptureSnapshot(state: .recording, meetingTitle: "first",
+                meetingRelativePath: "Meetings/first/meeting.md", source: .teams, elapsedSeconds: 2,
+                failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil,
+                systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
+            let liveView = MeetingFixtureProviders.make(serviceProvider: {
+                MeetingManagementService(vault: vault, captureSnapshot: { liveSnapshot })
+            })
+            liveView.refresh(isVisible: true)
+            await waitForMeetingFixture("live Meeting browser") { liveView.rows.contains { $0.id == "first" } }
+            let liveIndex = liveView.rows.firstIndex(where: { $0.id == "first" })!
+            liveView.table.selectRowIndexes(IndexSet(integer: liveIndex), byExtendingSelection: false)
+            liveView.show(row: liveIndex)
+            await waitForMeetingFixture("live Meeting detail") { liveView.displayedDetail?.row.id == "first" }
+            precondition(liveView.displayedDetail?.row.captureState == .live &&
+                         liveView.overviewPage.isHidden && liveView.timelinePage.isHidden &&
+                         liveView.pageSelector.isHidden && liveView.pinnedAudio.isHidden &&
+                         liveView.toolbar.isHidden && liveView.status.stringValue.contains("Recording is active"),
+                         "Recording detail must show guidance without exposing prior Meeting content or playback")
+            liveView.refresh(isVisible: false)
+
+            let queuedStore = try JobStore(databaseURL: workspaceRoot.appendingPathComponent("Support/state-fixture.sqlite"))
+            _ = try queuedStore.enqueue(id: "queued-second", manifest: JobManifest(
+                type: MeetingSummaryJob.type, title: "Summarize second", executionClass: .heavy,
+                stages: [JobStageDefinition(id: "summarize", title: "Generate Summary")],
+                metadata: ["capture_session_id": "second"], maxAutomaticRetries: 0))
+            let queuedView = MeetingFixtureProviders.make(serviceProvider: {
+                MeetingManagementService(vault: vault, jobStore: queuedStore)
+            })
+            queuedView.refresh(isVisible: true)
+            await waitForMeetingFixture("queued Meeting browser") { queuedView.rows.contains { $0.id == "second" } }
+            let queuedIndex = queuedView.rows.firstIndex(where: { $0.id == "second" })!
+            queuedView.table.selectRowIndexes(IndexSet(integer: queuedIndex), byExtendingSelection: false)
+            queuedView.show(row: queuedIndex)
+            await waitForMeetingFixture("queued Meeting detail") { queuedView.displayedDetail?.row.id == "second" }
+            precondition(queuedView.displayedDetail?.row.processingState == .processing &&
+                         queuedView.overviewPage.isHidden && queuedView.timelinePage.isHidden &&
+                         queuedView.pageSelector.isHidden && queuedView.pinnedAudio.isHidden &&
+                         queuedView.toolbar.isHidden && !queuedView.processingProgress.isHidden &&
+                         queuedView.processingProgress.accessibilityLabel() == "Processing" &&
+                         (queuedView.processingProgress.accessibilityValue() as? String)?.contains("Work in progress") == true &&
+                         queuedView.status.stringValue.contains("Meeting content will appear when it finishes"),
+                         "Queued work must show separate wait guidance while all Meeting content remains hidden")
+            queuedView.refresh(isVisible: false)
+
             let readable = selectionView.displayedDetail!
             selectionView.bindAudio(MeetingPlayback(capability: .unavailable, message: "Audio unavailable"))
             await waitForMeetingFixture("unavailable playback") { !selectionView.playButton.isEnabled }
