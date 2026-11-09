@@ -65,6 +65,44 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertFalse(first.segments.contains { $0.speaker.contains("0") || $0.speaker.contains("1") })
     }
 
+    func testEchoCancellationFallbackUsesOriginalMicrophoneAndKeepsClustersAnonymous() throws {
+        let fixture = try TranscriptionFixture()
+        let bundle = fixture.makeBundle(system: fixture.bundle.system)
+        let rawMicrophone = try Data(contentsOf: fixture.microphoneURL)
+        let sidecar = TranscriptionAudioSidecar(
+            schemaVersion: TranscriptionAudioSidecar.currentSchemaVersion,
+            captureSessionID: bundle.captureSessionID,
+            recordingBundlePath: bundle.bundleFilePath,
+            selection: .originalMicrophone,
+            selectedAudioFilePath: fixture.microphoneURL.path,
+            originalMicrophoneFilePath: fixture.microphoneURL.path,
+            systemReferenceFilePath: fixture.systemAudioURL.path,
+            echoCancelledFilePath: nil,
+            metadataFilePath: fixture.selectionURL.path,
+            generatedAt: fixture.generatedAt,
+            quality: EchoCancellationQuality(confidence: 0.1, referenceCorrelation: 0.02,
+                estimatedEchoReductionDB: 0.1, retainedSignalRatio: 0.9),
+            diagnostics: ["Echo cancellation was uncertain; transcription will use the original microphone track."]
+        )
+        let transcription = StubTranscriptionEngine(textByTrack: [.microphone: "Me", .systemAudio: "Remote"])
+        let diarizer = StubSpeakerDiarizationEngine(turnsByTrack: [
+            .microphone: [SpeakerDiarizationTurn(startSeconds: 0.4, endSeconds: 1.1, clusterID: 7)],
+            .systemAudio: [SpeakerDiarizationTurn(startSeconds: 0.5, endSeconds: 1.3, clusterID: 2)]
+        ])
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: transcription, diarizationEngine: diarizer)
+
+        let document = try pipeline.generate(from: bundle, selection: sidecar, language: .english).document
+
+        XCTAssertEqual(transcription.audioPaths, [fixture.microphoneURL.path, fixture.systemAudioURL.path])
+        XCTAssertEqual(diarizer.audioPaths, [fixture.microphoneURL.path, fixture.systemAudioURL.path])
+        XCTAssertEqual(document.audioSources[0].selection, TranscriptionAudioSelection.originalMicrophone.rawValue)
+        XCTAssertTrue(document.diagnostics.contains { $0.contains("Echo cancellation was uncertain") })
+        XCTAssertEqual(document.speakerTurns?.map(\.clusterID), [7, 2])
+        XCTAssertEqual(document.segments.map(\.speaker), ["Me", "Meeting audio"])
+        XCTAssertEqual(try Data(contentsOf: fixture.microphoneURL), rawMicrophone)
+    }
+
     func testDiarizationFailureKeepsAudioAndReusesCompletedTrackCheckpointOnRetry() throws {
         let fixture = try TranscriptionFixture()
         let bundle = fixture.makeBundle(system: fixture.bundle.system)
@@ -658,6 +696,7 @@ private final class StubSpeakerDiarizationEngine: SpeakerDiarizationEngine {
     let turnsByTrack: [TranscriptTrack: [SpeakerDiarizationTurn]]
     let failingTracks: Set<TranscriptTrack>
     private(set) var audioTracks: [TranscriptTrack] = []
+    private(set) var audioPaths: [String] = []
 
     init(turnsByTrack: [TranscriptTrack: [SpeakerDiarizationTurn]], failingTracks: Set<TranscriptTrack> = []) {
         self.turnsByTrack = turnsByTrack
@@ -667,6 +706,7 @@ private final class StubSpeakerDiarizationEngine: SpeakerDiarizationEngine {
     func diarize(audioURL: URL) throws -> [SpeakerDiarizationTurn] {
         let track: TranscriptTrack = audioURL.lastPathComponent == "mic.m4a" ? .microphone : .systemAudio
         audioTracks.append(track)
+        audioPaths.append(audioURL.path)
         if failingTracks.contains(track) { throw SpeakerDiarizationError.invalidOutput("fixture failure for \(track.rawValue)") }
         return turnsByTrack[track] ?? []
     }
