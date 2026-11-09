@@ -368,6 +368,26 @@ final class SharedControlsUITests: XCTestCase {
         XCTAssertTrue((status.value as? String ?? status.label).contains("Granted"))
     }
 
+    func testLocalTranscriptionDiagnosticExplainsSpeakerModels() throws {
+        launch()
+        app.buttons["controls-nav-settings"].click()
+
+        let title = app.staticTexts["settings-diagnostic-title-localTranscription"]
+        for _ in 0..<5 where !title.exists { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(title.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(title.label, "Local transcription and speaker turns")
+
+        let status = app.staticTexts["settings-status-localTranscription"]
+        XCTAssertTrue((status.value as? String ?? status.label).contains("Missing"))
+        let detail = app.staticTexts["settings-detail-localTranscription"]
+        XCTAssertTrue((detail.value as? String ?? detail.label).contains("speaker models"))
+        XCTAssertTrue((detail.value as? String ?? detail.label).contains("speaker attribution"))
+        let install = app.buttons["settings-diagnostic-localTranscription"]
+        XCTAssertTrue(install.exists)
+        XCTAssertEqual(install.label, "Install")
+        XCTAssertTrue(install.isEnabled)
+    }
+
     func testUnavailableCaptureIgnoresReturnAndLeavesWorkspaceUntouched() throws {
         app.launchEnvironment["STILLMATTER_CONTROLS_UI_TEST_SCENARIO"] = "unconfigured"
         launch()
