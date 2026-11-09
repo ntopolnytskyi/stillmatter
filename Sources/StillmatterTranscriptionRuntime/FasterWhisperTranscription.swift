@@ -31,6 +31,8 @@ private struct FasterWhisperOutput: Decodable {
 
     var language: String?
     var window_language_selection: Bool?
+    var tail_language: String?
+    var tail_start: Double?
     var segments: [Segment]?
     var language_windows: [LanguageWindow]?
     var average_log_probability: Double?
@@ -300,10 +302,11 @@ window_language_selection = language == "auto"
 if window_language_selection:
     decoded_audio = decode_audio(audio_path)
     window_samples = 60 * 16000
+    sampling_end = min(len(decoded_audio), 15 * window_samples)
     segments = []
     language_windows = []
-    for start_sample in range(0, len(decoded_audio), window_samples):
-        end_sample = min(start_sample + window_samples, len(decoded_audio))
+    for start_sample in range(0, sampling_end, window_samples):
+        end_sample = min(start_sample + window_samples, sampling_end)
         window_audio = decoded_audio[start_sample:end_sample]
         if len(window_audio) == 0:
             continue
@@ -326,10 +329,21 @@ if window_language_selection:
             "selected_language": selected_language,
             "russian_mapped_to_ukrainian": russian_mapped_to_ukrainian,
         })
+    tail_language = language_windows[-1]["selected_language"] if language_windows else None
+    tail_start = sampling_end / 16000
+    if sampling_end < len(decoded_audio) and tail_language is not None:
+        tail_segments, _ = model.transcribe(
+            decoded_audio[sampling_end:], language=tail_language, vad_filter=True,
+            condition_on_previous_text=False)
+        for segment in tail_segments:
+            segments.append({"start": segment.start + tail_start, "end": segment.end + tail_start,
+                             "text": segment.text, "language": tail_language})
     result = {
-        "language": language_windows[0]["selected_language"] if language_windows else None,
+        "language": segments[0]["language"] if segments else None,
         "window_language_selection": True,
         "language_windows": language_windows,
+        "tail_language": tail_language if sampling_end < len(decoded_audio) else None,
+        "tail_start": tail_start if sampling_end < len(decoded_audio) else None,
         "segments": segments,
     }
 else:
@@ -425,6 +439,9 @@ public final class FasterWhisperTranscriptionEngine: CancellableTranscriptionEng
             let override = window.russian_mapped_to_ukrainian ? ", Russian mapped to Ukrainian" : ""
             return "Auto language window \(Int(window.start))–\(Int(window.end))s: detected \(window.detected_language), selected \(window.selected_language)\(override)"
         })
+        if let tailLanguage = output.tail_language, let tailStart = output.tail_start {
+            resultDiagnostics.append("Auto uses the last sampled language \(tailLanguage) after \(Int(tailStart))s.")
+        }
         return TranscriptionEngineResult(
             segments: segments,
             detectedLanguage: detectedLanguage,

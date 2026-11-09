@@ -89,7 +89,7 @@ python3 experiments/meeting-ai-capabilities/make_three_minute_uk_en_uk_fixture.p
   --output .build/capabilities/asr-minute-language-uk-en-uk.json --compare-auto
 ```
 
-The fixture contains exactly 60 seconds each of Ukrainian, English, then Ukrainian speech. Auto detects one language for each minute and transcribes that window in English only when detection is English; Russian and all other language detections are routed to Ukrainian. The installed runtime's `detect_language` accepts 30-second encoder segments; the probe allows two per one-minute window. Results are in the [minute-window report](../../docs/meeting_ai_handoff/capability-asr-minute-language-uk-en-uk-2026-11-09.json). This aligned synthetic test does not establish arbitrary language-switch timing or human-meeting quality.
+The fixture contains exactly 60 seconds each of Ukrainian, English, then Ukrainian speech. Auto samples each minute for the first 15 minutes and transcribes each window in English only when detection is English; Russian and all other language detections are routed to Ukrainian. After minute 15, it transcribes the remaining tail using the language selected for minute 15. The installed runtime's `detect_language` accepts 30-second encoder segments; the probe allows two per one-minute window. Results are in the [minute-window report](../../docs/meeting_ai_handoff/capability-asr-minute-language-uk-en-uk-2026-11-09.json). This aligned synthetic test does not establish arbitrary language-switch timing or human-meeting quality; the policy cannot detect switches after minute 15.
 
 ## Ticket 03 downloaded-model evaluation
 

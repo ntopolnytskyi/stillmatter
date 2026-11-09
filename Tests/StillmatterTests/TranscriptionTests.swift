@@ -32,7 +32,10 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(result.document.language, .automatic)
         XCTAssertEqual(result.document.detectedLanguages, [.ukrainian, .english])
         XCTAssertEqual(result.document.segments.map(\.language), [.ukrainian, .english])
-        XCTAssertTrue(result.document.diagnostics.contains { $0.contains("60-second window") })
+        XCTAssertTrue(result.document.diagnostics.contains {
+            $0.contains("one-minute windows for the first 15 minutes")
+                && $0.contains("keeps the last sampled language")
+        })
     }
 
     func testAutomaticLanguageComparesStartAndMinuteTenInBothLanguagesBeforeWholeTrackDecode() throws {

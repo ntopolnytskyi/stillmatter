@@ -297,7 +297,7 @@ public final class TranscriptionPipeline {
         if language == .automatic {
             if engine is WindowedAutomaticTranscriptLanguageEngine {
                 transcriptionLanguage = .automatic
-                diagnostics.append("Auto selects a language for each 60-second window; Russian detection maps to Ukrainian.")
+                diagnostics.append("Auto samples one-minute windows for the first 15 minutes, then keeps the last sampled language; Russian detection maps to Ukrainian.")
             } else {
                 let selection = try selectAutomaticLanguage(sources: sources, cancellation: cancellation)
                 transcriptionLanguage = selection.language
@@ -314,7 +314,7 @@ public final class TranscriptionPipeline {
             .flatMap { try? JSONDecoder().decode(TranscriptionCheckpointFile.self, from: $0) }
             ?? TranscriptionCheckpointFile(tracks: [])
         let languageStrategy = transcriptionLanguage == .automatic
-            && engine is WindowedAutomaticTranscriptLanguageEngine ? "minute-window-language-selection-v1" : nil
+            && engine is WindowedAutomaticTranscriptLanguageEngine ? "first-15-minute-language-selection-v2" : nil
         for source in sources {
             if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
             guard fileManager.fileExists(atPath: source.filePath) else {
