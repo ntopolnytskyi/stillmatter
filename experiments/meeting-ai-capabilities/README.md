@@ -47,6 +47,35 @@ For actual ASR, use the Python in the existing installed app component:
 
 The retained fixtures preserve the exact evaluated PCM16 bytes and match hashes in the result JSON. Omit `--retained-fixtures` to generate fresh TTS instead. The component path is derived from Stillmatter's `Transcription/installed.json` marker and installer paths. The probe reads existing model weights only. macOS `say` with installed Samantha/Lesya voices generates disposable fixtures; `ffmpeg` converts them. No weights or voices are downloaded. The first run measures five fixtures; `--compare` measures the same full mixed recording with VAD off and every constructed fixture chunk with independent Auto. Chunk boundaries are known from synthetic construction, not a validated segmentation algorithm. All recording duration remains included; chunk experiments never authorize content boundaries. Reports include outputs, references, waveform hashes, WER, runtime versions, timings and peak RSS. WER splits Unicode word runs at punctuation (including apostrophes) and casefolds; no metric threshold or human-speech/voice-matching guarantee is implied.
 
+Evaluate full-coverage Auto segmentation candidates on a retained fixture with the installed local Silero VAD and ASR model:
+
+```sh
+'<component>/runtime/bin/python3' experiments/meeting-ai-capabilities/asr_autospeech_probe.py \
+  --component '<component>' --fixture experiments/meeting-ai-capabilities/fixtures/mixed.wav \
+  --output .build/capabilities/autospeech-vad-25s-merge05 \
+  --max-speech-duration-seconds 2.5 --min-chunk-duration-seconds 0.5
+```
+
+This accounts for every input sample as detected speech or an explicitly untranscribed VAD gap, resets Auto detection per chunk, and restores source-time offsets. It is an evaluation tool only: chunk-length sensitivity and synthetic-only evidence do not establish a production segmentation policy or human mixed-speech quality. Results for the current experiment are in the [Auto segmentation report](../../docs/meeting_ai_handoff/asr-auto-full-recording-experiment-2026-11-09.md).
+
+Generate and evaluate an exact three-minute, varied English/Ukrainian meeting conversation:
+
+```sh
+python3 experiments/meeting-ai-capabilities/make_three_minute_asr_fixture.py \
+  --output experiments/meeting-ai-capabilities/fixtures/mixed-three-minute.wav \
+  --reference-output .build/capabilities/mixed-three-minute-reference.txt
+'<component>/runtime/bin/python3' experiments/meeting-ai-capabilities/asr_language_selection_probe.py \
+  --component '<component>' --fixture experiments/meeting-ai-capabilities/fixtures/mixed-three-minute.wav \
+  --output .build/capabilities/asr-language-selection-three-minute.json \
+  --reference-file .build/capabilities/mixed-three-minute-reference.txt
+'<component>/runtime/bin/python3' experiments/meeting-ai-capabilities/asr_auto_baseline_probe.py \
+  --component '<component>' --fixture experiments/meeting-ai-capabilities/fixtures/mixed-three-minute.wav \
+  --reference-file .build/capabilities/mixed-three-minute-reference.txt \
+  --output .build/capabilities/asr-language-selection-three-minute-auto.json
+```
+
+The fixture is synthesized afresh from 40 unique, responsive dialogue turns with local macOS Samantha (English) and Lesya (Ukrainian) voices. The exact transcript is saved for WER scoring, and turn pauses are spread across an exact 180-second duration. This is more varied than repeating phrases, but remains TTS: it does not establish quality on recorded human conversation, accents, overlapping speakers, or room noise. The full decode takes several minutes on the measured CPU configuration. Results for the varied dialogue are in the [sample-selection report](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-dialogue-2026-11-09.json) and [same-audio Auto baseline](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-dialogue-auto-2026-11-09.json). The earlier repeated-phrase stress results remain in the [repetition report](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-2026-11-09.json).
+
 ## Ticket 03 downloaded-model evaluation
 
 The user authorized evaluation downloads. Model weights stay outside the repository in
