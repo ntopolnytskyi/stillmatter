@@ -375,7 +375,7 @@ final class SharedControlsUITests: XCTestCase {
         let title = app.staticTexts["settings-diagnostic-title-localTranscription"]
         for _ in 0..<5 where !title.exists { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(title.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertEqual(title.label, "Local transcription and speaker turns")
+        XCTAssertEqual(title.value as? String ?? title.label, "Local transcription and speaker turns")
 
         let status = app.staticTexts["settings-status-localTranscription"]
         XCTAssertTrue((status.value as? String ?? status.label).contains("Missing"))
@@ -385,6 +385,13 @@ final class SharedControlsUITests: XCTestCase {
         let install = app.buttons["settings-diagnostic-localTranscription"]
         XCTAssertTrue(install.exists)
         XCTAssertEqual(install.label, "Install")
+        XCTAssertTrue(install.isEnabled)
+
+        install.click()
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "Setup needs attention"), evaluatedWith: detail)
+        expectation(for: NSPredicate(format: "label == %@", "Retry"), evaluatedWith: install)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue((status.value as? String ?? status.label).contains("Missing"))
         XCTAssertTrue(install.isEnabled)
     }
 

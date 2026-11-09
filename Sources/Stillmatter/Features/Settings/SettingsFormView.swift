@@ -278,6 +278,7 @@ final class SettingsFormView: NSView {
         var button: NSButton?
         if let buttonTitle = buttonTitle {
             let actionButton = controls.button(buttonTitle, identifier: "settings-diagnostic-\(id)", target: self, action: #selector(runDiagnosticAction(_:)))
+            actionButton.setAccessibilityLabel(buttonTitle)
             actionButton.identifier = NSUserInterfaceItemIdentifier(id)
             actionButton.setContentHuggingPriority(.required, for: .horizontal)
             views.append(actionButton)
@@ -416,6 +417,7 @@ final class SettingsFormView: NSView {
             : " Affects: \(item.affectedFeatures.joined(separator: ", "))."
         row.detailLabel.stringValue = item.explanation + affected
         row.actionButton?.title = item.actionTitle ?? "Ready"
+        row.actionButton?.setAccessibilityLabel(item.actionTitle ?? "Ready")
         row.actionButton?.isEnabled = item.actionTitle != nil
     }
 
