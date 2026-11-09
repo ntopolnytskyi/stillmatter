@@ -539,6 +539,7 @@ final class MeetingManagementView: NSView {
             page.spacing = GraphiteFocusPresentation.Space.page + GraphiteFocusPresentation.Space.compact
             page.edgeInsets = overviewPage.edgeInsets
         }
+        actionItemsPage.edgeInsets.top = GraphiteFocusPresentation.Space.compact
         let titleGroup = NSStackView(views: [eyebrow, meetingTitle])
         titleGroup.orientation = .vertical
         titleGroup.alignment = .leading
@@ -622,7 +623,8 @@ final class MeetingManagementView: NSView {
         addSubview(pinnedAudio)
         addSubview(scroll)
         pinnedAudio.translatesAutoresizingMaskIntoConstraints = false
-        overviewScrollTop = scroll.topAnchor.constraint(equalTo: pinnedAudio.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact)
+        // Hidden audio still has a frame; only the transcript should reserve space for it.
+        overviewScrollTop = scroll.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact)
         timelineScrollTop = scroll.topAnchor.constraint(equalTo: pinnedAudio.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),

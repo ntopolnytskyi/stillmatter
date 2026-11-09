@@ -16,7 +16,7 @@ struct MeetingOverviewSection: View {
     let reassignNoteTask: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.compact) {
+        VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.flush) {
             HStack(alignment: .center, spacing: GraphiteFocusPresentation.Space.compact) {
                 Text(title).font(GraphiteFocusSwiftUI.sectionHeading)
                 Spacer()

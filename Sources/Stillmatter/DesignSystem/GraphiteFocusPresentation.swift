@@ -4,7 +4,7 @@ import SwiftUI
 /// Central semantic presentation roles for the Graphite Focus contract.
 /// Feature views consume these roles instead of choosing visual literals.
 struct GraphiteFocusEnvironment: Equatable {
-    var increasedContrast: Bool
+var increasedContrast: Bool
     var reducedTransparency: Bool
     var reducedMotion: Bool
     var activeWindow: Bool
