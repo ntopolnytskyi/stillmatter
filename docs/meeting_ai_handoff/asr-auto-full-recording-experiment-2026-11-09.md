@@ -65,6 +65,8 @@ Raw reports: [5-second per-segment Auto](capability-asr-auto-multilingual-dialog
 
 This is a synthetic two-voice test, not human-recorded conversation. Accent, room noise, overlapping speech, and real within-speaker code-switching remain untested. Keep the UI disclosure and Ticket 19 open until manual human-audio evaluation verifies useful transcript quality and acceptable runtime.
 
+Validation for the implementation: the full package coverage lane passed **438 tests, 4 skipped, 0 failures**. The incremental changed-source gate passed **15/15 executable lines (100%)**: Core 8/8 and transcription runtime 7/7. UI tests were skipped because no UI code changed. The focused clean-worktree Swift run passed 3/3 tests.
+
 ## Disposition
 
 VAD chunking with independent Auto detection remains a candidate, not a validated approach. It improved the first fixture, did not improve the second, and missed words at language boundaries. Results change with chunk length; a short window emitted a hallucination; Ukrainian text still has errors; and runtime cost was high. The close 2 s boundary match is specific to one concatenated fixture. These TTS fixtures do not test arbitrary human switch positions, accents, noise, overlap, long recordings, or checkpoint/restart behavior. No production policy or quality threshold is selected.
