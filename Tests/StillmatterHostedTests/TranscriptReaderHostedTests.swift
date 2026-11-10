@@ -27,6 +27,8 @@ final class TranscriptReaderHostedTests: XCTestCase {
         XCTAssertTrue(phrase.accessibilityHelp()?.contains("characters 8 through 13") == true)
         let time: NSButton = try find("transcript-time-one", in: reader)
         XCTAssertFalse(time.isEnabled)
+        XCTAssertEqual(time.title, "00:00:42")
+        XCTAssertNil(time.image, "Phrase timecodes have no play triangle")
         reader.viewPicker.selectItem(withTitle: "Clear text")
         reader.changeView()
         XCTAssertEqual(reader.state.view, .clearText)
@@ -58,6 +60,44 @@ final class TranscriptReaderHostedTests: XCTestCase {
         reader.search.stringValue = "missing"
         reader.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: reader.search))
         XCTAssertEqual(reader.feedback.stringValue, "No matches in this recording.")
+    }
+
+    @MainActor
+    func testPaginationSpeakerSelectionSourceNavigationAndTimeActions() throws {
+        let navigation = MeetingTimelineNavigation()
+        var savedView: TranscriptReadingView?
+        var sought: TranscriptReaderPhrase?
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls(), saveView: { savedView = $0 }, navigation: navigation)
+        let phrases = (0..<205).map { index in
+            TranscriptReaderPhrase(id: "s\(index)", seconds: Double(index * 60), speaker: index % 2 == 0 ? "Me" : "Guest",
+                                   text: "phrase \(index)", seekSeconds: Double(index * 60))
+        }
+        reader.load(meetingID: "one", phrases: phrases, hasAudio: true, seek: { sought = $0 })
+        let time: NSButton = try find("transcript-time-s0", in: reader)
+        time.performClick(nil)
+        XCTAssertEqual(sought?.id, "s0")
+        reader.nextPage.performClick(nil)
+        XCTAssertEqual(reader.feedback.stringValue, "Results 101–200 of 205")
+        reader.previousPage.performClick(nil)
+        XCTAssertEqual(reader.feedback.stringValue, "Results 1–100 of 205")
+        let item = NSMenuItem(title: "Me", action: nil, keyEquivalent: "")
+        item.representedObject = "Me"
+        reader.selectSpeaker(item)
+        XCTAssertEqual(reader.state.results.count, 103)
+        reader.selectSpeaker(item)
+        XCTAssertEqual(reader.state.results.count, 205)
+        reader.selectSpeaker(NSMenuItem(title: "All speakers", action: nil, keyEquivalent: ""))
+        reader.viewPicker.selectItem(withTitle: "By speakers")
+        reader.changeView()
+        XCTAssertEqual(savedView, .speakers)
+        navigation.show(seconds: 12240, segmentID: "s204", kind: .transcript)
+        XCTAssertEqual(reader.state.selectedID, "s204")
+        XCTAssertEqual(reader.state.page, 2)
+        navigation.show(seconds: 0, segmentID: "missing", kind: .transcript)
+        XCTAssertEqual(reader.state.selectedID, "s204")
+        XCTAssertEqual(TranscriptReaderView.time(.infinity), "Time unavailable")
+        XCTAssertEqual(TranscriptReaderView.time(-1), "Time unavailable")
+        XCTAssertEqual(TranscriptReaderView.time(14400), "04:00:00")
     }
 
     @MainActor

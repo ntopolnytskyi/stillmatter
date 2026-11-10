@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import XCTest
 import StillmatterCore
 
@@ -292,6 +293,9 @@ extension StillmatterFlowsUITests {
         search.typeText("moment 119")
         XCTAssertTrue(app.staticTexts["Results 1–1 of 1"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["transcript-text-s119"].exists)
+        app.staticTexts["transcript-text-s119"].rightClick()
+        app.menuItems["Copy with timestamp"].click()
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Guest 03:58:00 Synthetic searchable moment 119")
         app.radioButtons["Summary"].click()
         app.radioButtons["Transcript"].click()
         XCTAssertTrue(app.staticTexts["transcript-text-s119"].exists)
