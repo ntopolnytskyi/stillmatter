@@ -91,6 +91,74 @@ final class MacEchoCancellationProcessorTests: XCTestCase {
                        "Echo processing must leave the original microphone evidence unchanged")
     }
 
+    func testShortWindowsCancelEchoAroundSeparateMicrophoneSpeech() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StillmatterInterleavedEchoTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let sampleRate = Int(SpanAudioReader.sampleRate)
+        let sampleCount = sampleRate * 46
+        let reference = noise(sampleCount).enumerated().map { index, sample in
+            let envelope: [Float] = [0.05, 0.8, 0.2, 1.0, 0.1, 0.6, 0.3, 0.9]
+            return sample * envelope[(index / (sampleRate / 2)) % envelope.count]
+        }
+        let microphoneWithoutVoice = echo(of: reference, delay: Int(0.146 * Double(sampleRate)))
+        let voice = syntheticVoicedReply(sampleCount, sampleRate: sampleRate, amplitude: 0.01)
+        let voiceRanges = [10..<15, 30..<35]
+        var microphoneWithVoice = microphoneWithoutVoice
+        for range in voiceRanges {
+            for second in range {
+                let start = sampleRate * second
+                let end = start + sampleRate
+                for index in start..<end { microphoneWithVoice[index] += voice[index] }
+            }
+        }
+
+        let microphoneURL = root.appendingPathComponent("mic-with-voice.wav")
+        let echoOnlyMicrophoneURL = root.appendingPathComponent("mic-echo-only.wav")
+        let referenceURL = root.appendingPathComponent("system.wav")
+        let outputURL = root.appendingPathComponent("selected-with-voice.wav")
+        let echoOnlyOutputURL = root.appendingPathComponent("selected-echo-only.wav")
+        try writeWav(microphoneWithVoice, to: microphoneURL, sampleRate: sampleRate)
+        try writeWav(microphoneWithoutVoice, to: echoOnlyMicrophoneURL, sampleRate: sampleRate)
+        try writeWav(reference, to: referenceURL, sampleRate: sampleRate)
+
+        let processor = MacEchoCancellationProcessor()
+        let result = try processor.process(microphoneURL: microphoneURL,
+                                           systemReferenceURL: referenceURL,
+                                           outputURL: outputURL)
+        let echoOnlyResult = try processor.process(microphoneURL: echoOnlyMicrophoneURL,
+                                                   systemReferenceURL: referenceURL,
+                                                   outputURL: echoOnlyOutputURL)
+        let outputReader = try SpanAudioReader(url: outputURL)
+        let echoOnlyReader = try SpanAudioReader(url: echoOnlyOutputURL)
+
+        XCTAssertEqual(result.shouldUseSidecar, true)
+        XCTAssertEqual(echoOnlyResult.shouldUseSidecar, true)
+        XCTAssertTrue(result.diagnostics.contains {
+            $0.contains("5-second windows (short tails merge up to 7.5 seconds)")
+        })
+        for (start, end) in [(2.0, 9.0), (22.0, 29.0), (40.0, 46.0)] {
+            let input = Array(microphoneWithoutVoice[Int(start * Double(sampleRate))..<Int(end * Double(sampleRate))])
+            let output = try echoOnlyReader.samples(from: start, to: end)
+            XCTAssertLessThan(rms(output), rms(input) * 0.4,
+                               "Echo should be reduced in \(start)–\(end)s.")
+        }
+        for range in voiceRanges {
+            let start = Double(range.lowerBound)
+            let end = Double(range.upperBound)
+            let withVoice = try outputReader.samples(from: start, to: end)
+            let echoOnly = try echoOnlyReader.samples(from: start, to: end)
+            let retainedVoice = zip(withVoice, echoOnly).map { $0.0 - $0.1 }
+            let sourceStart = sampleRate * range.lowerBound
+            let sourceEnd = sampleRate * range.upperBound
+            let sourceVoice = Array(voice[sourceStart..<sourceEnd])
+            XCTAssertGreaterThan(rms(retainedVoice), rms(sourceVoice) * 0.7,
+                                 "Separate microphone speech should survive at \(start)–\(end)s.")
+        }
+    }
+
     func testExternalRecordingBundleMatchesRequestedSelection() throws {
         let environment = ProcessInfo.processInfo.environment
         guard let bundlePath = environment["STILLMATTER_ECHO_REPLAY_BUNDLE"],
@@ -100,6 +168,7 @@ final class MacEchoCancellationProcessorTests: XCTestCase {
         }
         let root = URL(fileURLWithPath: bundlePath, isDirectory: true)
         let retainedOutputPath = environment["STILLMATTER_ECHO_REPLAY_OUTPUT"]
+        let retainedSelectionPath = environment["STILLMATTER_ECHO_REPLAY_SELECTED_OUTPUT"]
         let outputURL = retainedOutputPath.map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.temporaryDirectory
                 .appendingPathComponent("StillmatterEchoReplay-\(UUID().uuidString).wav")
@@ -109,12 +178,13 @@ final class MacEchoCancellationProcessorTests: XCTestCase {
             }
         }
 
-        let processingOutputURL = retainedOutputPath == nil
-            ? outputURL
-            : FileManager.default.temporaryDirectory
-                .appendingPathComponent("StillmatterEchoReplaySelection-\(UUID().uuidString).wav")
+        let processingOutputURL = retainedSelectionPath.map { URL(fileURLWithPath: $0) }
+            ?? (retainedOutputPath == nil
+                ? outputURL
+                : FileManager.default.temporaryDirectory
+                    .appendingPathComponent("StillmatterEchoReplaySelection-\(UUID().uuidString).wav"))
         defer {
-            if retainedOutputPath != nil {
+            if retainedOutputPath != nil && retainedSelectionPath == nil {
                 try? FileManager.default.removeItem(at: processingOutputURL)
             }
         }

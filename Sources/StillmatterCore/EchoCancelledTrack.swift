@@ -30,7 +30,7 @@ enum EchoCancelledTrack {
 
     /// Streamed in windows so a long meeting never has both tracks resident:
     /// an hour of 16 kHz mono is 230 MB per track decoded whole.
-    static let chunkSeconds: TimeInterval = 30
+    static let chunkSeconds: TimeInterval = 5
     /// Voice Isolation produced only 2.6-3.1 dB on the recordings used to
     /// validate this stage, while Standard mode produced at least 12.9 dB.
     /// Keep a deliberate gap between those ranges: a marginal result is more
@@ -116,8 +116,17 @@ enum EchoCancelledTrack {
         var verified = timing != nil
         while position < microphoneDuration {
             try Task.checkCancellation()
-            let end = min(position + chunkSeconds, microphoneDuration,
-                          timing?.nextBoundary(after: position) ?? microphoneDuration)
+            let spanEnd = min(microphoneDuration,
+                              timing?.nextBoundary(after: position) ?? microphoneDuration)
+            let remainingInSpan = spanEnd - position
+            // Avoid resetting the adaptive filter for a short tail. A final
+            // window up to half a chunk longer gives short meetings enough
+            // samples to measure cancellation without crossing a capture gap.
+            let windowDuration = remainingInSpan > chunkSeconds
+                && remainingInSpan <= chunkSeconds * 1.5
+                ? remainingInSpan
+                : chunkSeconds
+            let end = min(position + windowDuration, spanEnd)
             let mic = try micReader.samples(from: position, to: end)
             guard !mic.isEmpty else { break }
             let mapped = timing?.referenceRange(start: position, end: end)

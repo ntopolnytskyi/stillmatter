@@ -40,7 +40,9 @@ public final class MacEchoCancellationProcessor: EchoCancellationProcessing {
             ? String(format: "Additional residual suppression was bypassed for %.2f seconds while the echo-only baseline warmed up; some remote echo may remain in that interval.", report.suppressionWarmupSeconds)
             : nil
         var diagnostics = [
-            String(format: "Processed %.1f seconds in 30-second, 16 kHz mono windows.", report.processedSeconds),
+            String(format: "Processed %.1f seconds in %.0f-second windows (short tails merge up to %.1f seconds) at 16 kHz mono.",
+                   report.processedSeconds, EchoCancelledTrack.chunkSeconds,
+                   EchoCancelledTrack.chunkSeconds * 1.5),
             String(format: "Accepted %.1f seconds after delay estimation and adaptive cancellation.", acceptedSeconds),
             String(format: "Estimated microphone delay %.1f ms for reliably correlated windows.", report.delaySeconds * 1_000),
             String(format: "Strongest reference-envelope correlation %.3f (minimum 0.550).", report.referenceCorrelation),

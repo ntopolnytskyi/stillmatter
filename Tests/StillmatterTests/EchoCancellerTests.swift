@@ -66,6 +66,27 @@ final class EchoCancellerTests: XCTestCase {
         XCTAssertGreaterThan(canceller.echoReturnLossDB, 10)
     }
 
+    func testSuppressesEchoAfterRoomPathChanges() throws {
+        let reference = noise(Int(sampleRate) * 10, seed: 17)
+        let originalPath = echo(of: reference, delay: 120, gain: 0.4)
+        let changedPath = echo(of: reference, delay: 120, gain: 0.7)
+        var microphone = originalPath
+        let changeStart = Int(sampleRate * 5)
+        for index in changeStart..<microphone.count {
+            microphone[index] = changedPath[index]
+        }
+        var canceller = EchoCanceller()
+
+        let residual = try canceller.process(microphone: microphone, reference: reference)
+
+        let afterChangeStart = Int(sampleRate * 7)
+        let microphoneAfterChange = Array(microphone[afterChangeStart...])
+        let residualAfterChange = Array(residual[afterChangeStart...])
+        XCTAssertLessThan(rms(residualAfterChange), rms(microphoneAfterChange) * 0.4)
+        XCTAssertLessThan(canceller.possibleDoubleTalkSamples, Int(sampleRate * 0.5),
+                          "A correlated echo-path gain change should not be mistaken for a local reply.")
+    }
+
     /// Headphones: nothing of the remote audio is in the microphone, and the
     /// filter must leave the user's voice alone rather than fit noise.
     func testLeavesTheMicrophoneAloneWhenThereIsNoEcho() throws {

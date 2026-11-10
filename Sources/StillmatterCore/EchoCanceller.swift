@@ -49,6 +49,9 @@ struct EchoCanceller {
         /// Residual energy above the measured echo floor indicates possible
         /// double-talk, even when the local reply is quieter than the remote voice.
         var possibleDoubleTalkResidualRatioMargin: Float = 0.000005
+        /// A residual that remains correlated with the predicted remote signal
+        /// is more likely to be changing echo than an independent local reply.
+        var possibleDoubleTalkEchoCorrelationThreshold: Float = 0.6
         /// The adaptive filter needs a short learning interval before residual
         /// changes can be compared with an echo-only baseline.
         var suppressionBaselineWarmup: TimeInterval = 1.2
@@ -192,7 +195,8 @@ struct EchoCanceller {
     private mutating func suppressResidual(_ residual: [Float],
                                            predictions: [Float]) throws -> [Float] {
         let frame = max(1, Int(configuration.suppressionFrame * sampleRate))
-        var frameEnergies: [(elapsed: Double, predicted: Float, residual: Float, ratio: Float)] = []
+        var frameEnergies: [(elapsed: Double, predicted: Float, residual: Float, ratio: Float,
+                             residualPredictionProduct: Float)] = []
         let baselineStart = configuration.suppressionBaselineWarmup
         let baselineEnd = baselineStart + configuration.suppressionBaselineMeasurementWindow
         var analysisIndex = 0
@@ -200,15 +204,18 @@ struct EchoCanceller {
             let end = min(analysisIndex + frame, residual.count)
             var predictedEnergy: Float = 0
             var residualEnergy: Float = 0
+            var residualPredictionProduct: Float = 0
             for n in analysisIndex..<end {
                 predictedEnergy += predictions[n] * predictions[n]
                 residualEnergy += residual[n] * residual[n]
+                residualPredictionProduct += residual[n] * predictions[n]
             }
             let elapsed = Double(processedSamples + analysisIndex) / sampleRate
             let ratio = elapsed >= baselineStart && predictedEnergy > referenceActivityFloor
                 ? residualEnergy / predictedEnergy
                 : .infinity
-            frameEnergies.append((elapsed, predictedEnergy, residualEnergy, ratio))
+            frameEnergies.append((elapsed, predictedEnergy, residualEnergy, ratio,
+                                  residualPredictionProduct))
             analysisIndex = end
         }
         // Measure the baseline before later dialogue can contaminate it.
@@ -222,11 +229,27 @@ struct EchoCanceller {
             : echoFloorRatios[0]
         let possibleDoubleTalkRatio = echoOnlyResidualRatio
             + configuration.possibleDoubleTalkResidualRatioMargin
+        let residualEchoCorrelation = frameEnergies.indices.map { index -> Float in
+            let start = max(0, index - 2)
+            let end = min(frameEnergies.count, index + 3)
+            var predictedEnergy: Float = 0
+            var residualEnergy: Float = 0
+            var product: Float = 0
+            for energy in frameEnergies[start..<end] {
+                predictedEnergy += energy.predicted
+                residualEnergy += energy.residual
+                product += energy.residualPredictionProduct
+            }
+            let normalizer = sqrt(predictedEnergy * residualEnergy)
+            guard normalizer > 1e-12 else { return 0 }
+            return abs(product) / normalizer
+        }
         let residualRaisesAboveFloor = frameEnergies.map { energy in
             return energy.elapsed >= baselineEnd && energy.ratio.isFinite && energy.ratio > possibleDoubleTalkRatio
         }
         var possibleDoubleTalkFrames = [Bool](repeating: false, count: frameEnergies.count)
-        for index in residualRaisesAboveFloor.indices where residualRaisesAboveFloor[index] {
+        for index in residualRaisesAboveFloor.indices where residualRaisesAboveFloor[index]
+            && residualEchoCorrelation[index] < configuration.possibleDoubleTalkEchoCorrelationThreshold {
             let protectedStart = max(0, index - 2)
             let protectedEnd = min(possibleDoubleTalkFrames.count, index + 3)
             for protectedIndex in protectedStart..<protectedEnd {
