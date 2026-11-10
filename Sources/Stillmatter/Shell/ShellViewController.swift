@@ -69,7 +69,14 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             playbackTransportProvider: meetingPlaybackTransportProvider,
             openRecording: { [weak self] in self?.stateStore.state.select(.recording) },
             openWorkspaceFile: { [weak self] path in self?.openWorkspaceFile(path) },
-            presentationMetrics: meetingPresentationMetrics
+            presentationMetrics: meetingPresentationMetrics,
+            readTranscriptView: { [weak self] in self?.settingsStore.settings.transcriptReadingView ?? .timestamps },
+            saveTranscriptView: { [weak self] view in
+                guard let self else { return }
+                var settings = self.settingsStore.settings
+                settings.transcriptReadingView = view
+                self.settingsStore.settings = settings
+            }
         )
         workspace.setOnOpenSelection { [weak self] in
             guard let self, self.stateStore.state.selectedTab == .meetings else { return }

@@ -236,7 +236,7 @@ extension StillmatterFlowsUITests {
         try seedMeeting(transcript: true)
         openFixtureMeeting()
         app.radioButtons["Transcript"].click()
-        let search = app.textFields["meeting-transcript-search"]
+        let search = app.searchFields["meeting-transcript-search"]
         XCTAssertTrue(search.waitForExistence(timeout: 10))
         search.click()
         search.typeText("Synthetic searchable")
@@ -253,6 +253,63 @@ extension StillmatterFlowsUITests {
         search.typeKey("a", modifierFlags: .command)
         search.typeText("Synthetic searchable")
         XCTAssertTrue(app.staticTexts["Results 1–100 of 120"].waitForExistence(timeout: 10))
+    }
+
+    func testTranscriptViewsSpeakerFiltersKeyboardAndPersistenceKeepSavedText() throws {
+        try seedMeeting(transcript: true, multipleSpeakers: true)
+        let transcriptURL = meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.json")
+        let original = try Data(contentsOf: transcriptURL)
+        openFixtureMeeting()
+        app.radioButtons["Transcript"].click()
+        let picker = app.popUpButtons["meeting-transcript-view"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        XCTAssertEqual(picker.value as? String, "With timestamps")
+        XCTAssertTrue(app.buttons["transcript-time-s0"].exists)
+        XCTAssertFalse(app.buttons["transcript-time-s0"].isEnabled, "Missing audio is reading only")
+        app.typeKey("f", modifierFlags: .command)
+        let search = app.searchFields["meeting-transcript-search"]
+        search.typeText("Synthetic searchable")
+        XCTAssertTrue(app.staticTexts["Match 1 of 120"].waitForExistence(timeout: 10))
+        search.typeKey("g", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["Match 2 of 120"].waitForExistence(timeout: 10))
+        search.typeKey("g", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.staticTexts["Match 1 of 120"].waitForExistence(timeout: 10))
+        app.buttons["meeting-transcript-speakers"].click()
+        app.menuItems["Guest"].click()
+        XCTAssertTrue(app.staticTexts["Results 1–60 of 60"].waitForExistence(timeout: 10))
+        app.buttons["meeting-transcript-speakers"].click()
+        app.menuItems["Me"].click()
+        XCTAssertTrue(app.staticTexts["Results 1–100 of 120"].waitForExistence(timeout: 10))
+        picker.click()
+        app.menuItems["By speakers"].click()
+        XCTAssertEqual(picker.value as? String, "By speakers")
+        app.typeKey("2", modifierFlags: [.command, .shift])
+        XCTAssertEqual(picker.value as? String, "Clear text")
+        XCTAssertFalse(app.buttons["transcript-time-s0"].exists)
+        XCTAssertEqual(app.textViews.matching(identifier: "transcript-text-s0").count, 0)
+        search.click()
+        search.typeKey("a", modifierFlags: .command)
+        search.typeText("moment 119")
+        XCTAssertTrue(app.staticTexts["Results 1–1 of 1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["transcript-text-s119"].exists)
+        app.radioButtons["Summary"].click()
+        app.radioButtons["Transcript"].click()
+        XCTAssertTrue(app.staticTexts["transcript-text-s119"].exists)
+        relaunch()
+        openFixtureMeeting()
+        app.radioButtons["Transcript"].click()
+        XCTAssertEqual(app.popUpButtons["meeting-transcript-view"].value as? String, "Clear text")
+        XCTAssertEqual(try Data(contentsOf: transcriptURL), original)
+    }
+
+    func testEmptyTranscriptShowsFeedbackAndDisablesNavigation() throws {
+        try seedMeeting()
+        openFixtureMeeting()
+        app.radioButtons["Transcript"].click()
+        XCTAssertTrue(app.staticTexts["No Transcript available."].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["meeting-transcript-next"].isEnabled)
+        XCTAssertFalse(app.buttons["meeting-transcript-next-match"].isEnabled)
+        XCTAssertFalse(app.buttons["meeting-transcript-speakers"].isEnabled)
     }
 
     func testExternalNotesRenameKeepsDraftAndSavesResolutionToTheRenamedCanonicalFile() throws {
@@ -358,7 +415,7 @@ extension StillmatterFlowsUITests {
     }
 
     func seedMeeting(transcript: Bool = false, notes: String = "Original notes.",
-                     myActionItem: String? = nil, savedActionTitle: String? = nil) throws {
+                     myActionItem: String? = nil, savedActionTitle: String? = nil, multipleSpeakers: Bool = false) throws {
         // Prepare before launch so discovery does not depend on filesystem watcher timing.
         app.terminate()
         let directory = meetingURL.deletingLastPathComponent()
@@ -369,7 +426,7 @@ extension StillmatterFlowsUITests {
         if transcript {
             let segments: [[String: Any]] = (0..<120).map { index in
                 ["id": "s\(index)", "start": Double(index * 120), "end": Double(index * 120 + 1),
-                 "text": "Synthetic searchable moment \(index)", "language": "en", "track": "microphone", "speaker": "Me"]
+                 "text": "Synthetic searchable moment \(index)", "language": "en", "track": "microphone", "speaker": multipleSpeakers && index % 2 == 1 ? "Guest" : "Me"]
             }
             let document: [String: Any] = ["schema_version": 1, "capture_session_id": "ui-fixture",
                 "meeting_relative_path": "Meetings/ui-fixture/meeting.md", "language": "en", "detected_languages": ["en"],

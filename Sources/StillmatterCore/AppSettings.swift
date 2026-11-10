@@ -64,6 +64,7 @@ public struct AppSettings: Codable, Equatable {
     public var searchExcludedPatterns: [String]
     public var transcriptionModelChoice: TranscriptionModelChoice
     public var transcriptionLanguage: TranscriptLanguage
+    public var transcriptReadingView: TranscriptReadingView
     public var teamsRecordingMode: TeamsRecordingMode
 
     public init(
@@ -74,6 +75,7 @@ public struct AppSettings: Codable, Equatable {
         searchExcludedPatterns: [String] = [],
         transcriptionModelChoice: TranscriptionModelChoice = .recommended,
         transcriptionLanguage: TranscriptLanguage = .automatic,
+        transcriptReadingView: TranscriptReadingView = .timestamps,
         teamsRecordingMode: TeamsRecordingMode = .ask
     ) {
         self.stillmatterRootURL = stillmatterRootURL
@@ -83,6 +85,7 @@ public struct AppSettings: Codable, Equatable {
         self.searchExcludedPatterns = searchExcludedPatterns
         self.transcriptionModelChoice = transcriptionModelChoice
         self.transcriptionLanguage = transcriptionLanguage
+        self.transcriptReadingView = transcriptReadingView
         self.teamsRecordingMode = teamsRecordingMode
     }
 
@@ -95,6 +98,7 @@ public struct AppSettings: Codable, Equatable {
         case searchExcludedPatterns
         case transcriptionModelChoice
         case transcriptionLanguage
+        case transcriptReadingView
         case teamsRecordingMode
     }
 
@@ -115,6 +119,8 @@ public struct AppSettings: Codable, Equatable {
         transcriptionModelChoice = storedTranscriptionModel.flatMap(TranscriptionModelChoice.init(rawValue:)) ?? .recommended
         let storedTranscriptionLanguage = try container.decodeIfPresent(String.self, forKey: .transcriptionLanguage)
         transcriptionLanguage = storedTranscriptionLanguage.flatMap(TranscriptLanguage.init(rawValue:)) ?? .automatic
+        let storedReadingView = try container.decodeIfPresent(String.self, forKey: .transcriptReadingView)
+        transcriptReadingView = storedReadingView.flatMap(TranscriptReadingView.init(rawValue:)) ?? .timestamps
         let storedRecordingMode = try container.decodeIfPresent(String.self, forKey: .teamsRecordingMode)
         teamsRecordingMode = storedRecordingMode.flatMap(TeamsRecordingMode.init(rawValue:)) ?? .ask
     }
@@ -128,6 +134,7 @@ public struct AppSettings: Codable, Equatable {
         try container.encode(searchExcludedPatterns, forKey: .searchExcludedPatterns)
         try container.encode(transcriptionModelChoice, forKey: .transcriptionModelChoice)
         try container.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
+        try container.encode(transcriptReadingView, forKey: .transcriptReadingView)
         try container.encode(teamsRecordingMode, forKey: .teamsRecordingMode)
     }
 }

@@ -72,21 +72,17 @@ extension MeetingManagementView {
                          "Empty workspace must commit zero AppKit rows before stale layout")
         }
         #endif
-        let kinds = Set(MeetingTimelineMoment.Kind.allCases)
-        let moments = (0..<240).map { index in
-            MeetingTimelineMoment(id: "\(index)", seconds: Double(index * 60),
-                kind: index.isMultiple(of: 3) ? .action : .transcript,
-                text: index == 235 ? "unique late phrase" : "ordinary", context: "Speaker", seekSeconds: Double(index * 60))
+        let reader = TranscriptReaderState()
+        let phrases = (0..<240).map { index in
+            TranscriptReaderPhrase(id: "\(index)", seconds: Double(index * 60), speaker: "Speaker",
+                text: index == 235 ? "unique late phrase" : "ordinary", seekSeconds: Double(index * 60))
         }
-        let first = MeetingTimelineSelection.visible(moments, included: kinds, position: 0, query: "")
-        precondition(first.count == 15 && first.last?.seconds == 840, "Ordinary browsing must bound a four-hour timeline")
-        let fourthHour = MeetingTimelineSelection.visible(moments, included: [.action], position: 3 * 3600 + 15 * 60, query: "")
-        precondition(fourthHour.allSatisfy { $0.kind == .action && $0.seconds >= 11700 && $0.seconds < 12600 },
-                     "Hour jumps and independent filters must respect the selected window")
-        precondition(MeetingTimelineSelection.visible(moments, included: kinds, position: 0, query: "unique late phrase").count == 1,
-                     "Search must cover the whole recording")
-        precondition(MeetingTimelineSelection.visible(moments, included: kinds, position: 0, query: "no match").isEmpty,
-                     "Missing search terms must produce an empty result")
+        reader.load(meetingID: "fixture", phrases: phrases)
+        precondition(reader.pageRows.count == 100, "Ordinary browsing must bound a four-hour Transcript")
+        reader.setQuery("unique late phrase")
+        precondition(reader.results.first?.id == "235", "Search must cover the whole recording")
+        reader.setQuery("no match")
+        precondition(reader.results.isEmpty, "Missing search terms must produce an empty result")
         openTimeline()
         precondition(!caption.isHidden && !pinnedAudio.isHidden && pageSelector.selectedSegment == 4 && overviewPage.isHidden && !timelinePage.isHidden,
                      "Transcript replaces overview but keeps the header and transport")

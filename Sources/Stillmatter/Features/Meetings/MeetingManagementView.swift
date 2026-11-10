@@ -100,6 +100,10 @@ final class MeetingManagementView: NSView {
     private var timelineScrollTop: NSLayoutConstraint?
     let timelineRows = NSStackView()
     let timelineNavigation = MeetingTimelineNavigation()
+    private let readTranscriptView: () -> TranscriptReadingView
+    private let saveTranscriptView: (TranscriptReadingView) -> Void
+    private lazy var transcriptReader = TranscriptReaderView(controls: controls, view: readTranscriptView(),
+        saveView: saveTranscriptView, navigation: timelineNavigation)
     let transcriptionButton = MeetingHeaderButton(title: "", target: nil, action: nil)
     let editSummaryTool = MeetingHeaderButton()
     let editNotesTool = MeetingHeaderButton()
@@ -158,7 +162,9 @@ final class MeetingManagementView: NSView {
         openWorkspaceFile: @escaping (String) -> Void,
         controls: GraphiteFocusControls = GraphiteFocusControls(),
         presentConfirmationAlert: @escaping (NSAlert) -> NSApplication.ModalResponse = { $0.runModal() },
-        presentationMetrics: MeetingPresentationMetrics? = nil
+        presentationMetrics: MeetingPresentationMetrics? = nil,
+        readTranscriptView: @escaping () -> TranscriptReadingView = { .timestamps },
+        saveTranscriptView: @escaping (TranscriptReadingView) -> Void = { _ in }
     ) {
         self.readModelProvider = readModelProvider
         self.mutationExecutorProvider = mutationExecutorProvider
@@ -168,6 +174,8 @@ final class MeetingManagementView: NSView {
         self.controls = controls
         self.presentConfirmationAlert = presentConfirmationAlert
         self.presentationMetrics = presentationMetrics
+        self.readTranscriptView = readTranscriptView
+        self.saveTranscriptView = saveTranscriptView
         super.init(frame: .zero)
         meetingsModel = MeetingsModel(
             readModelProvider: { [weak self] in self?.currentReadModel() },
@@ -902,6 +910,7 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderEmptyDetail() {
+        transcriptReader.load(meetingID: "", phrases: [], hasAudio: false, seek: { _ in })
         renderedMeetingID = nil
         lastRenderedDetail = nil
         displayedDetailPlaceholder()
@@ -2053,33 +2062,22 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderTimeline(_ detail: MeetingBrowserDetail) {
-        var moments: [MeetingTimelineMoment] = detail.transcript.filter { $0.startSeconds.isFinite && $0.startSeconds >= 0 }.map {
-            MeetingTimelineMoment(id: "transcript-\($0.id)", seconds: $0.startSeconds, kind: .transcript,
-                text: $0.text, context: $0.track == $0.speaker ? $0.speaker : "\($0.track) · \($0.speaker)", seekSeconds: $0.seekSeconds)
+        let phrases = detail.transcript.map {
+            TranscriptReaderPhrase(id: $0.id, seconds: $0.startSeconds, speaker: $0.speaker,
+                                   text: $0.text, seekSeconds: $0.seekSeconds)
         }
-        func add(_ kind: MeetingTimelineMoment.Kind, _ text: String, _ context: String, _ citations: [MeetingCitation]) {
-            for (index, citation) in citations.enumerated() where citation.startSeconds.isFinite && citation.startSeconds >= 0 {
-                moments.append(MeetingTimelineMoment(id: "\(kind.rawValue)-\(citation.segmentID)-\(index)-\(moments.count)",
-                    seconds: citation.startSeconds, kind: kind, text: text, context: context,
-                    seekSeconds: citation.seekSeconds))
-            }
-        }
-        for decision in detail.decisions { add(.decision, decision.text, "Cited decision", decision.citations) }
-        for item in detail.myActionItems { add(.action, item.text, "My action · \(item.reviewState.rawValue)", item.citations) }
-        for item in detail.otherActionItems { add(.action, item.text, "Others’ action · reference only", item.citations) }
-        let hosting = NSHostingView(rootView: MeetingTimelineView(moments: moments.sorted { $0.seconds < $1.seconds },
-            duration: max(detail.playback.durationSeconds, detail.transcript.map(\.endSeconds).max() ?? 0,
-                          moments.map(\.seconds).max() ?? 0), hasAudio: meetingsModel.detail.playbackState.isAvailable,
-            seek: { [weak self] moment in
+        transcriptReader.load(meetingID: detail.row.id, phrases: phrases,
+            hasAudio: meetingsModel.detail.playbackState.isAvailable, seek: { [weak self] phrase in
                 guard let self, self.selectedID == detail.row.id,
                       self.audioSource == detail.playback,
-                      let seconds = moment.seekSeconds, seconds <= self.meetingsModel.detail.playbackState.duration,
-                      detail.transcript.contains(where: { $0.seekSeconds == seconds && $0.startSeconds <= moment.seconds && $0.endSeconds >= moment.seconds }) else { return }
+                      let seconds = phrase.seekSeconds, seconds <= self.meetingsModel.detail.playbackState.duration,
+                      detail.transcript.contains(where: { $0.id == phrase.id && $0.seekSeconds == seconds }) else { return }
                 self.meetingsModel.detail.seekPlayback(to: seconds)
-            }, navigation: timelineNavigation))
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        timelineRows.addArrangedSubview(hosting)
-        hosting.widthAnchor.constraint(equalTo: timelineRows.widthAnchor).isActive = true
+            })
+        if transcriptReader.superview == nil {
+            timelineRows.addArrangedSubview(transcriptReader)
+            transcriptReader.widthAnchor.constraint(equalTo: timelineRows.widthAnchor).isActive = true
+        }
     }
 
     private func addEvidenceControl(to group: NSStackView, segmentID: String, seekSeconds: Double?, meetingID: String) {
@@ -2115,8 +2113,9 @@ final class MeetingManagementView: NSView {
     private func updateActiveSegment(at seconds: Double?) {
         // Sorted segments give deterministic priority to the first matching track during overlaps.
         let active = seconds.flatMap { time in
-            segmentLabels.first { $0.0.seekSeconds != nil && $0.0.startSeconds <= time && time < $0.0.endSeconds }?.0.id
+            displayedDetail?.transcript.first { $0.seekSeconds != nil && $0.startSeconds <= time && time < $0.endSeconds }?.id
         }
+        transcriptReader.setActivePhrase(active)
         for (segment, label) in segmentLabels {
             label.font = segment.id == active ? GraphiteFocusPresentation.Typography.activeTranscriptSegment : GraphiteFocusPresentation.Typography.body
         }
