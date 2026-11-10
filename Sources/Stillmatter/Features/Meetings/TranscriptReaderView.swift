@@ -25,6 +25,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
     private var keyMonitor: Any?
     private var navigationSubscription: AnyCancellable?
     private var activeID: String?
+    private var phraseLabels: [String: NSTextField] = [:]
     private var phraseRows: [String: NSView] = [:]
     private var timeButtons: [NSButton] = []
 
@@ -145,6 +146,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
         timeButtons = []
         phraseRows = [:]
+        phraseLabels = [:]
         nextMatch.isEnabled = state.canNextMatch; previousMatch.isEnabled = state.canPreviousMatch
         nextPage.isEnabled = state.canNextPage; previousPage.isEnabled = state.canPreviousPage
         speakersButton.isEnabled = !state.phrases.isEmpty
@@ -152,7 +154,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         if state.results.isEmpty {
             feedback.stringValue = state.phrases.isEmpty ? "No Transcript available." : "No matches in this recording."
         } else {
-            feedback.stringValue = "Results \(state.page * 100 + 1)–\(min((state.page + 1) * 100, state.results.count)) of \(state.results.count)"
+            feedback.stringValue = "Results \(state.pageStart)–\(state.pageEnd) of \(state.results.count)"
 
         }
         matchFeedback.stringValue = state.matches.isEmpty ? "" : "Match \(state.matchNumber) of \(state.matches.count)"
@@ -191,19 +193,22 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
             row.addArrangedSubview(NSStackView(views: [avatar, name, time]))
         }
         let text = NSTextField(wrappingLabelWithString: phrase.text)
-        text.font = GraphiteFocusPresentation.Typography.body
+        text.font = phrase.id == activeID ? GraphiteFocusPresentation.Typography.activeTranscriptSegment : GraphiteFocusPresentation.Typography.body
         text.isSelectable = true
         text.setAccessibilityIdentifier("transcript-text-\(phrase.id)")
-        let highlighted = NSMutableAttributedString(string: phrase.text, attributes: [.font: GraphiteFocusPresentation.Typography.body])
+        let highlighted = NSMutableAttributedString(string: phrase.text, attributes: [.font: text.font!])
         for match in state.matches where match.phraseID == phrase.id {
-            highlighted.addAttribute(.backgroundColor, value: state.selectedMatch == match ? NSColor.systemOrange : NSColor.systemYellow.withAlphaComponent(0.4), range: match.range)
+            highlighted.addAttribute(.backgroundColor, value: state.selectedMatch == match ? NSColor.selectedTextBackgroundColor : NSColor.unemphasizedSelectedTextBackgroundColor, range: match.range)
+            if state.selectedMatch == match { highlighted.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range) }
         }
         text.attributedStringValue = highlighted
+        phraseLabels[phrase.id] = text
+        updatePhraseStatus(phrase.id)
         text.menu = contextMenu(phrase)
         row.addArrangedSubview(text)
         text.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
         row.wantsLayer = true
-        row.layer?.borderWidth = (phrase.id == state.selectedID || phrase.id == activeID) ? GraphiteFocusPresentation.Stroke.width : 0
+        row.layer?.borderWidth = phrase.id == state.selectedID ? GraphiteFocusPresentation.Stroke.width : 0
         row.layer?.borderColor = NSColor.controlAccentColor.cgColor
         return row
     }
@@ -231,8 +236,24 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         guard activeID != id else { return }
         activeID = id
         for (phraseID, row) in phraseRows {
-            row.layer?.borderWidth = (phraseID == id || phraseID == state.selectedID) ? GraphiteFocusPresentation.Stroke.width : 0
+            row.layer?.borderWidth = phraseID == state.selectedID ? GraphiteFocusPresentation.Stroke.width : 0
+            if let label = phraseLabels[phraseID] {
+                let content = NSMutableAttributedString(attributedString: label.attributedStringValue)
+                content.addAttribute(.font, value: phraseID == id ? GraphiteFocusPresentation.Typography.activeTranscriptSegment : GraphiteFocusPresentation.Typography.body,
+                                     range: NSRange(location: 0, length: content.length))
+                label.attributedStringValue = content
+                updatePhraseStatus(phraseID)
+            }
         }
+    }
+    private func updatePhraseStatus(_ id: String) {
+        var status: [String] = []
+        if id == activeID { status.append("Current playback phrase") }
+        if id == state.selectedID { status.append("Selected source phrase") }
+        if let match = state.selectedMatch, match.phraseID == id {
+            status.append("Current match: characters \(match.range.location + 1) through \(NSMaxRange(match.range))")
+        }
+        phraseLabels[id]?.setAccessibilityHelp(status.joined(separator: ". "))
     }
     private func scrollSelection() {
         guard let id = state.selectedID, let row = rows.arrangedSubviews.first(where: { $0.accessibilityIdentifier() == "transcript-row-\(id)" }) else { return }

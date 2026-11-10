@@ -3,6 +3,9 @@ import StillmatterCore
 
 /// Whole-transcript selection with bounded rendering, independent of playback ticks.
 public final class TranscriptReaderState {
+    public let pageSize = 100
+    public var pageStart: Int { page * pageSize + 1 }
+    public var pageEnd: Int { min((page + 1) * pageSize, results.count) }
     public private(set) var phrases: [TranscriptReaderPhrase] = []
     public private(set) var results: [TranscriptReaderPhrase] = []
     public private(set) var matches: [TranscriptSearchMatch] = []
@@ -16,10 +19,10 @@ public final class TranscriptReaderState {
     public init(view: TranscriptReadingView = .timestamps) { self.view = view }
 
     public var availableSpeakers: [String] { Array(Set(phrases.map(\.speaker))).sorted() }
-    public var pageRows: [TranscriptReaderPhrase] { Array(results.dropFirst(page * 100).prefix(100)) }
+    public var pageRows: [TranscriptReaderPhrase] { Array(results.dropFirst(page * pageSize).prefix(pageSize)) }
     public var selectedMatch: TranscriptSearchMatch? { matches.indices.contains(matchIndex) ? matches[matchIndex] : nil }
     public var matchNumber: Int { matches.isEmpty ? 0 : matchIndex + 1 }
-    public var canNextPage: Bool { (page + 1) * 100 < results.count }
+    public var canNextPage: Bool { (page + 1) * pageSize < results.count }
     public var canPreviousPage: Bool { page > 0 }
     public var canNextMatch: Bool { matchIndex + 1 < matches.count }
     public var canPreviousMatch: Bool { !matches.isEmpty && matchIndex > 0 }
@@ -71,12 +74,12 @@ public final class TranscriptReaderState {
         if let oldMatch, let index = matches.firstIndex(of: oldMatch) { matchIndex = index }
         else { matchIndex = 0 }
         if !matches.isEmpty { revealMatch() }
-        else if let selectedID, let index = results.firstIndex(where: { $0.id == selectedID }) { page = index / 100 }
-        else { selectedID = nil; page = min(page, max(0, (results.count - 1) / 100)) }
+        else if let selectedID, let index = results.firstIndex(where: { $0.id == selectedID }) { page = index / pageSize }
+        else { selectedID = nil; page = min(page, max(0, (results.count - 1) / pageSize)) }
     }
     private func revealMatch() {
         guard let match = selectedMatch, let index = results.firstIndex(where: { $0.id == match.phraseID }) else { return }
-        selectedID = match.phraseID; page = index / 100
+        selectedID = match.phraseID; page = index / pageSize
     }
     private func selectFirstOnPage() {
         selectedID = pageRows.first?.id

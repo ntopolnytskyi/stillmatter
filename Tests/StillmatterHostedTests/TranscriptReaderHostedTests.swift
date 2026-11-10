@@ -23,6 +23,8 @@ final class TranscriptReaderHostedTests: XCTestCase {
         let phrase: NSTextField = try find("transcript-text-one", in: reader)
         XCTAssertFalse(phrase.isEditable)
         XCTAssertNotNil(phrase.attributedStringValue.attribute(.backgroundColor, at: 7, effectiveRange: nil))
+        XCTAssertNotNil(phrase.attributedStringValue.attribute(.underlineStyle, at: 7, effectiveRange: nil))
+        XCTAssertTrue(phrase.accessibilityHelp()?.contains("characters 8 through 13") == true)
         let time: NSButton = try find("transcript-time-one", in: reader)
         XCTAssertFalse(time.isEnabled)
         reader.viewPicker.selectItem(withTitle: "Clear text")
@@ -36,6 +38,9 @@ final class TranscriptReaderHostedTests: XCTestCase {
         XCTAssertEqual(reader.state.matchNumber, 1)
         let beforeTick: NSTextField = try find("transcript-text-one", in: reader)
         reader.setActivePhrase("one")
+        XCTAssertTrue(beforeTick.accessibilityHelp()?.contains("Current playback phrase") == true)
+        XCTAssertEqual(beforeTick.attributedStringValue.attribute(.font, at: 0, effectiveRange: nil) as? NSFont,
+                       GraphiteFocusPresentation.Typography.activeTranscriptSegment)
         reader.setActivePhrase("one")
         reader.setActivePhrase(nil)
         let afterTick: NSTextField = try find("transcript-text-one", in: reader)

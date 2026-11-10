@@ -1570,8 +1570,10 @@ final class MeetingManagementView: NSView {
         openWorkspaceFile(detail.row.meetingRelativePath)
     }
 
-    private func clearEvidence() {
-        timelineRows.arrangedSubviews.forEach { timelineRows.removeArrangedSubview($0); $0.removeFromSuperview() }
+    private func clearEvidence(preserveTranscriptReader: Bool = false) {
+        if !preserveTranscriptReader {
+            timelineRows.arrangedSubviews.forEach { timelineRows.removeArrangedSubview($0); $0.removeFromSuperview() }
+        }
         for group in [transcriptRows, evidenceRows] {
             group.arrangedSubviews.forEach { group.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
@@ -1590,7 +1592,7 @@ final class MeetingManagementView: NSView {
     }
 
     func renderEvidence(_ detail: MeetingBrowserDetail) {
-        clearEvidence()
+        clearEvidence(preserveTranscriptReader: true)
         if detail.transcript.isEmpty {
             transcriptRows.addArrangedSubview(NSTextField(wrappingLabelWithString: "No timestamped Transcript is available. Check Processing & source files for an available source or failed Job."))
         }
