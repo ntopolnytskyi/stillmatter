@@ -192,7 +192,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
             timeButtons.append(time)
             row.addArrangedSubview(NSStackView(views: [avatar, name, time]))
         }
-        let text = NSTextField(wrappingLabelWithString: phrase.text)
+        let text = GraphiteFocusContextTextField(wrappingLabelWithString: phrase.text)
         text.font = phrase.id == activeID ? GraphiteFocusPresentation.Typography.activeTranscriptSegment : GraphiteFocusPresentation.Typography.body
         text.isSelectable = true
         text.setAccessibilityIdentifier("transcript-text-\(phrase.id)")
