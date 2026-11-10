@@ -185,7 +185,10 @@ final class StillmatterFlowsUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["S Speech · D Decisions · A Actions · Q Questions"].exists)
         XCTAssertEqual(try Data(contentsOf: transcriptURL), transcriptBefore)
-        slider.typeKey(" ", modifierFlags: .option)
+        // Native button clicks need not move keyboard focus from the Listing.
+        // These shortcuts are scoped to the Transcript controls, so focus the slider.
+        slider.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).click()
+        slider.typeKey("p", modifierFlags: .option)
         XCTAssertTrue(app.buttons["Pause Meeting audio"].waitForExistence(timeout: 5))
         app.buttons["Pause Meeting audio"].click()
         app.buttons["meeting-playback-backward"].click()
@@ -200,6 +203,8 @@ final class StillmatterFlowsUITests: XCTestCase {
         let find = app.searchFields["meeting-transcript-search"]
         find.click()
         find.typeKey("1", modifierFlags: .option)
+        find.typeKey("p", modifierFlags: .option)
+        XCTAssertTrue(app.buttons["Play Meeting audio"].exists, "Text input must not start playback")
         XCTAssertEqual(tracks.value as? String, "Other participants", "Playback shortcuts must not consume text-editor input")
         XCTAssertEqual(try Data(contentsOf: retainedMic), micBefore)
         XCTAssertEqual(try Data(contentsOf: retainedSystem), systemBefore)

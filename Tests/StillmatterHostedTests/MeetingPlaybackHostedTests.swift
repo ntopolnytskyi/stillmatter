@@ -73,6 +73,10 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         _ = view.meetingsModel.select(meetingID: row.id, selectedIDs: [row.id])
         let loaded = expectation(for: NSPredicate { _, _ in view.playbackNextMarker.isEnabled }, evaluatedWith: nil)
         await fulfillment(of: [loaded], timeout: 5)
+        XCTAssertTrue(view.playbackTrack.isEnabled)
+        XCTAssertFalse(try XCTUnwrap(view.playbackTrack.item(withTitle: "Other participants")).isEnabled,
+                       "A microphone-only fallback must not advertise an unavailable Other track")
+        XCTAssertTrue(view.playbackSpeed.isEnabled)
         XCTAssertEqual(Set(view.waveform.markerLabels.map(\.symbol)), ["S", "D", "A", "Q"])
         XCTAssertEqual(view.waveform.markerLabels.count, 6, "Invalid citations and outside-recording speech do not become markers")
         view.openTimeline()

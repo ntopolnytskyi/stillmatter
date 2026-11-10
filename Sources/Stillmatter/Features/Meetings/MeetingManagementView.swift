@@ -229,7 +229,7 @@ final class MeetingManagementView: NSView {
               event.modifierFlags.intersection([.command, .option, .control, .shift]) == [.option],
               meetingsModel.detail.playbackState.isAvailable else { return false }
         switch event.keyCode {
-        case 49: toggleAudio()
+        case 35, 49: toggleAudio()
         case 123: skipAudioBackward()
         case 124: skipAudioForward()
         case 18: meetingsModel.detail.selectPlaybackTrack(.both)
@@ -1272,7 +1272,7 @@ final class MeetingManagementView: NSView {
         playButton.title = state.isPlaying ? "Pause" : "Play"
         playButton.needsDisplay = true
         playButton.setAccessibilityLabel(state.isPlaying ? "Pause Meeting audio" : "Play Meeting audio")
-        playButton.toolTip = "\(state.isPlaying ? "Pause" : "Play") Meeting audio (Option-Space)"
+        playButton.toolTip = "\(state.isPlaying ? "Pause" : "Play") Meeting audio (Option-P; Option-Space when available)"
         audioTime.stringValue = "\(timeLabel(state.position)) / \(timeLabel(state.duration))"
         let labelWidth: CGFloat = state.duration >= 3600 ? 180 : 116
         audioTimeWidth?.constant = labelWidth
