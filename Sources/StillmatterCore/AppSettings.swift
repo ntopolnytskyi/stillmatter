@@ -120,7 +120,7 @@ public struct AppSettings: Codable, Equatable {
         let storedTranscriptionLanguage = try container.decodeIfPresent(String.self, forKey: .transcriptionLanguage)
         transcriptionLanguage = storedTranscriptionLanguage.flatMap(TranscriptLanguage.init(rawValue:)) ?? .automatic
         let storedReadingView = try container.decodeIfPresent(String.self, forKey: .transcriptReadingView)
-        transcriptReadingView = storedReadingView.flatMap(TranscriptReadingView.init(rawValue:)) ?? .timestamps
+        transcriptReadingView = TranscriptReadingView(persistedValue: storedReadingView)
         let storedRecordingMode = try container.decodeIfPresent(String.self, forKey: .teamsRecordingMode)
         teamsRecordingMode = storedRecordingMode.flatMap(TeamsRecordingMode.init(rawValue:)) ?? .ask
     }
