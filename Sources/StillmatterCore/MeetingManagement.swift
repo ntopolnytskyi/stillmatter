@@ -621,8 +621,11 @@ public final class MeetingManagementService {
         let ordered: [TranscriptSegment] = document.segments.sorted(by: { $0.startSeconds < $1.startSeconds })
         var result: [MeetingTranscriptSegment] = []
         for segment in ordered {
-            let valid = segment.startSeconds.isFinite && segment.endSeconds.isFinite && segment.startSeconds >= 0 && segment.endSeconds >= segment.startSeconds && segment.endSeconds <= playback.durationSeconds
-            let target: Double? = playback.capability != .unavailable && valid ? segment.startSeconds : nil
+            let offset = segment.track == .microphone ? playback.microphoneOffsetSeconds : playback.systemOffsetSeconds
+            let start = segment.startSeconds + offset
+            let end = segment.endSeconds + offset
+            let valid = start.isFinite && end.isFinite && segment.startSeconds >= 0 && end >= start && end <= playback.durationSeconds
+            let target: Double? = playback.capability != .unavailable && valid ? start : nil
             result.append(MeetingTranscriptSegment(id: segment.id, startSeconds: segment.startSeconds, endSeconds: segment.endSeconds, track: segment.track.speakerLabel, speaker: segment.speaker, text: segment.text, seekSeconds: target))
         }
         return result
@@ -694,9 +697,16 @@ public final class MeetingManagementService {
         if mixed && relocated == nil && (try? finalizer.validate(bundle)) == nil {
             return unavailable("Recording Bundle validation failed. Inspect the source recordings.")
         }
+        let optionalSystemSpans: [AudioClockSpan]? = mixed ? system.flatMap { Self.playbackClockSpans($0, relocated: relocated) } : []
+        guard let micSpans = Self.playbackClockSpans(mic, relocated: relocated), let systemSpans = optionalSystemSpans else {
+            return unavailable("Playback unavailable: recording timing metadata is malformed or unreadable. Original evidence is preserved.")
+        }
+        guard !Self.playbackTimingContainsGaps(micSpans), !Self.playbackTimingContainsGaps(systemSpans) else {
+            return unavailable("Playback unavailable: capture timing contains gaps or invalid clock anchors that this player cannot reproduce. Original evidence is preserved.")
+        }
         let partial = bundle.state == .partial
         let offsets: (mic: Double, system: Double)
-        if mixed, let system { offsets = Self.playbackOffsets(mic: mic, system: system) }
+        if mixed { offsets = Self.playbackOffsets(mic: micSpans, system: systemSpans) }
         else { offsets = (0, 0) }
         return MeetingPlayback(capability: mixed ? .mixed : .microphoneOnly,
             microphonePath: micPath,
@@ -707,19 +717,36 @@ public final class MeetingManagementService {
                 : (partial ? "Partial recording: microphone-only audio; system audio unavailable." : "Microphone-only audio; system audio unavailable."))
     }
 
-    private static func playbackOffsets(mic: RecordingBundleTrack, system: RecordingBundleTrack) -> (mic: Double, system: Double) {
+    private static func playbackClockSpans(_ track: RecordingBundleTrack, relocated: URL?) -> [AudioClockSpan]? {
         struct Timing: Decodable { let audioClockSpans: [AudioClockSpan]? }
-        func fileZero(_ track: RecordingBundleTrack) -> Double? {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: track.metadataFilePath)),
-                  let spans = try? decoder.decode(Timing.self, from: data).audioClockSpans,
-                  let first = spans.first, first.hostStart.isFinite,
-                  first.sampleRate.isFinite, first.sampleRate > 0 else { return nil }
-            return first.hostStart - Double(first.startFrame) / first.sampleRate
+        let original = URL(fileURLWithPath: track.metadataFilePath)
+        let url = relocated?.appendingPathComponent(original.lastPathComponent) ?? original
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: url),
+              let timing = try? decoder.decode(Timing.self, from: data) else { return nil }
+        return timing.audioClockSpans ?? []
+    }
+
+    /// AVAudioPlayer can reproduce file silence and starting offsets, but cannot insert
+    /// silence where discontinuous capture anchors describe contiguous file frames.
+    private static func playbackTimingContainsGaps(_ spans: [AudioClockSpan]) -> Bool {
+        guard let first = spans.first else { return false } // Legacy recordings have no clock map.
+        let origin = first.hostStart - Double(first.startFrame) / first.sampleRate
+        return spans.contains { span in
+            guard span.sampleRate.isFinite, span.sampleRate > 0,
+                  span.hostStart.isFinite, span.hostEnd.isFinite,
+                  span.startFrame >= 0, span.endFrame > span.startFrame else { return true }
+            let expectedStart = origin + Double(span.startFrame) / span.sampleRate
+            let expectedEnd = origin + Double(span.endFrame) / span.sampleRate
+            return !origin.isFinite || abs(span.hostStart - expectedStart) > 0.005 || abs(span.hostEnd - expectedEnd) > 0.005
         }
-        guard let micZero = fileZero(mic), let systemZero = fileZero(system),
-              micZero.isFinite, systemZero.isFinite else { return (0, 0) }
+    }
+
+    private static func playbackOffsets(mic: [AudioClockSpan], system: [AudioClockSpan]) -> (mic: Double, system: Double) {
+        guard let micFirst = mic.first, let systemFirst = system.first else { return (0, 0) }
+        let micZero = micFirst.hostStart - Double(micFirst.startFrame) / micFirst.sampleRate
+        let systemZero = systemFirst.hostStart - Double(systemFirst.startFrame) / systemFirst.sampleRate
         let start = min(micZero, systemZero)
         return (max(0, micZero - start), max(0, systemZero - start))
     }

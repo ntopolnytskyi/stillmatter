@@ -9,6 +9,11 @@ final class MeetingWaveformView: NSSlider {
         get { waveformCell.levels }
         set { waveformCell.levels = newValue }
     }
+    var markerLabels: [(seconds: Double, symbol: String)] {
+        get { waveformCell.markerLabels }
+        set { waveformCell.markerLabels = newValue }
+    }
+    var renderedMarkerLabels: [(fraction: Double, symbols: String)] { waveformCell.renderedMarkerLabels }
     var colors: GraphiteFocusPresentation.Colors {
         get { waveformCell.colors }
         set { waveformCell.colors = newValue }

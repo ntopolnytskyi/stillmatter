@@ -11,6 +11,7 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
     var onChange: ((MeetingPlaybackTransportState) -> Void)?
     private(set) var activePlayer: MeetingAudioPlayer?
     private var waveformRevision = UUID()
+    private var waveforms: [MeetingPlaybackTrack: [Double]] = [:]
     #if DEBUG
     private var stopInvocations = 0
     private var playerStopInvocations = 0
@@ -31,9 +32,19 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
     var activeTrackCount: Int { activePlayer?.activeTrackCount ?? 0 }
 
     func load(_ source: MeetingPlayback) {
+        let missing = [source.microphonePath, source.systemPath].compactMap { $0 }
+            .contains { !FileManager.default.isReadableFile(atPath: $0) }
+        if missing {
+            stop()
+            state = MeetingPlaybackTransportState(source: source, duration: source.durationSeconds,
+                errorMessage: "Source no longer retained or readable. Playback unavailable.")
+            publish()
+            return
+        }
         guard state.source != source || source.capability != .unavailable && activePlayer == nil && state.errorMessage != nil else { return }
         stopCurrentPlayer()
         waveformRevision = UUID()
+        waveforms = [:]
         state = MeetingPlaybackTransportState(source: source, duration: source.durationSeconds)
         publish()
         guard source.capability != .unavailable else { return }
@@ -50,7 +61,8 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
             trace("player-loaded")
             #endif
             nextPlayer.onTimeChange = { [weak self, weak nextPlayer] position, isPlaying in
-                Task { @MainActor in
+                // Player commands and its timer run on the controller's main run loop.
+                MainActor.assumeIsolated {
                     guard let self, let nextPlayer, self.activePlayer === nextPlayer else { return }
                     self.state = MeetingPlaybackTransportState(
                         source: source,
@@ -58,7 +70,8 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
                         duration: nextPlayer.duration,
                         isPlaying: isPlaying,
                         isAvailable: true,
-                        waveform: self.state.waveform
+                        waveform: self.state.waveform,
+                        track: nextPlayer.track, speed: nextPlayer.speed
                     )
                     self.publish()
                 }
@@ -73,13 +86,26 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
         }
     }
 
-    func play() { activePlayer?.play() }
+    func play() {
+        if let source = state.source {
+            let paths = [source.microphonePath, source.systemPath].compactMap { $0 }
+            if paths.contains(where: { !FileManager.default.isReadableFile(atPath: $0) }) { load(source); return }
+        }
+        activePlayer?.play()
+    }
     func pause() { activePlayer?.pause() }
 
     func seek(to seconds: Double) {
         guard state.isAvailable else { return }
         activePlayer?.seek(to: seconds)
     }
+
+    func selectTrack(_ track: MeetingPlaybackTrack) {
+        activePlayer?.selectTrack(track)
+        updateWaveform()
+    }
+
+    func setSpeed(_ speed: Double) { activePlayer?.setSpeed(speed) }
 
     func stop() {
         #if DEBUG
@@ -88,6 +114,7 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
         #endif
         guard activePlayer != nil || state.source != nil else { return }
         waveformRevision = UUID()
+        waveforms = [:]
         stopCurrentPlayer()
         state = MeetingPlaybackTransportState()
         publish()
@@ -109,23 +136,29 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
         let microphoneOffset = source.microphoneOffsetSeconds
         let systemOffset = source.systemOffsetSeconds
         Task { [weak self] in
-            let waveform = await Task.detached(priority: .utility) {
+            let samples = await Task.detached(priority: .utility) {
                 sampleMeetingWaveform(microphonePath: microphonePath, systemPath: systemPath,
                     duration: duration, microphoneOffset: microphoneOffset, systemOffset: systemOffset)
             }.value
             guard let self, self.waveformRevision == revision, self.state.source == source else { return }
-            self.state = MeetingPlaybackTransportState(source: source, position: self.state.position,
-                duration: self.state.duration, isPlaying: self.state.isPlaying, isAvailable: self.state.isAvailable,
-                waveform: waveform, errorMessage: self.state.errorMessage)
-            self.publish()
+            self.waveforms = samples
+            self.updateWaveform()
         }
+    }
+
+    private func updateWaveform() {
+        state = MeetingPlaybackTransportState(source: state.source, position: state.position,
+            duration: state.duration, isPlaying: state.isPlaying, isAvailable: state.isAvailable,
+            waveform: waveforms[state.track] ?? [], errorMessage: state.errorMessage,
+            track: state.track, speed: state.speed)
+        publish()
     }
 
     private func publish() { onChange?(state) }
 }
 
 private func sampleMeetingWaveform(microphonePath: String?, systemPath: String?, duration: Double,
-                                   microphoneOffset: Double, systemOffset: Double) -> [Double] {
+                                   microphoneOffset: Double, systemOffset: Double) -> [MeetingPlaybackTrack: [Double]] {
     let microphone: [Double] = microphonePath.map { path in
         MeetingWaveformView.sample(path: path, duration: duration, offset: microphoneOffset).map { Double($0) }
     } ?? []
@@ -133,9 +166,10 @@ private func sampleMeetingWaveform(microphonePath: String?, systemPath: String?,
         MeetingWaveformView.sample(path: path, duration: duration, offset: systemOffset).map { Double($0) }
     } ?? []
     let count = max(microphone.count, system.count)
-    return (0..<count).map { index in
+    let both = (0..<count).map { index in
         let microphoneLevel = index < microphone.count ? microphone[index] : 0
         let systemLevel = index < system.count ? system[index] : 0
         return max(microphoneLevel, systemLevel)
     }
+    return [.both: both, .mine: microphone, .other: system]
 }

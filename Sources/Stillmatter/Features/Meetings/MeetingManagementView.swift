@@ -139,6 +139,14 @@ final class MeetingManagementView: NSView {
     let playButton = MeetingPlaybackButton(frame: .zero)
     let waveform = MeetingWaveformView()
     let audioTime = NSTextField(labelWithString: "0:00 / 0:00")
+    lazy var playbackTrack = controls.popup(identifier: "meeting-playback-track")
+    lazy var playbackSpeed = controls.popup(identifier: "meeting-playback-speed")
+    lazy var playbackBackward = controls.button("−10s", identifier: "meeting-playback-backward")
+    lazy var playbackForward = controls.button("+10s", identifier: "meeting-playback-forward")
+    lazy var playbackPreviousMarker = controls.button("Previous marker", identifier: "meeting-playback-previous-marker")
+    lazy var playbackNextMarker = controls.button("Next marker", identifier: "meeting-playback-next-marker")
+    let playbackMarkerLegend = NSTextField(labelWithString: "S Speech · D Decisions · A Actions · Q Questions")
+    private var playbackMarkers: [(citation: MeetingCitation, seconds: Double, symbol: String)] = []
     private var audioTimeWidth: NSLayoutConstraint?
     private var waveformWidth: NSLayoutConstraint?
     var audioPlayer: MeetingAudioPlayer? { (currentPlaybackTransport() as? MeetingAudioPlaybackController)?.activePlayer }
@@ -188,7 +196,7 @@ final class MeetingManagementView: NSView {
         observeFeatureState()
         pageSelector.setAccessibilityHelp("Use Option-Command-Left or Right Arrow to move between Meeting tabs.")
         meetingTabNavigationMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard self?.navigateMeetingTab(for: event) == true else { return event }
+            guard self?.handlePlaybackShortcut(event) == true || self?.navigateMeetingTab(for: event) == true else { return event }
             return nil
         }
     }
@@ -211,6 +219,26 @@ final class MeetingManagementView: NSView {
     }
 
     private var featureIsVisible = false
+
+    private func handlePlaybackShortcut(_ event: NSEvent) -> Bool {
+        guard featureIsVisible, meetingsModel.detail.page == .transcript, window?.isKeyWindow == true,
+              !textEditPanel.isOpen, let responder = window?.firstResponder as? NSView,
+              !(responder is NSTextView),
+              responder.isDescendant(of: pinnedAudio) || responder === pageSelector ||
+                (meetingDetailDocumentView.map { responder.isDescendant(of: $0) } ?? false),
+              event.modifierFlags.intersection([.command, .option, .control, .shift]) == [.option],
+              meetingsModel.detail.playbackState.isAvailable else { return false }
+        switch event.keyCode {
+        case 49: toggleAudio()
+        case 123: skipAudioBackward()
+        case 124: skipAudioForward()
+        case 18: meetingsModel.detail.selectPlaybackTrack(.both)
+        case 19: meetingsModel.detail.selectPlaybackTrack(.mine)
+        case 20: meetingsModel.detail.selectPlaybackTrack(.other)
+        default: return false
+        }
+        return true
+    }
 
     private func navigateMeetingTab(for event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
@@ -422,6 +450,7 @@ final class MeetingManagementView: NSView {
         playButton.heightAnchor.constraint(equalToConstant: 52).isActive = true
         playButton.toolTip = "Play Meeting audio"
         playButton.setAccessibilityLabel("Play Meeting audio")
+        playButton.setAccessibilityIdentifier("meeting-playback-toggle")
         waveform.target = self
         waveform.action = #selector(seekAudio(_:))
         waveform.setAccessibilityLabel("Meeting audio position")
@@ -447,7 +476,35 @@ final class MeetingManagementView: NSView {
         audioTime.alignment = .left
         audioStatus.textColor = .secondaryLabelColor
         audioTime.font = GraphiteFocusPresentation.Typography.numeric
-        let audioSection = NSStackView(views: [audioStatus, transport])
+        playbackTrack.addItems(withTitles: MeetingPlaybackTrack.allCases.map(\.rawValue))
+        playbackTrack.menu?.autoenablesItems = false
+        playbackTrack.target = self
+        playbackTrack.action = #selector(changePlaybackTrack)
+        playbackTrack.toolTip = "Tracks: Option-1 Both, Option-2 My speech, Option-3 Other participants"
+        playbackSpeed.addItems(withTitles: MeetingPlaybackTransportState.supportedSpeeds.map {
+            $0.formatted(.number.precision(.fractionLength(0...1))) + "×"
+        })
+        playbackSpeed.target = self
+        playbackSpeed.action = #selector(changePlaybackSpeed)
+        playbackSpeed.toolTip = "Playback speed"
+        playbackBackward.target = self
+        playbackBackward.action = #selector(skipAudioBackward)
+        playbackBackward.toolTip = "Back ten seconds (Option-Left Arrow)"
+        playbackForward.target = self
+        playbackForward.action = #selector(skipAudioForward)
+        playbackForward.toolTip = "Forward ten seconds (Option-Right Arrow)"
+        let options = NSStackView(views: [playbackTrack, playbackSpeed, playbackBackward, playbackForward])
+        options.spacing = GraphiteFocusPresentation.Space.compact
+        playbackPreviousMarker.target = self
+        playbackPreviousMarker.action = #selector(previousPlaybackMarker)
+        playbackNextMarker.target = self
+        playbackNextMarker.action = #selector(nextPlaybackMarker)
+        playbackPreviousMarker.isEnabled = false
+        playbackNextMarker.isEnabled = false
+        let markerControls = NSStackView(views: [playbackPreviousMarker, playbackNextMarker])
+        markerControls.spacing = GraphiteFocusPresentation.Space.compact
+        playbackMarkerLegend.font = GraphiteFocusPresentation.Typography.metadata
+        let audioSection = NSStackView(views: [audioStatus, transport, options, playbackMarkerLegend, markerControls])
         audioSection.orientation = .vertical
         audioSection.alignment = .leading
         audioSection.spacing = GraphiteFocusPresentation.Space.compact
@@ -1203,10 +1260,19 @@ final class MeetingManagementView: NSView {
         waveform.maxValue = max(state.duration, 1)
         waveform.isEnabled = state.isAvailable
         playButton.isEnabled = state.isAvailable
+        playbackTrack.isEnabled = state.isAvailable
+        playbackTrack.selectItem(withTitle: state.track.rawValue)
+        playbackTrack.item(withTitle: MeetingPlaybackTrack.other.rawValue)?.isEnabled = MeetingPlaybackTrack.other.isAvailable(hasOtherTrack: state.source?.systemPath != nil)
+        playbackSpeed.isEnabled = state.isAvailable
+        playbackSpeed.selectItem(at: MeetingPlaybackTransportState.supportedSpeeds.firstIndex(of: state.speed) ?? 1)
+        playbackBackward.isEnabled = state.isAvailable
+        playbackForward.isEnabled = state.isAvailable
+        playbackPreviousMarker.isEnabled = state.isAvailable && !playbackMarkers.isEmpty
+        playbackNextMarker.isEnabled = state.isAvailable && !playbackMarkers.isEmpty
         playButton.title = state.isPlaying ? "Pause" : "Play"
         playButton.needsDisplay = true
-        playButton.toolTip = state.isPlaying ? "Pause Meeting audio" : "Play Meeting audio"
-        playButton.setAccessibilityLabel(playButton.toolTip)
+        playButton.setAccessibilityLabel(state.isPlaying ? "Pause Meeting audio" : "Play Meeting audio")
+        playButton.toolTip = "\(state.isPlaying ? "Pause" : "Play") Meeting audio (Option-Space)"
         audioTime.stringValue = "\(timeLabel(state.position)) / \(timeLabel(state.duration))"
         let labelWidth: CGFloat = state.duration >= 3600 ? 180 : 116
         audioTimeWidth?.constant = labelWidth
@@ -1240,6 +1306,40 @@ final class MeetingManagementView: NSView {
     @objc private func toggleAudio() { meetingsModel.detail.togglePlayback() }
 
     @objc private func seekAudio(_ sender: NSSlider) { meetingsModel.detail.seekPlayback(to: sender.doubleValue) }
+
+    @objc private func changePlaybackTrack() {
+        guard let title = playbackTrack.titleOfSelectedItem, let track = MeetingPlaybackTrack(rawValue: title) else { return }
+        meetingsModel.detail.selectPlaybackTrack(track)
+    }
+
+    @objc private func changePlaybackSpeed() {
+        let speeds = MeetingPlaybackTransportState.supportedSpeeds
+        guard speeds.indices.contains(playbackSpeed.indexOfSelectedItem) else { return }
+        meetingsModel.detail.setPlaybackSpeed(speeds[playbackSpeed.indexOfSelectedItem])
+    }
+
+    @objc private func skipAudioBackward() {
+        meetingsModel.detail.seekPlayback(to: meetingsModel.detail.playbackState.position - 10)
+    }
+
+    @objc private func skipAudioForward() {
+        meetingsModel.detail.seekPlayback(to: meetingsModel.detail.playbackState.position + 10)
+    }
+
+    @objc private func previousPlaybackMarker() { seekPlaybackMarker(forward: false) }
+    @objc private func nextPlaybackMarker() { seekPlaybackMarker(forward: true) }
+
+    private func seekPlaybackMarker(forward: Bool) {
+        guard let detail = displayedDetail, selectedID == detail.row.id,
+              audioSource == detail.playback, meetingsModel.detail.playbackState.isAvailable,
+              !playbackMarkers.isEmpty else { return }
+        let position = meetingsModel.detail.playbackState.position
+        let marker = forward
+            ? playbackMarkers.first(where: { $0.seconds > position + 0.01 }) ?? playbackMarkers[0]
+            : playbackMarkers.last(where: { $0.seconds < position - 0.01 }) ?? playbackMarkers[playbackMarkers.count - 1]
+        meetingsModel.detail.seekPlayback(to: marker.seconds)
+        timelineNavigation.show(seconds: marker.citation.startSeconds, segmentID: marker.citation.segmentID, kind: .transcript)
+    }
 
     private func detailOverview(_ detail: MeetingBrowserDetail) -> String {
         var lines: [String] = detail.row.isArchived ? ["Archived"] : []
@@ -1571,6 +1671,10 @@ final class MeetingManagementView: NSView {
     }
 
     private func clearEvidence(preserveTranscriptReader: Bool = false) {
+        playbackMarkers = []
+        waveform.markerLabels = []
+        playbackPreviousMarker.isEnabled = false
+        playbackNextMarker.isEnabled = false
         if !preserveTranscriptReader {
             timelineRows.arrangedSubviews.forEach { timelineRows.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
@@ -1593,6 +1697,7 @@ final class MeetingManagementView: NSView {
 
     func renderEvidence(_ detail: MeetingBrowserDetail) {
         clearEvidence(preserveTranscriptReader: true)
+        renderPlaybackMarkers(detail)
         if detail.transcript.isEmpty {
             transcriptRows.addArrangedSubview(NSTextField(wrappingLabelWithString: "No timestamped Transcript is available. Check Processing & source files for an available source or failed Job."))
         }
@@ -1648,6 +1753,30 @@ final class MeetingManagementView: NSView {
         renderTimeline(detail)
         renderOutcomes(detail)
         updateActiveSegment(at: meetingsModel.detail.playbackState.position)
+    }
+
+    private func renderPlaybackMarkers(_ detail: MeetingBrowserDetail) {
+        let duration = meetingsModel.detail.playbackState.duration
+        playbackMarkers = detail.transcript.compactMap { segment in
+            guard let seconds = segment.seekSeconds, seconds.isFinite, seconds >= 0, seconds <= duration else { return nil }
+            return (MeetingCitation(segmentID: segment.id, startSeconds: segment.startSeconds,
+                endSeconds: segment.endSeconds, seekSeconds: seconds), seconds, "S")
+        }
+        let groups: [(String, [MeetingCitation])] = [
+            ("D", detail.decisions.flatMap(\.citations)),
+            ("A", (detail.myActionItems + detail.otherActionItems).flatMap(\.citations)),
+            ("Q", detail.openQuestions.flatMap(\.citations))
+        ]
+        for (symbol, citations) in groups {
+            for citation in citations where detail.transcript.contains(where: citation.matches) {
+                guard let seconds = citation.validatedSeekSeconds(playbackDuration: duration) else { continue }
+                playbackMarkers.append((citation, seconds, symbol))
+            }
+        }
+        playbackMarkers.sort { $0.seconds < $1.seconds }
+        waveform.markerLabels = playbackMarkers.map { ($0.seconds, $0.symbol) }
+        playbackPreviousMarker.isEnabled = meetingsModel.detail.playbackState.isAvailable && !playbackMarkers.isEmpty
+        playbackNextMarker.isEnabled = playbackPreviousMarker.isEnabled
     }
 
     private func renderOutcomes(_ detail: MeetingBrowserDetail) {
@@ -2115,7 +2244,10 @@ final class MeetingManagementView: NSView {
     private func updateActiveSegment(at seconds: Double?) {
         // Sorted segments give deterministic priority to the first matching track during overlaps.
         let active = seconds.flatMap { time in
-            displayedDetail?.transcript.first { $0.seekSeconds != nil && $0.startSeconds <= time && time < $0.endSeconds }?.id
+            displayedDetail?.transcript.first {
+                guard let start = $0.seekSeconds else { return false }
+                return start <= time && time < start + ($0.endSeconds - $0.startSeconds)
+            }?.id
         }
         transcriptReader.setActivePhrase(active)
         for (segment, label) in segmentLabels {

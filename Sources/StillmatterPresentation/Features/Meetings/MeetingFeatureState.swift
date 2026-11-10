@@ -120,6 +120,8 @@ public protocol MeetingMutationExecuting: AnyObject {
 }
 
 public struct MeetingPlaybackTransportState: Equatable {
+    /// Playback rates offered by the transport and its controls. Other values are ignored.
+    public static let supportedSpeeds: [Double] = [0.5, 1, 1.5, 2]
     public let source: MeetingPlayback?
     public let position: Double
     public let duration: Double
@@ -127,10 +129,12 @@ public struct MeetingPlaybackTransportState: Equatable {
     public let isAvailable: Bool
     public let waveform: [Double]
     public let errorMessage: String?
+    public let track: MeetingPlaybackTrack
+    public let speed: Double
 
     public init(source: MeetingPlayback? = nil, position: Double = 0, duration: Double = 0,
                 isPlaying: Bool = false, isAvailable: Bool = false, waveform: [Double] = [],
-                errorMessage: String? = nil) {
+                errorMessage: String? = nil, track: MeetingPlaybackTrack = .both, speed: Double = 1) {
         self.source = source
         self.position = position
         self.duration = duration
@@ -138,6 +142,8 @@ public struct MeetingPlaybackTransportState: Equatable {
         self.isAvailable = isAvailable
         self.waveform = waveform
         self.errorMessage = errorMessage
+        self.track = track
+        self.speed = speed
     }
 }
 
@@ -149,6 +155,9 @@ public protocol MeetingPlaybackTransport: AnyObject {
     func play()
     func pause()
     func seek(to seconds: Double)
+    func selectTrack(_ track: MeetingPlaybackTrack)
+    /// Accepts a value from `MeetingPlaybackTransportState.supportedSpeeds`; ignores other values.
+    func setSpeed(_ speed: Double)
     func stop()
 }
 
@@ -416,6 +425,8 @@ public final class MeetingDetailModel: ObservableObject {
     }
 
     public func seekPlayback(to seconds: Double) { playbackTransport?.seek(to: seconds) }
+    public func selectPlaybackTrack(_ track: MeetingPlaybackTrack) { playbackTransport?.selectTrack(track) }
+    public func setPlaybackSpeed(_ speed: Double) { playbackTransport?.setSpeed(speed) }
     public func stopPlayback() {
         playbackTransport?.stop()
         playbackState = playbackTransport?.state ?? MeetingPlaybackTransportState()

@@ -881,6 +881,32 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(playback.microphoneOffsetSeconds, 0, accuracy: 0.001)
         XCTAssertEqual(playback.systemOffsetSeconds, 0.1, accuracy: 0.001)
         XCTAssertEqual(playback.durationSeconds, 0.35, accuracy: 0.02)
+        try fixture.write("Meetings/offset-playback/transcript.json", #"{"schema_version":1,"capture_session_id":"offset-playback","meeting_relative_path":"Meetings/offset-playback/meeting.md","language":"en","detected_languages":["en"],"engine":"fixture","model":"fixture","generated_at":"2026-01-01T00:00:00Z","audio_sources":[],"diagnostics":[],"segments":[{"id":"remote","start":0.1,"end":0.2,"text":"Remote speech","language":"en","track":"system-audio","speaker":"Guest"}]}"#)
+        let remote = try XCTUnwrap(MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback").transcript.first)
+        XCTAssertEqual(remote.startSeconds, 0.1, "Saved source timing stays track-local")
+        XCTAssertEqual(try XCTUnwrap(remote.seekSeconds), 0.2, accuracy: 0.001, "Seek maps source time to the synchronized player timeline")
+        let originalMic = try Data(contentsOf: micAudio)
+        let gapTiming = Data("""
+        {"audioClockSpans":[
+          {"hostStart":10,"hostEnd":10.1,"startFrame":0,"endFrame":4800,"sampleRate":48000,"generation":1},
+          {"hostStart":12,"hostEnd":12.1,"startFrame":4800,"endFrame":9600,"sampleRate":48000,"generation":2}
+        ]}
+        """.utf8)
+        try gapTiming.write(to: micMetadata)
+        let unavailable = try MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback").playback
+        XCTAssertEqual(unavailable.capability, .unavailable, "Never compress an unrepresented capture gap")
+        XCTAssertTrue(unavailable.message.contains("capture timing contains gaps"))
+        XCTAssertEqual(try Data(contentsOf: micAudio), originalMic)
+        try Data(#"{"audioClockSpans":[{"hostStart":10,"hostEnd":10.2,"startFrame":0,"endFrame":9600,"sampleRate":0,"generation":1}]}"#.utf8).write(to: micMetadata)
+        let invalidAnchor = try MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback").playback
+        XCTAssertEqual(invalidAnchor.capability, .unavailable)
+        XCTAssertTrue(invalidAnchor.message.contains("invalid clock anchors"))
+        for invalidClock in ["{\"audioClockSpans\":\"broken\"}", "not JSON"] {
+            try Data(invalidClock.utf8).write(to: micMetadata)
+            let invalid = try MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback").playback
+            XCTAssertEqual(invalid.capability, .unavailable)
+            XCTAssertTrue(invalid.message.contains("timing metadata"))
+        }
     }
 
     func testMicrophoneOnlyRecoveryAndChangedEvidenceAcrossMeetingSelection() throws {

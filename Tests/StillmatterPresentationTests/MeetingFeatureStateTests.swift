@@ -735,6 +735,8 @@ private final class FakePlaybackTransport: MeetingPlaybackTransport {
     }
     func play() { update(isPlaying: true) }
     func pause() { update(isPlaying: false) }
+    func selectTrack(_ track: MeetingPlaybackTrack) { update(isPlaying: state.isPlaying, track: track) }
+    func setSpeed(_ speed: Double) { update(isPlaying: state.isPlaying, speed: speed) }
     func seek(to seconds: Double) {
         state = MeetingPlaybackTransportState(source: state.source, position: seconds, duration: state.duration,
                                               isPlaying: state.isPlaying, isAvailable: state.isAvailable)
@@ -746,10 +748,11 @@ private final class FakePlaybackTransport: MeetingPlaybackTransport {
         state = MeetingPlaybackTransportState()
         onChange?(state)
     }
-    private func update(isPlaying: Bool) {
+    private func update(isPlaying: Bool, track: MeetingPlaybackTrack? = nil, speed: Double? = nil) {
         state = MeetingPlaybackTransportState(source: state.source, position: state.position,
                                               duration: state.duration, isPlaying: isPlaying,
-                                              isAvailable: state.isAvailable)
+                                              isAvailable: state.isAvailable,
+                                              track: track ?? state.track, speed: speed ?? state.speed)
         onChange?(state)
     }
 }
