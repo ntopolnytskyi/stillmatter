@@ -85,6 +85,7 @@ final class MacEchoCancellationProcessorTests: XCTestCase {
         XCTAssertEqual(withReplyResult.shouldUseSidecar, true)
         XCTAssertEqual(withoutReplyResult.shouldUseSidecar, true)
         XCTAssertTrue(withReplyResult.diagnostics.contains { $0.contains("Possible local speech or echo-path variation") })
+        XCTAssertTrue(withReplyResult.diagnostics.contains { $0.contains("Capture timing aligned") })
         XCTAssertGreaterThan(rms(retainedReply), rms(Array(reply[replyStart..<replyEnd])) * 0.7)
         XCTAssertEqual(try Data(contentsOf: microphoneURL), originalMicrophone,
                        "Echo processing must leave the original microphone evidence unchanged")

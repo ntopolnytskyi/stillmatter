@@ -99,20 +99,38 @@ final class EchoCancellerTests: XCTestCase {
     }
 
     func testKeepsQuietReplyThroughLouderRemoteEcho() throws {
+        XCTAssertGreaterThan(try quietReplyRetainedRatio(start: 6, duration: 2, amplitude: 0.01), 0.7)
+    }
+
+    func testKeepsBriefQuietReplyThroughLouderRemoteEcho() throws {
+        XCTAssertGreaterThan(try quietReplyRetainedRatio(start: 6, duration: 0.04, amplitude: 0.01), 0.7)
+    }
+
+    func testKeepsQuietReplyWhenItSpansMostOfTheProcessingWindow() throws {
+        XCTAssertGreaterThan(try quietReplyRetainedRatio(start: 2, duration: 7.5, amplitude: 0.01), 0.7)
+    }
+
+    private func quietReplyRetainedRatio(start: TimeInterval, duration: TimeInterval, amplitude: Float) throws -> Double {
         let reference = noise(Int(sampleRate) * 10)
         var microphone = echo(of: reference, delay: 120)
-        let reply = syntheticVoicedReply(Int(sampleRate) * 10, amplitude: 0.01)
-        let replyStart = Int(sampleRate) * 6
-        let replyEnd = Int(sampleRate) * 8
+        let reply = syntheticVoicedReply(Int(sampleRate) * 10, amplitude: amplitude)
+        let replyStart = Int(sampleRate * start)
+        let replyEnd = Int(sampleRate * (start + duration))
         for index in replyStart..<replyEnd { microphone[index] += reply[index] }
-        var canceller = EchoCanceller()
+        var cancellerWithReply = EchoCanceller()
+        var cancellerWithoutReply = EchoCanceller()
 
-        let residual = try canceller.process(microphone: microphone, reference: reference)
-        let retainedReply = rms(Array(residual[replyStart..<replyEnd]))
+        let residualWithReply = try cancellerWithReply.process(microphone: microphone, reference: reference)
+        let residualWithoutReply = try cancellerWithoutReply.process(microphone: echo(of: reference, delay: 120),
+                                                                    reference: reference)
+        let retainedReply = rms(zip(residualWithReply[replyStart..<replyEnd],
+                                    residualWithoutReply[replyStart..<replyEnd])
+            .map { $0.0 - $0.1 })
         let originalReply = rms(Array(reply[replyStart..<replyEnd]))
-
-        XCTAssertGreaterThan(retainedReply, originalReply * 0.7,
-                             "Quiet overlapping speech must not be classified as residual echo")
+        XCTAssertGreaterThan(cancellerWithReply.possibleDoubleTalkSamples,
+                             cancellerWithoutReply.possibleDoubleTalkSamples,
+                             "Reply frames must increase uncertainty over the matched echo-only run")
+        return retainedReply / originalReply
     }
 
     func testFindsTheBulkDelay() {
