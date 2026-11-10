@@ -20,15 +20,15 @@ Ticket 22 must remain unresolved while that acceptance criterion is unmet. No so
 
 ## Verification
 
-Final coverage, suite and independent review results are recorded below after execution. All fixtures use disposable synthetic workspace, media, support and preferences. No new persistent setting or Meeting-file migration is introduced; playback preferences are session-local and reset when another source is selected.
+Final production source through `4663acd` passed the Release lanes below. All fixtures use disposable synthetic workspace, media, support and preferences. No new persistent setting or Meeting-file migration is introduced; playback preferences are session-local and reset when another source is selected.
 
 ## Timing regression and review
 
 The stronger real-driver test exposed two independent scheduling defects. A disposable AVAudioPlayer probe reproduced resumed track drift in five out of five runs (approximately 0.15–0.16 source seconds), and a later-starting track advanced before its intended offset at 2×. Testing one change at a time showed that stopping and restoring track positions cancels old scheduled starts, while removing the second rate scaling corrects future start scheduling. Combined checks at 0.5×/1×/1.5×/2× observed no early Other track and resumed drift below 0.014 source seconds in that probe. The retained regression tests assert wall time and actual AVAudioPlayer track positions with their original tolerances. Corrected focused hosted tests: 8/8 passed. Probe evidence: `/private/tmp/stillmatter-22-timing-probe/{baseline,stop,delay,combined}.log`; passing focused log: `/private/tmp/stillmatter-22-hosted-scheduling-fixed.log`.
 
-Two architecture iterations approved Object Oriented Design, Clean Architecture and API Design. API-001 (hidden/repeated supported rates) was fixed with one documented public supported-speed collection shared by transport and controls. Immutable transport snapshots remain separate from mutable player lifetime.
+Three architecture iterations approved Object Oriented Design, Clean Architecture and API Design. API-001 (hidden/repeated supported rates) was fixed with one documented public supported-speed collection shared by transport and controls. Immutable transport snapshots remain separate from mutable player lifetime.
 
-Independent code review of `git diff 3686cc1f1ea3c94b315d52b2daf0d3c0c858c4de...HEAD` through `a146dda`:
+Independent code review of `git diff 3686cc1f1ea3c94b315d52b2daf0d3c0c858c4de...HEAD` through `4663acd`:
 
 ### Standards
 
@@ -43,3 +43,23 @@ Review summary: Standards 0 hard violations + 1 low-priority judgment (marker ca
 ### Native shortcut conflict
 
 Two native runs demonstrated that Option-Space never reached the app, including with the waveform explicitly focused. The local macOS symbolic-hotkey configuration has input-source switching enabled on Option-Space (binding 60, parameters `[32, 49, 524288]`). No system preference was changed. Option-P is now the primary play/pause shortcut; Option-Space remains an alternative where the OS delivers it. Native tests use Option-P and verify that the shortcut does not start playback while editing Transcript search text. This is an implementation shortcut choice, not a waiver of keyboard support.
+
+## Final test and coverage evidence
+
+- Full Release package: **462 tests, 4 existing opt-in skips, 0 failures**. `/private/tmp/stillmatter-22-package-complete/{execution.json,tests.log,report.json}`.
+- Full Release app-hosted: **49/49 passed**, including all eight playback tests and the microphone-only UI fallback assertions. `/private/tmp/stillmatter-22-hosted-complete/{execution.json,results.xcresult,tests.log,report.json}`.
+- Focused main-app native: **1/1 passed**, with generated distinguishable retained tracks, mouse/arrow seeking, three track shortcuts/choices, speed, ten-second controls, markers, Option-P, text-input exclusion, all four non-Transcript tabs, preserved source files, unrelated external title refresh, Meeting switching, and purged required audio. `/private/tmp/stillmatter-22-native-complete/{execution.json,results.xcresult,tests.log,report.json}`.
+- Additional native run on the same production build: **1/1 passed**, including arrow-key seeking during playback. Results are in `/private/tmp/stillmatter-22-native-keyboard.xcresult` and `/private/tmp/stillmatter-22-native-keyboard.log`.
+
+The mandatory changed-line report exited **0**, **275/275 = 100%**, against approved baseline `3686cc1f1ea3c94b315d52b2daf0d3c0c858c4de`. Report: `/private/tmp/stillmatter-22-incremental-gate.json`. All three compatible Release reports participate; no new exclusion, omitted shipped file, weakened threshold, or failed-lane report is accepted.
+
+| Changed module | Covered / executable changed lines |
+| --- | ---: |
+| Core | 38 / 38 |
+| Presentation | 8 / 8 |
+| App/UI | 229 / 229 |
+| Total | **275 / 275** |
+
+Existing whole-source debt is reported separately: **18,657/23,123 = 80.6858971587%**. Core 9,455/10,064; Presentation 1,197/1,391; runtime 327/347; App/UI 7,678/11,321. This is not a passing whole-source gate. Ticket 50 still requires 95% over all shipped source and its complete evaluation lanes.
+
+No Meeting/storage migration is introduced. Existing legacy/relocated-recording regression fixtures pass; native relaunch reconstructs the correct source and disabled state. Synthetic workspace/media/support/preferences remain isolated. `git diff --check` passes. Ticket 22 remains **unresolved** because validated capture-clock gaps cannot yet play with their original timing; dependent tickets cannot treat this slice as complete.

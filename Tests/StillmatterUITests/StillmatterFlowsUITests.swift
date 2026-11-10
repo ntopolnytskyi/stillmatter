@@ -142,6 +142,8 @@ final class StillmatterFlowsUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5),
                       "Seeking while playing must move the playhead rather than resetting it")
         XCTAssertTrue(app.buttons["Pause Meeting audio"].waitForExistence(timeout: 5))
+        slider.typeKey(.rightArrow, modifierFlags: [])
+        XCTAssertTrue(app.buttons["Pause Meeting audio"].exists, "Keyboard seeking must preserve playing intent")
         app.buttons["Pause Meeting audio"].click()
         let retainedMic = newMedia.appendingPathComponent("audio/mic.caf")
         let retainedSystem = newMedia.appendingPathComponent("audio/system.caf")
