@@ -105,6 +105,51 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fixture.microphoneURL), rawMicrophone)
     }
 
+    func testUncertainEchoCancelledSidecarKeepsMicrophoneLabelTimingAndUncertainty() throws {
+        let fixture = try TranscriptionFixture()
+        let bundle = fixture.makeBundle(system: fixture.bundle.system)
+        let rawMicrophone = try Data(contentsOf: fixture.microphoneURL)
+        let selection = TranscriptionAudioSidecar(
+            schemaVersion: TranscriptionAudioSidecar.currentSchemaVersion,
+            captureSessionID: bundle.captureSessionID,
+            recordingBundlePath: bundle.bundleFilePath,
+            selection: .echoCancelledSidecar,
+            selectedAudioFilePath: fixture.echoSidecarURL.path,
+            originalMicrophoneFilePath: fixture.microphoneURL.path,
+            systemReferenceFilePath: fixture.systemAudioURL.path,
+            echoCancelledFilePath: fixture.echoSidecarURL.path,
+            metadataFilePath: fixture.selectionURL.path,
+            generatedAt: fixture.generatedAt,
+            quality: EchoCancellationQuality(confidence: 0.9, referenceCorrelation: 0.8,
+                estimatedEchoReductionDB: 8, retainedSignalRatio: 0.9),
+            diagnostics: ["Possible local speech or echo-path variation was detected; residual was retained without extra attenuation."]
+        )
+        let transcription = StubTranscriptionEngine(textByTrack: [
+            .microphone: "Quiet reply retained", .systemAudio: "Remote speaker"
+        ])
+        let diarizer = StubSpeakerDiarizationEngine(turnsByTrack: [
+            .microphone: [SpeakerDiarizationTurn(startSeconds: 5, endSeconds: 7, clusterID: 4)],
+            .systemAudio: [SpeakerDiarizationTurn(startSeconds: 5, endSeconds: 7, clusterID: 9)]
+        ])
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: transcription, diarizationEngine: diarizer)
+
+        let document = try pipeline.generate(from: bundle, selection: selection, language: .english).document
+
+        XCTAssertEqual(transcription.audioPaths, [fixture.echoSidecarURL.path, fixture.systemAudioURL.path])
+        XCTAssertEqual(diarizer.audioPaths, [fixture.echoSidecarURL.path, fixture.systemAudioURL.path])
+        XCTAssertEqual(document.audioSources[0].track, .microphone)
+        XCTAssertEqual(document.audioSources[0].selection, TranscriptionAudioSelection.echoCancelledSidecar.rawValue)
+        XCTAssertEqual(document.segments.first?.track, .microphone)
+        XCTAssertEqual(document.segments.first?.speaker, "Me")
+        XCTAssertEqual(document.segments.first?.startSeconds, 1)
+        XCTAssertEqual(document.segments.first?.endSeconds, 3)
+        XCTAssertEqual(document.speakerTurns?.first?.startSeconds, 5)
+        XCTAssertEqual(document.speakerTurns?.first?.track, .microphone)
+        XCTAssertTrue(document.diagnostics.contains { $0.contains("Possible local speech or echo-path variation") })
+        XCTAssertEqual(try Data(contentsOf: fixture.microphoneURL), rawMicrophone)
+    }
+
     func testSpeakerCorrectionEvidenceSurvivesCanonicalTranscriptRoundTrip() throws {
         let fixture = try TranscriptionFixture()
         let diarizer = StubSpeakerDiarizationEngine(turnsByTrack: [.microphone: [
@@ -787,7 +832,16 @@ private final class StubSpeakerDiarizationEngine: SpeakerDiarizationEngine {
     }
 
     func diarize(audioURL: URL) throws -> [SpeakerDiarizationTurn] {
-        let track: TranscriptTrack = audioURL.lastPathComponent == "mic.m4a" ? .microphone : .systemAudio
+        let track: TranscriptTrack
+        switch audioURL.lastPathComponent {
+        case "system.m4a":
+            track = .systemAudio
+        case "mic.m4a", "mic-transcription-echo-cancelled.wav":
+            track = .microphone
+        default:
+            XCTFail("Unexpected diarization audio path: \(audioURL.path)")
+            return []
+        }
         audioTracks.append(track)
         audioPaths.append(audioURL.path)
         if failingTracks.contains(track) { throw SpeakerDiarizationError.invalidOutput("fixture failure for \(track.rawValue)") }
