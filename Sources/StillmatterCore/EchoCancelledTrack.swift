@@ -24,6 +24,8 @@ enum EchoCancelledTrack {
         var alignedSeconds: TimeInterval = 0
         var referenceCorrelation: Double = 0
         var candidateEchoReturnLossDB: Double?
+        var possibleDoubleTalkSeconds: TimeInterval = 0
+        var suppressionWarmupSeconds: TimeInterval = 0
     }
 
     /// Streamed in windows so a long meeting never has both tracks resident:
@@ -109,6 +111,8 @@ enum EchoCancelledTrack {
         var delays: [Double] = []
         var strongestCorrelation = 0.0
         var alignedSeconds = 0.0
+        var possibleDoubleTalkSamples = 0
+        var suppressionWarmupSamples = 0
         var verified = timing != nil
         while position < microphoneDuration {
             try Task.checkCancellation()
@@ -140,6 +144,8 @@ enum EchoCancelledTrack {
                 }
                 var canceller = EchoCanceller()
                 let candidate = try canceller.process(microphone: mic, reference: shifted)
+                possibleDoubleTalkSamples += canceller.possibleDoubleTalkSamples
+                suppressionWarmupSamples += canceller.suppressionWarmupSamples
                 let duration = end - position
                 delays.append(position - range.start + Double(estimate.samples) / rate)
                 if canceller.echoReturnLossDB.isFinite {
@@ -168,7 +174,9 @@ enum EchoCancelledTrack {
             acceptedSeconds: acceptedSeconds, alignmentVerified: verified,
             alignedSeconds: alignedSeconds,
             referenceCorrelation: strongestCorrelation,
-            candidateEchoReturnLossDB: candidateSeconds > 0 ? candidateReduction / candidateSeconds : nil)
+            candidateEchoReturnLossDB: candidateSeconds > 0 ? candidateReduction / candidateSeconds : nil,
+            possibleDoubleTalkSeconds: Double(possibleDoubleTalkSamples) / rate,
+            suppressionWarmupSeconds: Double(suppressionWarmupSamples) / rate)
     }
 
     /// Correct the small measured clock-rate difference without holding either

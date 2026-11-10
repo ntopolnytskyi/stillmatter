@@ -33,6 +33,26 @@ public final class MacEchoCancellationProcessor: EchoCancellationProcessing {
         let candidateDiagnostic = report.candidateEchoReturnLossDB.map {
             String(format: "Measured candidate-window ERLE %.2f dB before the acceptance gate.", $0)
         } ?? "Candidate ERLE was not measured because no window met the 0.550 correlation gate."
+        let doubleTalkDiagnostic = report.possibleDoubleTalkSeconds > 0
+            ? String(format: "Possible local speech or echo-path variation was detected during remote audio for %.2f seconds; the residual was retained without extra attenuation.", report.possibleDoubleTalkSeconds)
+            : nil
+        let warmupDiagnostic = report.suppressionWarmupSeconds > 0
+            ? String(format: "Additional residual suppression was bypassed for %.2f seconds while the echo-only baseline warmed up; some remote echo may remain in that interval.", report.suppressionWarmupSeconds)
+            : nil
+        var diagnostics = [
+            String(format: "Processed %.1f seconds in 30-second, 16 kHz mono windows.", report.processedSeconds),
+            String(format: "Accepted %.1f seconds after delay estimation and adaptive cancellation.", acceptedSeconds),
+            String(format: "Estimated microphone delay %.1f ms for reliably correlated windows.", report.delaySeconds * 1_000),
+            String(format: "Strongest reference-envelope correlation %.3f (minimum 0.550).", report.referenceCorrelation),
+            String(format: "Measured accepted-window ERLE %.2f dB (minimum 6.00 dB).", report.echoReturnLossDB),
+            candidateDiagnostic,
+            timing == nil
+                ? "Capture timing was unavailable; alignment used acoustic estimation."
+                : String(format: "Capture timing aligned %.1f of %.1f processed seconds; unmatched audio passed through.", report.alignedSeconds, report.processedSeconds),
+            "The generated WAV is transcription-only; microphone and system evidence files were opened read-only."
+        ]
+        if let warmupDiagnostic { diagnostics.append(warmupDiagnostic) }
+        if let doubleTalkDiagnostic { diagnostics.append(doubleTalkDiagnostic) }
         return EchoCancellationProcessingResult(
             quality: EchoCancellationQuality(
                 confidence: acceptedRatio,
@@ -40,18 +60,7 @@ public final class MacEchoCancellationProcessor: EchoCancellationProcessing {
                 estimatedEchoReductionDB: report.echoReturnLossDB,
                 retainedSignalRatio: retainedSignalRatio
             ),
-            diagnostics: [
-                String(format: "Processed %.1f seconds in 30-second, 16 kHz mono windows.", report.processedSeconds),
-                String(format: "Accepted %.1f seconds after delay estimation and adaptive cancellation.", acceptedSeconds),
-                String(format: "Estimated microphone delay %.1f ms for reliably correlated windows.", report.delaySeconds * 1_000),
-                String(format: "Strongest reference-envelope correlation %.3f (minimum 0.550).", report.referenceCorrelation),
-                String(format: "Measured accepted-window ERLE %.2f dB (minimum 6.00 dB).", report.echoReturnLossDB),
-                candidateDiagnostic,
-                timing == nil
-                    ? "Capture timing was unavailable; alignment used acoustic estimation."
-                    : String(format: "Capture timing aligned %.1f of %.1f processed seconds; unmatched audio passed through.", report.alignedSeconds, report.processedSeconds),
-                "The generated WAV is transcription-only; microphone and system evidence files were opened read-only."
-            ],
+            diagnostics: diagnostics,
             shouldUseSidecar: shouldUse
         )
     }

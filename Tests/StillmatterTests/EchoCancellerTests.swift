@@ -41,6 +41,18 @@ final class EchoCancellerTests: XCTestCase {
         return (sum / Double(samples.count)).squareRoot()
     }
 
+    // Harmonic, amplitude-modulated synthetic voice; this is not human speech-quality evidence.
+    private func syntheticVoicedReply(_ count: Int, amplitude: Float) -> [Float] {
+        (0..<count).map { index in
+            let time = Double(index) / sampleRate
+            let envelope = 0.3 + 0.7 * abs(sin(2 * .pi * 2.2 * time))
+            let voice = sin(2 * .pi * 180 * time)
+                + 0.5 * sin(2 * .pi * 360 * time)
+                + 0.2 * sin(2 * .pi * 540 * time)
+            return amplitude * Float(envelope * voice / 1.7)
+        }
+    }
+
     func testCancelsAKnownEchoPath() throws {
         let reference = noise(Int(sampleRate) * 8)
         let microphone = echo(of: reference, delay: 120)
@@ -84,6 +96,23 @@ final class EchoCancellerTests: XCTestCase {
         let spoken = Array(residual[talkStart...])
         XCTAssertEqual(rms(spoken), rms(Array(voice[talkStart...])), accuracy: rms(voice) * 0.35)
         XCTAssertGreaterThan(canceller.echoReturnLossDB, 3)
+    }
+
+    func testKeepsQuietReplyThroughLouderRemoteEcho() throws {
+        let reference = noise(Int(sampleRate) * 10)
+        var microphone = echo(of: reference, delay: 120)
+        let reply = syntheticVoicedReply(Int(sampleRate) * 10, amplitude: 0.01)
+        let replyStart = Int(sampleRate) * 6
+        let replyEnd = Int(sampleRate) * 8
+        for index in replyStart..<replyEnd { microphone[index] += reply[index] }
+        var canceller = EchoCanceller()
+
+        let residual = try canceller.process(microphone: microphone, reference: reference)
+        let retainedReply = rms(Array(residual[replyStart..<replyEnd]))
+        let originalReply = rms(Array(reply[replyStart..<replyEnd]))
+
+        XCTAssertGreaterThan(retainedReply, originalReply * 0.7,
+                             "Quiet overlapping speech must not be classified as residual echo")
     }
 
     func testFindsTheBulkDelay() {

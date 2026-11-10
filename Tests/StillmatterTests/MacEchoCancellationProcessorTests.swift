@@ -34,6 +34,62 @@ final class MacEchoCancellationProcessorTests: XCTestCase {
         XCTAssertTrue(result.diagnostics.contains { $0.contains("Estimated microphone delay") })
     }
 
+    func testProcessorRetainsAndReportsQuietSpeechOverlappingRemoteEcho() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StillmatterQuietDoubleTalkTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let sampleRate = Int(SpanAudioReader.sampleRate)
+        let sampleCount = sampleRate * 8
+        let reference = noise(sampleCount).enumerated().map { index, sample in
+            let envelope: [Float] = [0.05, 0.8, 0.2, 1.0, 0.1, 0.6, 0.3, 0.9]
+            return sample * envelope[(index / (sampleRate / 2)) % envelope.count]
+        }
+        let echo = echo(of: reference, delay: Int(0.146 * Double(sampleRate)))
+        let reply = syntheticVoicedReply(sampleCount, sampleRate: sampleRate, amplitude: 0.01)
+        let replyStart = sampleRate * 5
+        let replyEnd = sampleRate * 7
+        var microphoneWithReply = echo
+        for index in replyStart..<replyEnd { microphoneWithReply[index] += reply[index] }
+
+        let microphoneURL = root.appendingPathComponent("mic.wav")
+        let referenceURL = root.appendingPathComponent("system.wav")
+        let outputWithReplyURL = root.appendingPathComponent("with-reply.wav")
+        let outputWithoutReplyURL = root.appendingPathComponent("without-reply.wav")
+        try writeWav(microphoneWithReply, to: microphoneURL, sampleRate: sampleRate)
+        try writeWav(reference, to: referenceURL, sampleRate: sampleRate)
+        let originalMicrophone = try Data(contentsOf: microphoneURL)
+        let clockSpan = AudioClockSpan(hostStart: 0, hostEnd: 8, startFrame: 0,
+                                       endFrame: Int64(sampleCount), sampleRate: Double(sampleRate), generation: 0)
+        let timing = RecordingAudioTiming(microphone: [clockSpan], system: [clockSpan])
+        try JSONEncoder().encode(timing).write(to: root.appendingPathComponent(RecordingAudioTiming.fileName))
+
+        let processor = MacEchoCancellationProcessor()
+        let withReplyResult = try processor.process(microphoneURL: microphoneURL,
+                                                    systemReferenceURL: referenceURL,
+                                                    outputURL: outputWithReplyURL)
+        let microphoneWithoutReply = echo
+        let microphoneWithoutReplyURL = root.appendingPathComponent("mic-without-reply.wav")
+        try writeWav(microphoneWithoutReply, to: microphoneWithoutReplyURL, sampleRate: sampleRate)
+        let withoutReplyResult = try processor.process(microphoneURL: microphoneWithoutReplyURL,
+                                                       systemReferenceURL: referenceURL,
+                                                       outputURL: outputWithoutReplyURL)
+
+        let withReplyReader = try SpanAudioReader(url: outputWithReplyURL)
+        let withoutReplyReader = try SpanAudioReader(url: outputWithoutReplyURL)
+        let withReplySamples = try withReplyReader.samples(from: 5, to: 7)
+        let withoutReplySamples = try withoutReplyReader.samples(from: 5, to: 7)
+        let retainedReply = zip(withReplySamples, withoutReplySamples).map { $0.0 - $0.1 }
+
+        XCTAssertEqual(withReplyResult.shouldUseSidecar, true)
+        XCTAssertEqual(withoutReplyResult.shouldUseSidecar, true)
+        XCTAssertTrue(withReplyResult.diagnostics.contains { $0.contains("Possible local speech or echo-path variation") })
+        XCTAssertGreaterThan(rms(retainedReply), rms(Array(reply[replyStart..<replyEnd])) * 0.7)
+        XCTAssertEqual(try Data(contentsOf: microphoneURL), originalMicrophone,
+                       "Echo processing must leave the original microphone evidence unchanged")
+    }
+
     func testExternalRecordingBundleMatchesRequestedSelection() throws {
         let environment = ProcessInfo.processInfo.environment
         guard let bundlePath = environment["STILLMATTER_ECHO_REPLAY_BUNDLE"],
@@ -94,6 +150,23 @@ final class MacEchoCancellationProcessorTests: XCTestCase {
             let unit = Float(state >> 40) / Float(1 << 24)
             return unit * 2 - 1
         }
+    }
+
+    // Harmonic, amplitude-modulated synthetic voice; this is not human speech-quality evidence.
+    private func syntheticVoicedReply(_ count: Int, sampleRate: Int, amplitude: Float) -> [Float] {
+        (0..<count).map { index in
+            let time = Double(index) / Double(sampleRate)
+            let envelope = 0.3 + 0.7 * abs(sin(2 * .pi * 2.2 * time))
+            let voice = sin(2 * .pi * 180 * time)
+                + 0.5 * sin(2 * .pi * 360 * time)
+                + 0.2 * sin(2 * .pi * 540 * time)
+            return amplitude * Float(envelope * voice / 1.7)
+        }
+    }
+
+    private func rms(_ samples: [Float]) -> Double {
+        guard !samples.isEmpty else { return 0 }
+        return (samples.reduce(0) { $0 + Double($1) * Double($1) } / Double(samples.count)).squareRoot()
     }
 
     private func echo(of reference: [Float], delay: Int, gain: Float = 0.5) -> [Float] {

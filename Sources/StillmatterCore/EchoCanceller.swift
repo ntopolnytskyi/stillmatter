@@ -46,13 +46,21 @@ struct EchoCanceller {
         /// Gain smoothing per frame, so suppression fades rather than clicks.
         var suppressionAttack: Float = 0.5
         var suppressionRelease: Float = 0.8
-        // Two alternatives to this gain were measured on a real meeting and
-        // both came out worse. Gating echo-only frames to digital silence made
+        /// Residual energy above the chunk's echo-only ratio indicates possible
+        /// double-talk, even when the local reply is quieter than the remote voice.
+        var possibleDoubleTalkResidualRatioMargin: Float = 0.0002
+        /// The adaptive filter needs a short learning interval before residual
+        /// changes can be compared with an echo-only baseline.
+        var suppressionBaselineWarmup: TimeInterval = 1.2
+        // For frames confidently classified as echo-only, two alternatives to
+        // this gain were measured on a real meeting and both came out worse.
+        // Gating those frames to digital silence made
         // ASR hallucinate *more* (40 invented English segments against 27):
         // the abrupt edges read as speech onsets, and the release clipped real
         // word beginnings. Filling them with comfort noise at the room's own
         // floor cut the residual echo further but masked quiet speech, costing
-        // a third of the user's real words. -30 dB and no fill it is.
+        // a third of the user's real words. Keep -30 dB and no fill for those
+        // frames; uncertain frames bypass the additional attenuation below.
 
         static let `default` = Configuration()
     }
@@ -91,6 +99,9 @@ struct EchoCanceller {
     /// Energy the last `process` call removed, for reporting ERLE.
     private(set) var microphoneEnergy: Double = 0
     private(set) var residualEnergy: Double = 0
+    private(set) var possibleDoubleTalkSamples = 0
+    private(set) var suppressionWarmupSamples = 0
+    private var processedSamples = 0
 
     /// Cancels `reference` out of `microphone`, sample for sample. The two must
     /// already be aligned (see `EchoDelayEstimator`) and equally long. Filter
@@ -153,6 +164,7 @@ struct EchoCanceller {
         }
         let suppressed = try suppressResidual(output, predictions: predictions)
         try score(microphone: microphone, residual: suppressed, active: active)
+        processedSamples += microphone.count
         return suppressed
     }
 
@@ -167,31 +179,93 @@ struct EchoCanceller {
         }
     }
 
-    /// Pushes the frames that were nothing but echo down to the noise floor.
+    /// Pushes confident echo-only frames down to the noise floor.
     ///
     /// The adaptive filter alone leaves the echo about 13 dB down, measured on
     /// a real call — quieter, but an ASR engine transcribes a -42 dBFS voice
     /// without complaint, so subtraction on its own moved the problem rather
-    /// than solving it. Where the filter's own prediction says a frame was
-    /// mostly echo and little survived it, what is left is residual echo and
-    /// is silenced; where a lot survived, the user was talking and the frame
-    /// passes untouched.
+    /// than solving it. During baseline warmup, or when a sustained residual
+    /// rise exceeds the chunk's echo-only floor, preserve the adaptive residual
+    /// and record uncertainty instead of attenuating possible local speech.
     private mutating func suppressResidual(_ residual: [Float],
                                            predictions: [Float]) throws -> [Float] {
         let frame = max(1, Int(configuration.suppressionFrame * sampleRate))
-        var output = residual
-        var index = 0
-        while index < residual.count {
-            try Task.checkCancellation()
-            let end = min(index + frame, residual.count)
+        var frameEnergies: [(predicted: Float, residual: Float, ratio: Float)] = []
+        var analysisIndex = 0
+        while analysisIndex < residual.count {
+            let end = min(analysisIndex + frame, residual.count)
             var predictedEnergy: Float = 0
             var residualEnergy: Float = 0
-            for n in index..<end {
+            for n in analysisIndex..<end {
                 predictedEnergy += predictions[n] * predictions[n]
                 residualEnergy += residual[n] * residual[n]
             }
-            let echoDominates = predictedEnergy > referenceActivityFloor
-                && predictedEnergy > configuration.suppressionRatio * residualEnergy
+            let withinWarmup = Double(processedSamples + analysisIndex) / sampleRate
+                < configuration.suppressionBaselineWarmup
+            let ratio = !withinWarmup && predictedEnergy > referenceActivityFloor
+                ? residualEnergy / predictedEnergy
+                : .infinity
+            frameEnergies.append((predictedEnergy, residualEnergy, ratio))
+            analysisIndex = end
+        }
+        // A lower decile estimates stable echo residue without letting a
+        // minority of local-speech frames raise the baseline.
+        let echoFloorRatios = frameEnergies.map { $0.ratio }.filter(\.isFinite).sorted()
+        let echoOnlyResidualRatio = echoFloorRatios.isEmpty
+            ? 0
+            : echoFloorRatios[echoFloorRatios.count / 10]
+        let possibleDoubleTalkRatio = echoOnlyResidualRatio
+            + configuration.possibleDoubleTalkResidualRatioMargin
+        let residualRaisesAboveFloor = frameEnergies.map {
+            $0.ratio.isFinite && $0.ratio > possibleDoubleTalkRatio
+        }
+        var possibleDoubleTalkFrames = [Bool](repeating: false, count: frameEnergies.count)
+        var candidateStart = 0
+        while candidateStart < residualRaisesAboveFloor.count {
+            guard residualRaisesAboveFloor[candidateStart] else {
+                candidateStart += 1
+                continue
+            }
+            var candidateEnd = candidateStart + 1
+            while candidateEnd < residualRaisesAboveFloor.count,
+                  residualRaisesAboveFloor[candidateEnd] {
+                candidateEnd += 1
+            }
+            if candidateEnd - candidateStart >= 3 {
+                let protectedStart = max(0, candidateStart - 1)
+                let protectedEnd = min(possibleDoubleTalkFrames.count, candidateEnd + 1)
+                for index in protectedStart..<protectedEnd {
+                    possibleDoubleTalkFrames[index] = true
+                }
+            }
+            candidateStart = candidateEnd
+        }
+
+        var output = residual
+        var index = 0
+        var frameIndex = 0
+        while index < residual.count {
+            try Task.checkCancellation()
+            let end = min(index + frame, residual.count)
+            let energies = frameEnergies[frameIndex]
+            let possibleDoubleTalk = possibleDoubleTalkFrames[frameIndex]
+            let withinWarmup = Double(processedSamples + index) / sampleRate
+                < configuration.suppressionBaselineWarmup
+            frameIndex += 1
+            let echoDominates = !withinWarmup
+                && energies.predicted > referenceActivityFloor
+                && energies.predicted > configuration.suppressionRatio * energies.residual
+                && !possibleDoubleTalk
+            if withinWarmup || possibleDoubleTalk {
+                // The adaptive filter has already subtracted its best echo
+                // estimate. Do not add residual attenuation while its local
+                // echo floor is unknown or a residual increase could be speech.
+                suppressionGain = 1
+            }
+            if possibleDoubleTalk {
+                possibleDoubleTalkSamples += end - index
+            }
+            if withinWarmup { suppressionWarmupSamples += end - index }
             let target: Float = echoDominates ? configuration.suppressionGain : 1
             let smoothing = target < suppressionGain
                 ? configuration.suppressionAttack : configuration.suppressionRelease
