@@ -139,10 +139,7 @@ final class MeetingManagementView: NSView {
     let playButton = MeetingPlaybackButton(frame: .zero)
     let waveform = MeetingWaveformView()
     let audioTime = NSTextField(labelWithString: "0:00 / 0:00")
-    lazy var playbackTrack = controls.popup(identifier: "meeting-playback-track")
     lazy var playbackSpeed = controls.popup(identifier: "meeting-playback-speed")
-    lazy var playbackBackward = controls.button("−10s", identifier: "meeting-playback-backward")
-    lazy var playbackForward = controls.button("+10s", identifier: "meeting-playback-forward")
     lazy var playbackPreviousMarker = controls.button("Previous marker", identifier: "meeting-playback-previous-marker")
     lazy var playbackNextMarker = controls.button("Next marker", identifier: "meeting-playback-next-marker")
     let playbackMarkerLegend = NSTextField(labelWithString: "S Speech · D Decisions · A Actions · Q Questions")
@@ -230,11 +227,6 @@ final class MeetingManagementView: NSView {
               meetingsModel.detail.playbackState.isAvailable else { return false }
         switch event.keyCode {
         case 35, 49: toggleAudio()
-        case 123: skipAudioBackward()
-        case 124: skipAudioForward()
-        case 18: meetingsModel.detail.selectPlaybackTrack(.both)
-        case 19: meetingsModel.detail.selectPlaybackTrack(.mine)
-        case 20: meetingsModel.detail.selectPlaybackTrack(.other)
         default: return false
         }
         return true
@@ -476,24 +468,13 @@ final class MeetingManagementView: NSView {
         audioTime.alignment = .left
         audioStatus.textColor = .secondaryLabelColor
         audioTime.font = GraphiteFocusPresentation.Typography.numeric
-        playbackTrack.addItems(withTitles: MeetingPlaybackTrack.allCases.map(\.rawValue))
-        playbackTrack.menu?.autoenablesItems = false
-        playbackTrack.target = self
-        playbackTrack.action = #selector(changePlaybackTrack)
-        playbackTrack.toolTip = "Tracks: Option-1 Both, Option-2 My speech, Option-3 Other participants"
         playbackSpeed.addItems(withTitles: MeetingPlaybackTransportState.supportedSpeeds.map {
             $0.formatted(.number.precision(.fractionLength(0...1))) + "×"
         })
         playbackSpeed.target = self
         playbackSpeed.action = #selector(changePlaybackSpeed)
         playbackSpeed.toolTip = "Playback speed"
-        playbackBackward.target = self
-        playbackBackward.action = #selector(skipAudioBackward)
-        playbackBackward.toolTip = "Back ten seconds (Option-Left Arrow)"
-        playbackForward.target = self
-        playbackForward.action = #selector(skipAudioForward)
-        playbackForward.toolTip = "Forward ten seconds (Option-Right Arrow)"
-        let options = NSStackView(views: [playbackTrack, playbackSpeed, playbackBackward, playbackForward])
+        let options = NSStackView(views: [playbackSpeed])
         options.spacing = GraphiteFocusPresentation.Space.compact
         playbackPreviousMarker.target = self
         playbackPreviousMarker.action = #selector(previousPlaybackMarker)
@@ -1260,13 +1241,8 @@ final class MeetingManagementView: NSView {
         waveform.maxValue = max(state.duration, 1)
         waveform.isEnabled = state.isAvailable
         playButton.isEnabled = state.isAvailable
-        playbackTrack.isEnabled = state.isAvailable
-        playbackTrack.selectItem(withTitle: state.track.rawValue)
-        playbackTrack.item(withTitle: MeetingPlaybackTrack.other.rawValue)?.isEnabled = MeetingPlaybackTrack.other.isAvailable(hasOtherTrack: state.source?.systemPath != nil)
         playbackSpeed.isEnabled = state.isAvailable
         playbackSpeed.selectItem(at: MeetingPlaybackTransportState.supportedSpeeds.firstIndex(of: state.speed) ?? 1)
-        playbackBackward.isEnabled = state.isAvailable
-        playbackForward.isEnabled = state.isAvailable
         playbackPreviousMarker.isEnabled = state.isAvailable && !playbackMarkers.isEmpty
         playbackNextMarker.isEnabled = state.isAvailable && !playbackMarkers.isEmpty
         playButton.title = state.isPlaying ? "Pause" : "Play"
@@ -1308,23 +1284,10 @@ final class MeetingManagementView: NSView {
 
     @objc private func seekAudio(_ sender: NSSlider) { meetingsModel.detail.seekPlayback(to: sender.doubleValue) }
 
-    @objc private func changePlaybackTrack() {
-        guard let title = playbackTrack.titleOfSelectedItem, let track = MeetingPlaybackTrack(rawValue: title) else { return }
-        meetingsModel.detail.selectPlaybackTrack(track)
-    }
-
     @objc private func changePlaybackSpeed() {
         let speeds = MeetingPlaybackTransportState.supportedSpeeds
         guard speeds.indices.contains(playbackSpeed.indexOfSelectedItem) else { return }
         meetingsModel.detail.setPlaybackSpeed(speeds[playbackSpeed.indexOfSelectedItem])
-    }
-
-    @objc private func skipAudioBackward() {
-        meetingsModel.detail.seekPlayback(to: meetingsModel.detail.playbackState.position - 10)
-    }
-
-    @objc private func skipAudioForward() {
-        meetingsModel.detail.seekPlayback(to: meetingsModel.detail.playbackState.position + 10)
     }
 
     @objc private func previousPlaybackMarker() { seekPlaybackMarker(forward: false) }
