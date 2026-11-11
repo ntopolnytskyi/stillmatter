@@ -4,9 +4,9 @@ Status is resolved. Dependencies 13 and 21 are resolved. The user approved contr
 
 ## Completed behavior
 
-Transcript contains the waveform, play/pause, elapsed/total time, Both/My speech/Other participants, 0.5×/1×/1.5×/2× speed, ten-second seeks and previous/next source markers. S/D/A/Q markers identify speech, Decisions, Actions and Questions. Drawing caches up to 64 groups and preserves collocated categories. Native tests verify player visibility across the five Meeting tabs.
+Transcript contains the waveform, play/pause, elapsed/total time, 0.5×/1×/1.5×/2× speed and previous/next source markers. At the user’s request on 2026-11-11, all available tracks play together; the track selector and fixed ten-second skip controls were removed. S/D/A/Q markers identify speech, Decisions, Actions and Questions. Drawing caches up to 64 groups and preserves collocated categories. Native tests verify player visibility across the five Meeting tabs.
 
-Option-P toggles playback. Option-Left/Right seeks ten seconds and Option-1/2/3 selects tracks. Shortcuts apply within the Transcript workspace and exclude text editors. Option-Space is an alternative where macOS delivers it. The evaluation Mac reserves Option-Space for input-source switching. Native assertions exercise Option-P and verify that typing in Transcript search does not control playback.
+Option-P toggles playback. The dedicated Option-Left/Right skip and Option-1/2/3 track-selection handlers were removed with their controls. Shortcuts apply within the Transcript workspace and exclude text editors. Option-Space is an alternative where macOS delivers it. The evaluation Mac reserves Option-Space for input-source switching. Native assertions exercise Option-P and verify that typing in Transcript search does not control playback.
 
 Recorded clock spans now map each track's file ranges onto a common Meeting timeline. Internal capture gaps play as silence on the affected track. Transcript and outcome links seek to the mapped position. A phrase crossing a gap has separate active ranges, so highlighting clears through the dropout. Saved source timestamps and citation identities retain their existing representation.
 
@@ -56,3 +56,13 @@ No hard documented violations. One accepted low-priority maintenance judgment re
 No remaining findings. The capture-gap requirement is implemented. Review also found a source seek that could be dropped during preparation. Commit `39ba19e` queues it for the current source and adds regression assertions for refresh, paused intent and replacement isolation.
 
 `git diff --check` passes. Ticket 22 is resolved with the above evidence.
+
+## 2026-11-11 — Simplified playback controls
+
+At the user's explicit request, removed the fixed −10s/+10s buttons and the Both / My speech / Other participants selector, together with their dedicated Option-Left/Right and Option-1/2/3 handlers. Playback uses all available retained tracks together. Play/pause (Option-P), speed, waveform/native arrow seeking, source links, and Previous/Next marker navigation remain. Original independent track evidence, clock alignment, gap preparation and rendering are preserved. The approved local spec records this user-directed change to R13; the earlier selection/skip evidence above is historical.
+
+Final Release validation passed **465 package tests (four existing opt-in skips, zero failures)**, **52 hosted tests**, and **three focused native UI scenarios**. The native playable-media scenario asserts that the removed controls are absent, changes speed, seeks by waveform, navigates markers and source links, checks editor/shortcut scope and tab visibility, and verifies retained media/Transcript bytes. Empty/unavailable and five-tab behavior also pass.
+
+Compatible evidence roots: `/private/tmp/stillmatter-playback-simple-{package,hosted,native}/`. Against baseline `816469a23f92c02ee9a0549adcff498ad3365e8a`, the unchanged 95% incremental gate exited **0**, **1/1 changed executable app/UI lines (100%)**; this slice primarily deletes code. Report: `/private/tmp/stillmatter-playback-simple-gate.json`. All shipped files have executable maps. Whole-source measured coverage is 19,168/23,487 (81.61%) with the focused native lane, existing debt for ticket 50 rather than a whole-app completion claim. No exclusion or threshold was added.
+
+Independent Standards and Spec reviews of the control-removal diff found **zero findings per axis**. `git diff --check` passed. No storage migration or model-quality capability change is involved.
