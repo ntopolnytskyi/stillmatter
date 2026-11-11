@@ -306,6 +306,40 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(try Data(contentsOf: transcriptURL), original)
     }
 
+    func testRestoredMixedTimelinePanelRetainsTypeFiltersHourJumpAndReaderControls() throws {
+        try seedMeeting(transcript: true, mixedTimeline: true)
+        let original = try Data(contentsOf: meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.json"))
+        openFixtureMeeting()
+        app.radioButtons["Transcript"].click()
+        XCTAssertTrue(app.staticTexts["meeting-transcript-heading"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["ACTION"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["DECISION"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["TRANSCRIPT"].firstMatch.exists)
+        XCTAssertTrue(app.popUpButtons["meeting-transcript-view"].exists)
+        XCTAssertTrue(app.buttons["meeting-transcript-speakers"].exists)
+        attachMeetingScreenshot("Restored mixed Transcript timeline")
+        try app.windows.firstMatch.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/private/tmp/stillmatter-timeline-restored.png"))
+        let transcript = app.buttons["meeting-transcript-kind-transcript"]
+        let decisions = app.buttons["meeting-transcript-kind-decisions"]
+        let actions = app.buttons["meeting-transcript-kind-actions"]
+        transcript.click()
+        XCTAssertTrue(app.staticTexts["Results 1–2 of 2"].waitForExistence(timeout: 5))
+        actions.click()
+        XCTAssertTrue(app.staticTexts["Results 1–1 of 1"].waitForExistence(timeout: 5))
+        decisions.click()
+        XCTAssertTrue(app.staticTexts["No moments in this window or selected filters."].waitForExistence(timeout: 5))
+        transcript.click()
+        let hour = app.popUpButtons["meeting-transcript-hour"]
+        hour.click()
+        app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", "Hour 4")).firstMatch.click()
+        XCTAssertTrue(app.staticTexts["transcript-text-s90"].waitForExistence(timeout: 5))
+        app.typeKey("f", modifierFlags: .command)
+        let search = app.searchFields["meeting-transcript-search"]
+        search.typeText("moment 119")
+        XCTAssertTrue(app.staticTexts["transcript-text-s119"].waitForExistence(timeout: 10))
+        XCTAssertEqual(try Data(contentsOf: meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.json")), original)
+    }
+
     func testEmptyTranscriptShowsFeedbackAndDisablesNavigation() throws {
         try seedMeeting()
         openFixtureMeeting()
@@ -419,7 +453,7 @@ extension StillmatterFlowsUITests {
     }
 
     func seedMeeting(transcript: Bool = false, notes: String = "Original notes.",
-                     myActionItem: String? = nil, savedActionTitle: String? = nil, multipleSpeakers: Bool = false) throws {
+                     myActionItem: String? = nil, savedActionTitle: String? = nil, multipleSpeakers: Bool = false, mixedTimeline: Bool = false) throws {
         // Prepare before launch so discovery does not depend on filesystem watcher timing.
         app.terminate()
         let directory = meetingURL.deletingLastPathComponent()
@@ -443,7 +477,15 @@ extension StillmatterFlowsUITests {
             } ?? "[]"
             let extractionWithAction = extraction.replacingOccurrences(
                 of: "\"my_action_items\":[]", with: "\"my_action_items\":\(myActionItems)")
+            if mixedTimeline {
+                var mixed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(extractionWithAction.utf8)) as? [String: Any])
+                let citation: [String: Any] = ["segment_id": "s0", "start_seconds": 0, "end_seconds": 1]
+                mixed["decisions"] = [["id": "decision-fixture", "text": "Restored decision", "citations": [citation]]]
+                mixed["my_action_items"] = [["id": "mixed-action", "text": "Restored action", "citations": [citation]]]
+                try JSONSerialization.data(withJSONObject: mixed).write(to: directory.appendingPathComponent("summary-extraction.json"))
+            } else {
             try extractionWithAction.write(to: directory.appendingPathComponent("summary-extraction.json"), atomically: true, encoding: .utf8)
+            }
         }
         if let myActionItem, let savedActionTitle {
             let workspace = fixtureRoot.appendingPathComponent("workspace")

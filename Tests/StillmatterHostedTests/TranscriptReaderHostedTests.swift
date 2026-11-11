@@ -76,6 +76,8 @@ final class TranscriptReaderHostedTests: XCTestCase {
         let time: NSButton = try find("transcript-time-s0", in: reader)
         time.performClick(nil)
         XCTAssertEqual(sought?.id, "s0")
+        reader.search.stringValue = "phrase"
+        reader.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: reader.search))
         reader.nextPage.performClick(nil)
         XCTAssertEqual(reader.feedback.stringValue, "Results 101–200 of 205")
         reader.previousPage.performClick(nil)
@@ -92,12 +94,48 @@ final class TranscriptReaderHostedTests: XCTestCase {
         XCTAssertEqual(savedView, .speakers)
         navigation.show(seconds: 12240, segmentID: "s204", kind: .transcript)
         XCTAssertEqual(reader.state.selectedID, "s204")
-        XCTAssertEqual(reader.state.page, 2)
+        XCTAssertEqual(reader.state.page, 0)
+        XCTAssertEqual(reader.state.windowStart, 11700)
         navigation.show(seconds: 0, segmentID: "missing", kind: .transcript)
         XCTAssertEqual(reader.state.selectedID, "s204")
         XCTAssertEqual(TranscriptReaderView.time(.infinity), "Time unavailable")
         XCTAssertEqual(TranscriptReaderView.time(-1), "Time unavailable")
         XCTAssertEqual(TranscriptReaderView.time(14400), "04:00:00")
+    }
+
+    @MainActor
+    func testMixedTimelinePanelTypeFiltersAndHourNavigationKeepReaderFeatures() throws {
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls())
+        let phrases = [
+            TranscriptReaderPhrase(id: "s1", seconds: 7, speaker: "Me", text: "Budget", seekSeconds: 7),
+            TranscriptReaderPhrase(id: "action-s1", seconds: 7, speaker: "Me", text: "Approve budget", seekSeconds: 7,
+                kind: .action, sourceSegmentID: "s1", context: "My action · pending"),
+            TranscriptReaderPhrase(id: "decision-s2", seconds: 14400, speaker: "Guest", text: "Budget approved", seekSeconds: nil,
+                kind: .decision, sourceSegmentID: "s2", context: "Cited decision")
+        ]
+        reader.load(meetingID: "mixed", phrases: phrases, hasAudio: true, seek: { _ in })
+        let heading: NSTextField = try find("meeting-transcript-heading", in: reader)
+        XCTAssertEqual(heading.stringValue, "Transcript timeline")
+        XCTAssertGreaterThan(reader.layer?.cornerRadius ?? 0, 0)
+        XCTAssertGreaterThan(reader.edgeInsets.left, 0)
+        XCTAssertTrue(reader.kindButtons.values.allSatisfy { $0.state == .on })
+        let caption: NSTextField = try find("transcript-kind-action-s1", in: reader)
+        XCTAssertEqual(caption.stringValue, "ACTION")
+        reader.kindButtons[.transcript]?.performClick(nil)
+        XCTAssertEqual(reader.state.results.map(\.id), ["action-s1"])
+        reader.hourPicker.selectItem(at: 4)
+        reader.changeHour()
+        XCTAssertEqual(reader.state.windowStart, 14400)
+        XCTAssertEqual(reader.state.pageRows.first?.id, "decision-s2")
+        reader.search.stringValue = "budget"
+        reader.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: reader.search))
+        XCTAssertEqual(reader.state.results.count, 2)
+        reader.viewPicker.selectItem(withTitle: "Clear text")
+        reader.changeView()
+        XCTAssertEqual(reader.state.results.count, 2)
+        reader.previousPage.performClick(nil)
+        reader.kindButtons[.transcript]?.performClick(nil)
+        XCTAssertEqual(reader.state.results.count, 3)
     }
 
     @MainActor

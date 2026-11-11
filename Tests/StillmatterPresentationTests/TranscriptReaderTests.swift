@@ -1,5 +1,5 @@
 import XCTest
-import StillmatterCore
+@testable import StillmatterCore
 @testable import StillmatterPresentation
 
 final class TranscriptReaderTests: XCTestCase {
@@ -101,6 +101,64 @@ final class TranscriptReaderTests: XCTestCase {
         XCTAssertEqual(reader.results.count, 1)
         XCTAssertEqual(reader.selectedID, "s0")
         XCTAssertEqual(reader.phrases, Array(phrases.prefix(2)))
+    }
+
+    func testMixedTimelineWindowsFiltersAndWholeRecordingSearchRetainSources() {
+        let reader = TranscriptReaderState()
+        let phrases = [
+            TranscriptReaderPhrase(id: "s1", seconds: 7, speaker: "Me", text: "Budget", seekSeconds: 7),
+            TranscriptReaderPhrase(id: "action-s1", seconds: 7, speaker: "Me", text: "Approve budget", seekSeconds: 7,
+                kind: .action, sourceSegmentID: "s1", context: "My action · pending"),
+            TranscriptReaderPhrase(id: "decision-s2", seconds: 14400, speaker: "Guest", text: "Budget approved", seekSeconds: 14400,
+                kind: .decision, sourceSegmentID: "s2", context: "Cited decision")
+        ]
+        reader.load(meetingID: "mixed", phrases: phrases, duration: 14420)
+        XCTAssertEqual(reader.results.map(\.id), ["action-s1", "s1"])
+        reader.setKinds([.action])
+        XCTAssertEqual(reader.results.first?.sourceSegmentID, "s1")
+        reader.setQuery("Budget")
+        XCTAssertEqual(reader.results.count, 1)
+        reader.setKinds([.decision, .transcript])
+        XCTAssertEqual(reader.results.count, 2)
+        reader.nextMatch()
+        XCTAssertEqual(reader.selectedID, "decision-s2")
+        reader.setSpeakers(["Guest"])
+        XCTAssertEqual(reader.results.map(\.id), ["decision-s2"])
+        reader.setQuery("")
+        reader.setWindow(hour: 4)
+        XCTAssertEqual(reader.windowStart, 14400)
+        XCTAssertEqual(reader.results.first?.seconds, 14400)
+        reader.previousPage()
+        XCTAssertEqual(reader.windowStart, 13500)
+        reader.nextPage()
+        XCTAssertEqual(reader.windowStart, 14400)
+        reader.reveal(id: "s1")
+        XCTAssertEqual(reader.windowStart, 0)
+        XCTAssertEqual(reader.selectedID, "s1")
+        XCTAssertTrue(reader.kinds.contains(.transcript))
+        XCTAssertEqual(reader.phrases, phrases)
+    }
+
+    func testSavedOutcomesJoinTheirSourceWithoutInventingAudioOrSpeakers() {
+        let row = MeetingBrowserRow(id: "one", title: "One", startedAt: nil, meetingRelativePath: "Meetings/one/meeting.md",
+                                   captureState: .stopped, processingState: .ready)
+        let citation = MeetingCitation(segmentID: "s", startSeconds: 7, endSeconds: 8, seekSeconds: 9)
+        let detail = MeetingBrowserDetail(row: row, doorwayText: "", myActionItems: [
+            MeetingActionItem(id: "mine", text: "Ship", citations: [citation], reviewState: .pending)
+        ], otherActionItems: [MeetingActionItem(id: "other", text: "Review", citations: [citation])],
+        transcript: [MeetingTranscriptSegment(id: "s", startSeconds: 7, endSeconds: 8, track: "Mic", speaker: "Me", text: "Ship it",
+                                             seekSeconds: 9)],
+        decisions: [MeetingCitedOutcome(text: "Agreed", citations: [citation]),
+                    MeetingCitedOutcome(text: "Unlinked", citations: [MeetingCitation(segmentID: "missing", startSeconds: 8, endSeconds: 9)])],
+        playback: MeetingPlayback(capability: .microphoneOnly, durationSeconds: 20, message: "Fixture"))
+        let rows = TranscriptTimelineProjection.phrases(for: detail)
+        XCTAssertEqual(rows.count, 5)
+        XCTAssertEqual(rows.filter { $0.kind == .action }.map(\.sourceSegmentID), ["s", "s"])
+        XCTAssertEqual(rows.first { $0.text == "Agreed" }?.seekSeconds, 9)
+        XCTAssertEqual(rows.first { $0.text == "Agreed" }?.speaker, "Me")
+        XCTAssertNil(rows.first { $0.text == "Unlinked" }?.seekSeconds)
+        XCTAssertEqual(rows.first { $0.text == "Unlinked" }?.speaker, "")
+        XCTAssertEqual(detail.transcript.first?.text, "Ship it")
     }
 
 }

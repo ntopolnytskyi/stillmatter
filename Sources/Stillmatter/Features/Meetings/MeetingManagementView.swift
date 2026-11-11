@@ -2194,16 +2194,13 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderTimeline(_ detail: MeetingBrowserDetail) {
-        let phrases = detail.transcript.map {
-            TranscriptReaderPhrase(id: $0.id, seconds: $0.startSeconds, speaker: $0.speaker,
-                                   text: $0.text, seekSeconds: $0.seekSeconds)
-        }
+        let phrases = TranscriptTimelineProjection.phrases(for: detail)
         transcriptReader.load(meetingID: detail.row.id, phrases: phrases,
-            hasAudio: meetingsModel.detail.playbackState.isAvailable, seek: { [weak self] phrase in
+            hasAudio: meetingsModel.detail.playbackState.isAvailable, duration: max(detail.playback.durationSeconds, detail.transcript.map(\.endSeconds).max() ?? 0), seek: { [weak self] phrase in
                 guard let self, self.selectedID == detail.row.id,
                       self.audioSource == detail.playback,
                       let seconds = phrase.seekSeconds, seconds <= self.meetingsModel.detail.playbackState.duration,
-                      detail.transcript.contains(where: { $0.id == phrase.id && $0.seekSeconds == seconds }) else { return }
+                      detail.transcript.contains(where: { $0.id == phrase.sourceSegmentID && $0.seekSeconds == seconds }) else { return }
                 self.meetingsModel.detail.seekPlayback(to: seconds)
             })
         if transcriptReader.superview == nil {
