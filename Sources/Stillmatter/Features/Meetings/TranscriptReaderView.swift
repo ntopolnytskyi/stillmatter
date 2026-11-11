@@ -11,6 +11,9 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
     let analysisNotice = NSTextField(wrappingLabelWithString: "")
     private let reprocess: NSButton
     private var canCorrect = false
+    private var isSavingCorrection = false
+    private var speakerPanel: NSPanel?
+    private var editingPhrase: TranscriptReaderPhrase?
     private var correctionButtons: [NSButton] = []
     private var correct: (String, String, @escaping (Result<Void, Error>) -> Void) -> Void = { _, _, _ in }
     private var requestReprocess: () -> Void = {}
@@ -112,7 +115,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         windowFeedback.setAccessibilityIdentifier("meeting-transcript-window")
         rows.orientation = .vertical; rows.alignment = .leading; rows.spacing = GraphiteFocusPresentation.Space.compact
         let divider = NSBox(); divider.boxType = .separator
-        for child in [header, kinds, options, find, matchControls, paging, analysisNotice, reprocess, speakerEditor, divider, rows] {
+        for child in [header, kinds, options, find, matchControls, paging, analysisNotice, reprocess, divider, rows] {
             addArrangedSubview(child)
             child.widthAnchor.constraint(equalTo: widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
         }
@@ -137,7 +140,12 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         let unchanged = state.phrases == phrases && self.meetingID == meetingID && (duration == nil || state.duration == duration)
         self.seek = seek
         self.hasAudio = hasAudio
-        if self.meetingID != meetingID { speakerEditor.isHidden = true }
+        if let editingPhrase {
+            speakerEditor.audition.isEnabled = hasAudio && editingPhrase.seekSeconds != nil && phrases.contains {
+                $0.id == editingPhrase.id && $0.seconds == editingPhrase.seconds && $0.seekSeconds == editingPhrase.seekSeconds
+            }
+        }
+        if self.meetingID != meetingID { closeSpeakerEditor(); isSavingCorrection = false }
         self.meetingID = meetingID
         audioHint.stringValue = hasAudio ? "Select a timecode to seek" : "Audio unavailable · reading only"
         if unchanged { updateAudio(); return }
@@ -145,36 +153,69 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         search.stringValue = state.query
         render()
     }
-    func configureCorrection(enabled: Bool, outdated: Bool, reviewRequired: Bool, review: [String] = [],
+    func configureCorrection(enabled: Bool, outdated: Bool, reviewRequired: Bool, review: [MeetingSpeakerCorrectionReview] = [],
         correct: @escaping (String, String, @escaping (Result<Void, Error>) -> Void) -> Void,
         reprocess: @escaping () -> Void, playSource: @escaping () -> Void = {}) {
         canCorrect = enabled; self.correct = correct; requestReprocess = reprocess; self.playSource = playSource
-        for button in correctionButtons { button.isEnabled = enabled }
+        for button in correctionButtons { button.isEnabled = enabled && !isSavingCorrection }
+        let savedChoices = review.map { "\($0.name) · \($0.track.speakerLabel) \(Self.time($0.startSeconds))–\(Self.time($0.endSeconds))" }.joined(separator: "; ")
         analysisNotice.stringValue = reviewRequired
-            ? "Analysis outdated · source timing changed; speaker corrections need review. Saved choices: \(review.joined(separator: "; ")). Audition the source and correct again."
+            ? "Analysis outdated · source timing changed; speaker corrections need review. Saved choices: \(savedChoices). Audition the source and correct again."
             : "Analysis outdated · speaker names changed. Reprocess explicitly to update analysis. Approved Action Items are preserved."
         analysisNotice.isHidden = !outdated && !reviewRequired; self.reprocess.isHidden = !outdated
         self.reprocess.isEnabled = enabled
-        if !enabled { speakerEditor.isHidden = true }
+        if !enabled { closeSpeakerEditor() }
     }
     @objc private func reprocessAnalysis() { requestReprocess() }
     private func editSpeaker(_ phrase: TranscriptReaderPhrase) {
-        guard canCorrect else { return }
+        guard canCorrect, !isSavingCorrection else { return }
         let origin = meetingID
+        let operation = correct
+        let seekSource = seek
+        let playSource = playSource
+        editingPhrase = phrase
         speakerEditor.edit(name: phrase.speaker, hasAudio: hasAudio && phrase.seekSeconds != nil,
             apply: { [weak self] name in
-                self?.correct(phrase.sourceSegmentID, name) { [weak self] result in
+                guard let self else { return }
+                self.isSavingCorrection = true
+                self.correctionButtons.forEach { $0.isEnabled = false }
+                operation(phrase.sourceSegmentID, name) { [weak self] result in
                     guard let self, self.meetingID == origin else { return }
+                    self.isSavingCorrection = false
+                    self.correctionButtons.forEach { $0.isEnabled = self.canCorrect }
                     switch result {
                     case .success:
                         self.speakerEditor.finish(error: nil)
+                        self.closeSpeakerEditor()
                         self.focusCorrection(phrase.id)
                     case let .failure(error): self.speakerEditor.finish(error: error)
                     }
                 }
-            }, cancel: { [weak self] in self?.focusCorrection(phrase.id) },
-            audition: { [weak self] in self?.seek(phrase); self?.playSource() })
-        speakerEditor.scrollToVisible(speakerEditor.bounds)
+            }, cancel: { [weak self] in self?.closeSpeakerEditor(); self?.focusCorrection(phrase.id) },
+            audition: { seekSource(phrase); playSource() })
+        if let window, speakerPanel == nil {
+            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+            panel.title = "Correct speaker"
+            let content = NSView()
+            panel.contentView = content
+            speakerEditor.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(speakerEditor)
+            NSLayoutConstraint.activate([
+                speakerEditor.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: GraphiteFocusPresentation.Space.panel),
+                speakerEditor.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -GraphiteFocusPresentation.Space.panel),
+                speakerEditor.topAnchor.constraint(equalTo: content.topAnchor, constant: GraphiteFocusPresentation.Space.panel),
+                speakerEditor.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -GraphiteFocusPresentation.Space.panel)
+            ])
+            speakerPanel = panel
+            window.beginSheet(panel)
+            panel.makeFirstResponder(speakerEditor.name)
+        }
+    }
+    private func closeSpeakerEditor() {
+        if let panel = speakerPanel { panel.sheetParent?.endSheet(panel); panel.orderOut(nil) }
+        speakerPanel = nil; editingPhrase = nil
+        speakerEditor.removeFromSuperview()
+        speakerEditor.isHidden = true
     }
     private func focusCorrection(_ id: String) {
         let button = correctionButtons.first { $0.accessibilityIdentifier() == "transcript-correct-" + id }
@@ -346,7 +387,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         }
         if phrase.kind == .transcript {
             let button = controls.actionButton("Correct speaker…", identifier: "transcript-correct-\(phrase.id)") { [weak self] in self?.editSpeaker(phrase) }
-            button.isEnabled = canCorrect
+            button.isEnabled = canCorrect && !isSavingCorrection
             correctionButtons.append(button)
             body.addArrangedSubview(button)
         }

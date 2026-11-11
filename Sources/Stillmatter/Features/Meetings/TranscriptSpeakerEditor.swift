@@ -6,7 +6,7 @@ final class TranscriptSpeakerEditor: NSStackView, NSTextFieldDelegate {
     let apply: NSButton
     let cancel: NSButton
     let audition: NSButton
-    let feedback = NSTextField(wrappingLabelWithString: "")
+    let feedback = GraphiteFocusStatusLabel()
     private var onApply: (String) -> Void = { _ in }
     private var onCancel: () -> Void = {}
     private var onAudition: () -> Void = {}
@@ -40,6 +40,7 @@ final class TranscriptSpeakerEditor: NSStackView, NSTextFieldDelegate {
               cancel: @escaping () -> Void, audition: @escaping () -> Void) {
         self.name.stringValue = name; feedback.stringValue = ""
         onApply = apply; onCancel = cancel; onAudition = audition
+        self.name.isEnabled = true
         self.apply.isEnabled = true; self.cancel.isEnabled = true
         self.audition.isEnabled = hasAudio
         self.audition.toolTip = hasAudio ? "Seek and play this source" : "Retained source audio is unavailable"
@@ -48,15 +49,22 @@ final class TranscriptSpeakerEditor: NSStackView, NSTextFieldDelegate {
     }
     @objc func applyName() {
         let value = name.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { feedback.stringValue = "Enter a speaker name."; return }
+        guard !value.isEmpty else { showError("Enter a speaker name."); return }
+        name.isEnabled = false
         apply.isEnabled = false; cancel.isEnabled = false
         feedback.stringValue = "Saving name…"
         onApply(value)
     }
     func finish(error: Error?) {
+        name.isEnabled = true
         apply.isEnabled = true; cancel.isEnabled = true
-        if let error { feedback.stringValue = error.localizedDescription; window?.makeFirstResponder(name) }
+        if let error { showError(error.localizedDescription + " Edit the name and Apply again, or Cancel.") }
         else { isHidden = true }
+    }
+    private func showError(_ message: String) {
+        feedback.setStatus(message, meaning: .destructive, colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+        NSAccessibility.post(element: feedback, notification: .announcementRequested,
+            userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
     @objc func cancelEdit() { isHidden = true; onCancel() }
     @objc func auditionSource() { onAudition() }

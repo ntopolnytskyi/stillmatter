@@ -104,7 +104,7 @@ public enum MeetingMutation {
     case rename(meetingID: String, title: String, baseVersion: WorkspaceFileVersion)
     case remove(meetingID: String)
     case retry(meetingID: String, jobID: String)
-    case correctSpeaker(meetingID: String, segmentID: String, name: String)
+    case correctSpeaker(meetingID: String, source: MeetingTranscriptSegment, name: String)
     case reprocess(meetingID: String, language: TranscriptLanguage)
 }
 
@@ -408,9 +408,9 @@ public final class MeetingDetailModel: ObservableObject {
         perform(.retry(meetingID: detail.row.id, jobID: jobID), progress: "Retrying processing…", completion: completion)
     }
 
-    public func correctSpeaker(segmentID: String, name: String, completion: @escaping (Result<Void, Error>) -> Void) {
+    public func correctSpeaker(source: MeetingTranscriptSegment, name: String, completion: @escaping (Result<Void, Error>) -> Void) {
         guard !hasDirtyDrafts, let detail else { completion(.failure(MeetingManagementError.unavailable)); return }
-        perform(.correctSpeaker(meetingID: detail.row.id, segmentID: segmentID, name: name),
+        perform(.correctSpeaker(meetingID: detail.row.id, source: source, name: name),
             progress: "Correcting speaker…", completion: completion, apply: { [weak self] output in
                 guard case let .detail(updated) = output else { throw MeetingManagementError.unavailable }
                 self?.apply(updated)

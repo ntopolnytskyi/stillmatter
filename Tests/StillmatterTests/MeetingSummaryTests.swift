@@ -297,7 +297,7 @@ final class MeetingSummaryTests: XCTestCase {
         let management = MeetingManagementService(vault: vault, inbox: fixture.inbox)
         let initial = try management.detail(for: fixture.transcript.meetingRelativePath)
         let segment = try XCTUnwrap(initial.transcript.first)
-        XCTAssertTrue(try management.correctSpeaker(meetingID: initial.row.id, segmentID: segment.id, name: "Alice").analysisOutdated)
+        XCTAssertTrue(try management.correctSpeaker(meetingID: initial.row.id, source: segment, name: "Alice").analysisOutdated)
         _ = try execute(fixture.executor(extraction: extraction), manifest: manifest)
         let regenerated = try management.detail(for: initial.row.id)
         XCTAssertFalse(regenerated.analysisOutdated)

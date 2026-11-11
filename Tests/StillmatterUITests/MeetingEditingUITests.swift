@@ -40,7 +40,7 @@ extension StillmatterFlowsUITests {
         expectation(for: NSPredicate(format: "value CONTAINS %@", "1–200"), evaluatedWith: error)
         waitForExpectations(timeout: 10)
         XCTAssertEqual(name.value as? String, String(repeating: "x", count: 201))
-        name.typeKey("a", modifierFlags: .command); name.typeText("Olena")
+        name.click(); name.typeKey("a", modifierFlags: .command); name.typeText("Olena")
         app.buttons["meeting-speaker-apply"].click()
         expectation(for: NSPredicate(format: "value CONTAINS %@", "Olena"), evaluatedWith: context)
         waitForExpectations(timeout: 10)
@@ -69,6 +69,30 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(source["speaker"] as? String, "Olena")
         XCTAssertEqual(source["text"] as? String, "Synthetic searchable moment 0")
         XCTAssertEqual(source["start"] as? Double, 0)
+    }
+
+    func testSpeakerEditorRejectsExternallyReplacedSourceAndRetainsDraft() throws {
+        try seedMeeting(transcript: true)
+        openFixtureMeeting(); app.radioButtons["Transcript"].click()
+        app.buttons["transcript-correct-s0"].click()
+        let name = app.textFields["meeting-speaker-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.typeKey("a", modifierFlags: .command); name.typeText("Alice")
+        let url = meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.json")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var segments = try XCTUnwrap(object["segments"] as? [[String: Any]])
+        segments[0]["start"] = 3; segments[0]["end"] = 4; object["segments"] = segments
+        try JSONSerialization.data(withJSONObject: object).write(to: url, options: .atomic)
+        expectation(for: NSPredicate(format: "title == %@", "00:00:03"), evaluatedWith: app.buttons["transcript-time-s0"])
+        waitForExpectations(timeout: 10)
+        app.buttons["meeting-speaker-apply"].click()
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "source changed"), evaluatedWith: app.staticTexts["meeting-speaker-feedback"])
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(name.value as? String, "Alice")
+        let unchanged = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        XCTAssertEqual((unchanged["segments"] as? [[String: Any]])?.first?["speaker"] as? String, "Me")
+        app.buttons["meeting-speaker-cancel"].click()
+        XCTAssertFalse(name.exists)
     }
 
     func testFiveMeetingTabsKeepDecisionsInSummaryAndAudioInTranscript() throws {

@@ -32,12 +32,19 @@ final class MeetingSpeakerCorrectionTests: XCTestCase {
         try write(String(decoding: encoder.encode(document), as: UTF8.self), "transcript.json")
     }
 
+    private func correct(segmentID: String, name: String) throws -> MeetingBrowserDetail {
+        let detail = try service.detail(for: "correction")
+        let source = detail.transcript.first { $0.id == segmentID } ?? MeetingTranscriptSegment(id: segmentID,
+            startSeconds: 0, endSeconds: 0, track: "Meeting audio", speaker: "", text: "", seekSeconds: nil)
+        return try service.correctSpeaker(meetingID: "correction", source: source, name: name)
+    }
+
     func testRepeatedCorrectionSurvivesReopenWithoutChangingSourceOrApprovedItems() throws {
         _ = try service.detail(for: "correction")
         try service.reviewAction(id: "meeting-action:correction:task", accept: true)
         let original = try service.detail(for: "correction")
-        _ = try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: "Alice")
-        let renamed = try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: "Олена")
+        _ = try correct(segmentID: "s1", name: "Alice")
+        let renamed = try correct(segmentID: "s1", name: "Олена")
         XCTAssertEqual(renamed.transcript.first?.speaker, "Олена")
         let reopened = try service.detail(for: "correction")
         XCTAssertEqual(reopened.transcript.first?.speaker, "Олена")
@@ -57,24 +64,24 @@ final class MeetingSpeakerCorrectionTests: XCTestCase {
         object["audio_sources"] = [["track": "system-audio", "filePath": "/synthetic", "selection": "fixture"]]
         object["speaker_turns"] = [["start": 0, "end": 7, "track": "system-audio", "cluster_id": 3]]
         try write(String(decoding: JSONSerialization.data(withJSONObject: object), as: UTF8.self), "transcript.json")
-        let updated = try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: "Alice")
+        let updated = try correct(segmentID: "s1", name: "Alice")
         XCTAssertEqual(updated.transcript.map(\.speaker), ["Alice", "Alice"])
         // Simulate an old worker publishing a renamed cluster and regenerated IDs.
         for index in segments.indices { segments[index]["speaker"] = "Speaker 99"; segments[index]["id"] = "new-\(index)" }
         object["segments"] = segments
         try write(String(decoding: JSONSerialization.data(withJSONObject: object), as: UTF8.self), "transcript.json")
         XCTAssertEqual(try service.detail(for: "correction").transcript.map(\.speaker), ["Alice", "Alice"])
-        XCTAssertEqual(try service.correctSpeaker(meetingID: "correction", segmentID: "new-1", name: "Bob").transcript.map(\.speaker), ["Bob", "Bob"])
+        XCTAssertEqual(try correct(segmentID: "new-1", name: "Bob").transcript.map(\.speaker), ["Bob", "Bob"])
     }
 
     func testChangedTimingNeverTransfersAnIdentityByReusedIDOrLabel() throws {
-        _ = try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: "Alice")
+        _ = try correct(segmentID: "s1", name: "Alice")
         try writeTranscript(label: "Speaker 1", id: "s1", start: 10)
         let remapped = try service.detail(for: "correction")
         XCTAssertEqual(remapped.transcript.first?.speaker, "Speaker 1")
         XCTAssertTrue(remapped.speakerReviewRequired)
         XCTAssertTrue(remapped.analysisOutdated)
-        XCTAssertEqual(try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: "Bob").transcript.first?.speaker, "Bob")
+        XCTAssertEqual(try correct(segmentID: "s1", name: "Bob").transcript.first?.speaker, "Bob")
         // Original evidence and choice stay available if the original segmentation returns.
         try writeTranscript()
         XCTAssertEqual(try service.detail(for: "correction").transcript.first?.speaker, "Alice")
@@ -82,17 +89,17 @@ final class MeetingSpeakerCorrectionTests: XCTestCase {
 
     func testInvalidNameMissingSourceAndArchivedMeetingDoNotMutateIdentity() throws {
         for name in ["", "  ", "Alice\nBob", "Alice\tBob", String(repeating: "x", count: 201)] {
-            XCTAssertThrowsError(try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: name))
+            XCTAssertThrowsError(try correct(segmentID: "s1", name: name))
         }
-        XCTAssertThrowsError(try service.correctSpeaker(meetingID: "correction", segmentID: "missing", name: "Alice"))
+        XCTAssertThrowsError(try correct(segmentID: "missing", name: "Alice"))
         XCTAssertFalse(try service.detail(for: "correction").analysisOutdated)
         XCTAssertEqual(try service.detail(for: "correction").transcript.first?.speaker, "Speaker 1")
         try write("{\"archived\":true}", "archive.json")
-        XCTAssertThrowsError(try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: "Alice"))
+        XCTAssertThrowsError(try correct(segmentID: "s1", name: "Alice"))
     }
 
     func testExternalTranscriptTextEditKeepsManualChoiceAndUnknownMetadata() throws {
-        _ = try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: "Alice")
+        _ = try correct(segmentID: "s1", name: "Alice")
         let path = "Meetings/correction/transcript.txt"
         let text = String(decoding: try vault.readMarkdown(relativePath: path).data, as: UTF8.self)
         try write(text.replacingOccurrences(of: "Keep spoken words", with: "External words"), "transcript.txt")
@@ -105,13 +112,35 @@ final class MeetingSpeakerCorrectionTests: XCTestCase {
     }
 
     func testExplicitExternalIdentityEditAdvancesManualChoiceButAnOlderWorkerCannot() throws {
-        _ = try service.correctSpeaker(meetingID: "correction", segmentID: "s1", name: "Alice")
+        _ = try correct(segmentID: "s1", name: "Alice")
         let path = "Meetings/correction/transcript.txt"
         let text = String(decoding: try vault.readMarkdown(relativePath: path).data, as: UTF8.self)
         try write(text.replacingOccurrences(of: "Alice", with: "Olena"), "transcript.txt")
         XCTAssertEqual(try service.detail(for: "correction").transcript.first?.speaker, "Olena")
         try writeTranscript(label: "Worker name")
         XCTAssertEqual(try service.detail(for: "correction").transcript.first?.speaker, "Olena")
+    }
+
+    func testDuplicateTimingKeepsUncertainIdentityForReviewInsteadOfAssigningBothSources() throws {
+        let path = "Meetings/correction/transcript.json"
+        var stale = try XCTUnwrap(JSONSerialization.jsonObject(with: vault.readMarkdown(relativePath: path).data) as? [String: Any])
+        _ = try correct(segmentID: "s1", name: "Alice")
+        var segments = try XCTUnwrap(stale["segments"] as? [[String: Any]])
+        var duplicate = segments[0]; duplicate["id"] = "duplicate"
+        segments.append(duplicate); stale["segments"] = segments
+        try write(String(decoding: JSONSerialization.data(withJSONObject: stale), as: UTF8.self), "transcript.json")
+        let result = try service.detail(for: "correction")
+        XCTAssertEqual(result.transcript.map(\.speaker), ["Speaker 1", "Speaker 1"])
+        XCTAssertTrue(result.speakerReviewRequired)
+        XCTAssertTrue(result.speakerCorrectionReview.map(\.name).contains("Alice"))
+    }
+
+    func testStaleEditorCannotNameReplacementEvidenceWithAReusedSegmentID() throws {
+        let source = try XCTUnwrap(service.detail(for: "correction").transcript.first)
+        try writeTranscript(start: 10)
+        XCTAssertThrowsError(try service.correctSpeaker(meetingID: "correction", source: source, name: "Alice"))
+        XCTAssertEqual(try service.detail(for: "correction").transcript.first?.speaker, "Speaker 1")
+        XCTAssertFalse(try service.detail(for: "correction").analysisOutdated)
     }
 
 }

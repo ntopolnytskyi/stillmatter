@@ -172,6 +172,35 @@ final class TranscriptReaderHostedTests: XCTestCase {
     }
 
     @MainActor
+    func testPendingCorrectionKeepsEditorAndCallbackBoundToTheOriginalSource() throws {
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls())
+        let phrases = [TranscriptReaderPhrase(id: "first", seconds: 1, speaker: "Guest", text: "One", seekSeconds: nil),
+            TranscriptReaderPhrase(id: "second", seconds: 2, speaker: "Guest", text: "Two", seekSeconds: nil)]
+        var finish: ((Result<Void, Error>) -> Void)?
+        var originalUsed = false
+        reader.configureCorrection(enabled: true, outdated: false, reviewRequired: false,
+            correct: { _, _, completion in originalUsed = true; finish = completion }, reprocess: {})
+        reader.load(meetingID: "one", phrases: phrases, hasAudio: false, seek: { _ in })
+        let first: NSButton = try find("transcript-correct-first", in: reader)
+        let second: NSButton = try find("transcript-correct-second", in: reader)
+        first.performClick(nil)
+        reader.configureCorrection(enabled: true, outdated: false, reviewRequired: false,
+            correct: { _, _, _ in XCTFail("An open editor must retain its original source operation") }, reprocess: {})
+        reader.speakerEditor.name.stringValue = "Alice"
+        reader.speakerEditor.apply.performClick(nil)
+        XCTAssertTrue(originalUsed)
+        XCTAssertFalse(second.isEnabled)
+        XCTAssertFalse(reader.speakerEditor.name.isEnabled)
+        reader.configureCorrection(enabled: true, outdated: false, reviewRequired: false, correct: { _, _, _ in }, reprocess: {})
+        XCTAssertFalse(second.isEnabled)
+        finish?(.failure(MeetingManagementError.unavailable))
+        XCTAssertTrue(second.isEnabled)
+        XCTAssertTrue(reader.speakerEditor.name.isEnabled)
+        XCTAssertEqual(reader.speakerEditor.feedback.meaning, .destructive)
+        XCTAssertEqual(reader.speakerEditor.name.stringValue, "Alice")
+    }
+
+    @MainActor
     private func find<T: NSView>(_ id: String, in view: NSView) throws -> T {
         if view.accessibilityIdentifier() == id, let result = view as? T { return result }
         for child in view.subviews { if let found: T = try? find(id, in: child) { return found } }

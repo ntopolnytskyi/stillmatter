@@ -2160,7 +2160,10 @@ final class MeetingManagementView: NSView {
         transcriptReader.configureCorrection(enabled: !detail.row.isArchived && !meetingsModel.isDirty,
             outdated: detail.analysisOutdated, reviewRequired: detail.speakerReviewRequired, review: detail.speakerCorrectionReview,
             correct: { [weak self] segmentID, name, completion in
-                self?.meetingsModel.detail.correctSpeaker(segmentID: segmentID, name: name, completion: completion)
+                guard let source = detail.transcript.first(where: { $0.id == segmentID }) else {
+                    completion(.failure(MeetingManagementError.unavailable)); return
+                }
+                self?.meetingsModel.detail.correctSpeaker(source: source, name: name, completion: completion)
             }, reprocess: { [weak self] in self?.confirmReprocess() }, playSource: { [weak self] in
                 guard let self, self.selectedID == detail.row.id, self.meetingsModel.detail.playbackState.isAvailable else { return }
                 if !self.meetingsModel.detail.playbackState.isPlaying { self.meetingsModel.detail.togglePlayback() }

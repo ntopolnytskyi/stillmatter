@@ -1,13 +1,23 @@
 import Foundation
 
 /// A manual identity belongs to evidence, never to a generated speaker ordinal or name.
+public struct MeetingSpeakerCorrectionReview: Equatable {
+    public let name: String
+    public let track: TranscriptTrack
+    public let startSeconds: Double
+    public let endSeconds: Double
+}
+
 struct MeetingSpeakerCorrection: Codable, Equatable {
-    struct Source: Codable, Equatable {
+    struct Source: Codable, Hashable {
         let track: TranscriptTrack
         let start: Double
         let end: Double
         init(_ segment: TranscriptSegment) {
             track = segment.track; start = segment.startSeconds; end = segment.endSeconds
+        }
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(track.rawValue); hasher.combine(start); hasher.combine(end)
         }
         func matches(_ segment: TranscriptSegment) -> Bool {
             track == segment.track && start == segment.startSeconds && end == segment.endSeconds
@@ -26,10 +36,11 @@ struct MeetingSpeakerCorrection: Codable, Equatable {
     }
 
     static func acceptingExternalNames(_ corrections: [Self], from document: TranscriptDocument) -> [Self] {
-        corrections.flatMap { correction in
+        let segments = Dictionary(grouping: document.segments, by: Source.init)
+        return corrections.flatMap { correction in
             var groups: [Self] = []
             for source in correction.sources {
-                let matches = document.segments.filter { source.matches($0) }
+                let matches = segments[source] ?? []
                 let name = matches.count == 1 ? matches[0].speaker : correction.name
                 if let index = groups.firstIndex(where: { $0.name == name }) {
                     groups[index].sources.append(source)

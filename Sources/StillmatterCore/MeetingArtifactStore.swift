@@ -15,7 +15,7 @@ final class MeetingArtifactStore {
         let reviewStates: [String: ProposalReviewState]
         let completionStates: [String: TodoStatus]
         var speakerCorrectionRevision: String?
-        var speakerCorrectionReview: [String] = []
+        var speakerCorrectionReview: [MeetingSpeakerCorrectionReview] = []
         var analysisOutdated = false
         var speakerReviewRequired = false
     }
@@ -163,9 +163,12 @@ final class MeetingArtifactStore {
                         state.speakerCorrectionRevision = UUID().uuidString
                     }
                 }
+                let sourceSegments = Dictionary(grouping: document.segments, by: MeetingSpeakerCorrection.Source.init)
                 for (index, segment) in document.segments.enumerated() {
                     let matches = corrections.filter { $0.sources.contains(where: { $0.matches(segment) }) }
-                    if matches.count == 1 { segments[index]["speaker"] = matches[0].name }
+                    if matches.count == 1, sourceSegments[MeetingSpeakerCorrection.Source(segment)]?.count == 1 {
+                        segments[index]["speaker"] = matches[0].name
+                    }
                 }
                 object["segments"] = segments
                 object["speaker_identity_revision"] = state.speakerCorrectionRevision
@@ -222,28 +225,30 @@ final class MeetingArtifactStore {
             }), completionStates: Dictionary(uniqueKeysWithValues: actionItems.compactMap { value in value.completion.map { (value.outcome.id, $0) } }))
         loaded.speakerCorrectionRevision = state.speakerCorrectionRevision
         loaded.analysisOutdated = state.speakerCorrectionRevision != state.analysisSpeakerRevision
-        loaded.speakerReviewRequired = (state.speakerCorrections ?? []).contains { correction in
-            correction.sources.contains { source in
-                (transcript?.segments.filter { source.matches($0) }.count ?? 0) != 1
+        let sourceSegments = Dictionary(grouping: transcript?.segments ?? [], by: MeetingSpeakerCorrection.Source.init)
+        loaded.speakerCorrectionReview = (state.speakerCorrections ?? []).flatMap { correction in
+            correction.sources.filter { sourceSegments[$0]?.count != 1 }.map {
+                MeetingSpeakerCorrectionReview(name: correction.name, track: $0.track, startSeconds: $0.start, endSeconds: $0.end)
             }
         }
-        loaded.speakerCorrectionReview = (state.speakerCorrections ?? []).flatMap { correction in
-            correction.sources.filter { source in
-                (transcript?.segments.filter { source.matches($0) }.count ?? 0) != 1
-            }.map { "\(correction.name) · \($0.track.speakerLabel) \($0.start)–\($0.end) s" }
-        }
+        loaded.speakerReviewRequired = !loaded.speakerCorrectionReview.isEmpty
         return loaded
     }
 
-    func correctSpeaker(segmentID: String, name: String, meetingPath: String, meetingID: String) throws {
+    func correctSpeaker(source expectedSource: MeetingTranscriptSegment, name: String, meetingPath: String, meetingID: String) throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 200, !name.contains(where: { $0.isNewline || $0.isASCII && $0.asciiValue! < 32 }) else {
             throw malformed(meetingPath, "Enter a speaker name of 1–200 characters on one line.")
         }
         let loaded = try load(meetingPath: meetingPath, meetingID: meetingID)
-        guard let document = loaded.transcript, let segment = document.segments.first(where: { $0.id == segmentID }) else {
+        guard let document = loaded.transcript, let segment = document.segments.first(where: { $0.id == expectedSource.id }) else {
             throw malformed(meetingPath, "This Transcript source changed. Reload Latest before correcting it.")
+        }
+        guard segment.startSeconds == expectedSource.startSeconds, segment.endSeconds == expectedSource.endSeconds,
+              segment.track.speakerLabel == expectedSource.track, segment.speaker == expectedSource.speaker,
+              document.segments.filter({ MeetingSpeakerCorrection.Source(segment).matches($0) }).count == 1 else {
+            throw malformed(meetingPath, "This speaker source changed or has ambiguous timing. Reload Latest and review its evidence before correcting it.")
         }
         let statePath = sibling(meetingPath, "meeting-artifacts.json")
         let source = try vault.readMarkdown(relativePath: statePath)
