@@ -8,6 +8,7 @@ extension StillmatterFlowsUITests {
         try seedMeeting(transcript: true, myActionItem: "Keep task")
         openFixtureMeeting()
         app.radioButtons["Transcript"].click()
+        app.buttons["meeting-transcript-speakers"].click(); app.menuItems["Me"].click()
         let correct = app.buttons["transcript-correct-s0"]
         XCTAssertTrue(correct.waitForExistence(timeout: 10))
         correct.click()
@@ -25,6 +26,8 @@ extension StillmatterFlowsUITests {
         let context = app.staticTexts["transcript-context-s0"]
         expectation(for: NSPredicate(format: "value CONTAINS %@", "Alice"), evaluatedWith: context)
         waitForExpectations(timeout: 10)
+        expectation(for: NSPredicate(format: "title CONTAINS %@", "2 selected"), evaluatedWith: app.buttons["meeting-transcript-speakers"])
+        waitForExpectations(timeout: 5)
         correct.click()
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.typeKey("a", modifierFlags: .command); name.typeText("Discarded")

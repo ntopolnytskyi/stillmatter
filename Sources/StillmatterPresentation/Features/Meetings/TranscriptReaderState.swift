@@ -38,6 +38,15 @@ public final class TranscriptReaderState {
     public func load(meetingID: String, phrases: [TranscriptReaderPhrase], duration: Double? = nil) {
         if self.meetingID != meetingID {
             query = ""; speakers = []; kinds = Set(TranscriptReaderPhrase.Kind.allCases); windowStart = 0; resetSelection()
+        } else if !speakers.isEmpty {
+            let selectedSources = Dictionary(grouping: self.phrases.filter { speakers.contains($0.speaker) }, by: \.id)
+            let renamedSpeakers = phrases.filter { phrase in
+                selectedSources[phrase.id]?.contains {
+                    $0.seconds == phrase.seconds && $0.sourceSegmentID == phrase.sourceSegmentID &&
+                    $0.kind == phrase.kind && $0.seekSeconds == phrase.seekSeconds
+                } == true
+            }.map(\.speaker)
+            speakers = speakers.intersection(phrases.map(\.speaker)).union(renamedSpeakers)
         }
         self.meetingID = meetingID
         self.phrases = phrases.filter { $0.seconds.isFinite && $0.seconds >= 0 }

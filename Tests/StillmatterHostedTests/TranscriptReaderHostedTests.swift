@@ -201,6 +201,34 @@ final class TranscriptReaderHostedTests: XCTestCase {
     }
 
     @MainActor
+    func testSpeakerFiltersFollowRenamedSourcesWithoutFollowingReusedIDs() throws {
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls())
+        func phrases(_ name: String, seconds: Double = 1) -> [TranscriptReaderPhrase] {
+            [.init(id: "one", seconds: seconds, speaker: name, text: "One", seekSeconds: nil),
+             .init(id: "two", seconds: 2, speaker: "Guest", text: "Two", seekSeconds: nil),
+             .init(id: "three", seconds: 3, speaker: "Me", text: "Three", seekSeconds: nil)]
+        }
+        reader.load(meetingID: "one", phrases: phrases("Guest"), hasAudio: false, seek: { _ in })
+        for name in ["Guest", "Me"] {
+            let item = NSMenuItem(title: name, action: nil, keyEquivalent: ""); item.representedObject = name
+            reader.selectSpeaker(item)
+        }
+        reader.load(meetingID: "one", phrases: phrases("Alice"), hasAudio: false, seek: { _ in })
+        XCTAssertEqual(reader.state.speakers, ["Guest", "Me", "Alice"])
+        XCTAssertEqual(reader.state.results.map(\.id), ["one", "two", "three"])
+        reader.load(meetingID: "one", phrases: phrases("Olena"), hasAudio: false, seek: { _ in })
+        XCTAssertEqual(reader.state.speakers, ["Guest", "Me", "Olena"])
+        reader.load(meetingID: "one", phrases: phrases("Olena"), hasAudio: false, seek: { _ in })
+        XCTAssertEqual(reader.state.speakers, ["Guest", "Me", "Olena"])
+        reader.load(meetingID: "one", phrases: phrases("Unrelated", seconds: 20), hasAudio: false, seek: { _ in })
+        XCTAssertEqual(reader.state.speakers, ["Guest", "Me"])
+        XCTAssertFalse(reader.state.results.contains { $0.id == "one" })
+        reader.load(meetingID: "other", phrases: phrases("Other"), hasAudio: false, seek: { _ in })
+        XCTAssertTrue(reader.state.speakers.isEmpty)
+        XCTAssertEqual(reader.state.results.count, 3)
+    }
+
+    @MainActor
     private func find<T: NSView>(_ id: String, in view: NSView) throws -> T {
         if view.accessibilityIdentifier() == id, let result = view as? T { return result }
         for child in view.subviews { if let found: T = try? find(id, in: child) { return found } }
