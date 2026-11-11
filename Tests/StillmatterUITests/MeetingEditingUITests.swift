@@ -327,9 +327,9 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(app.staticTexts["Results 1–1 of 1"].waitForExistence(timeout: 10))
         contextSearch.typeKey("a", modifierFlags: .command)
         contextSearch.typeKey(.delete, modifierFlags: [])
-        let transcript = app.buttons["meeting-transcript-kind-transcript"]
-        let decisions = app.buttons["meeting-transcript-kind-decisions"]
-        let actions = app.buttons["meeting-transcript-kind-actions"]
+        let transcript = app.checkBoxes["meeting-transcript-kind-transcript"]
+        let decisions = app.checkBoxes["meeting-transcript-kind-decisions"]
+        let actions = app.checkBoxes["meeting-transcript-kind-actions"]
         transcript.click()
         XCTAssertTrue(app.staticTexts["Results 1–2 of 2"].waitForExistence(timeout: 5))
         actions.click()
