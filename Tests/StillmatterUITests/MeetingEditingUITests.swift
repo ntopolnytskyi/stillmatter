@@ -83,7 +83,7 @@ extension StillmatterFlowsUITests {
         var segments = try XCTUnwrap(object["segments"] as? [[String: Any]])
         segments[0]["start"] = 3; segments[0]["end"] = 4; object["segments"] = segments
         try JSONSerialization.data(withJSONObject: object).write(to: url, options: .atomic)
-        expectation(for: NSPredicate(format: "label == %@", "00:00:03"), evaluatedWith: app.buttons["transcript-time-s0"])
+        expectation(for: NSPredicate(format: "title == %@", "00:00:03"), evaluatedWith: app.buttons["transcript-time-s0"])
         waitForExpectations(timeout: 10)
         app.buttons["meeting-speaker-apply"].click()
         expectation(for: NSPredicate(format: "value CONTAINS %@", "source changed"), evaluatedWith: app.staticTexts["meeting-speaker-feedback"])
