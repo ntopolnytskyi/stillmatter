@@ -221,6 +221,19 @@ final class StillmatterFlowsUITests: XCTestCase {
 
         // Another Meeting must clear the previous transport, including queued callbacks.
         app.terminate()
+        let micClock = """
+        {"audioClockSpans":[
+          {"hostStart":10,"hostEnd":11,"startFrame":0,"endFrame":48000,"sampleRate":48000,"generation":1},
+          {"hostStart":13,"hostEnd":20,"startFrame":48000,"endFrame":384000,"sampleRate":48000,"generation":2}
+        ]}
+        """
+        let systemClock = """
+        {"audioClockSpans":[
+          {"hostStart":10,"hostEnd":18,"startFrame":0,"endFrame":384000,"sampleRate":48000,"generation":1}
+        ]}
+        """
+        try Data(micClock.utf8).write(to: newMedia.appendingPathComponent("audio/mic.json"))
+        try Data(systemClock.utf8).write(to: newMedia.appendingPathComponent("audio/system.json"))
         let missing = fixtureRoot.appendingPathComponent("workspace/Meetings/missing")
         try FileManager.default.createDirectory(at: missing, withIntermediateDirectories: true)
         try Data("---\ntitle: Missing evidence\n---\n# Missing evidence\n".utf8).write(to: missing.appendingPathComponent("meeting.md"))
@@ -231,6 +244,14 @@ final class StillmatterFlowsUITests: XCTestCase {
         XCTAssertTrue(first.waitForExistence(timeout: 10))
         first.click()
         app.radioButtons["Transcript"].click()
+        let afterGap = app.buttons["transcript-time-early"]
+        expectation(for: NSPredicate(format: "exists == true AND enabled == true"), evaluatedWith: afterGap)
+        waitForExpectations(timeout: 10)
+        afterGap.click()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:04 / 0:10")).firstMatch.waitForExistence(timeout: 5),
+                      "The file timestamp at two seconds maps to Meeting time four seconds after the capture gap")
+        XCTAssertEqual(try Data(contentsOf: transcriptURL), transcriptBefore)
+        XCTAssertEqual(try Data(contentsOf: retainedMic), micBefore)
         app.buttons["Play Meeting audio"].click()
         let second = app.tables["Meetings"].staticTexts["Missing evidence"].firstMatch
         XCTAssertTrue(second.waitForExistence(timeout: 10))

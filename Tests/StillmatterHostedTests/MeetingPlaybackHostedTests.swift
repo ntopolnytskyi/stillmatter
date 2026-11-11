@@ -6,6 +6,109 @@ import StillmatterPresentation
 
 final class MeetingPlaybackHostedTests: XCTestCase {
     @MainActor
+    func testDiscontinuousCAFAndAACTracksPlayOnTheCommonTimeline() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let preparationRoot = root.appendingPathComponent("playback")
+        try FileManager.default.createDirectory(at: preparationRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let microphone = try audio(root.appendingPathComponent("mic.caf"), amplitude: 0.2, secondAmplitude: 0.6)
+        let system = try audio(root.appendingPathComponent("other.m4a"), amplitude: 0.1, secondAmplitude: 0.4)
+        let originalMicrophone = try Data(contentsOf: microphone)
+        let originalSystem = try Data(contentsOf: system)
+        let microphoneRanges = [MeetingPlaybackRange(fileStart: 0, fileEnd: 1, timelineStart: 0),
+                                MeetingPlaybackRange(fileStart: 1, fileEnd: 2, timelineStart: 2)]
+        let systemRanges = [MeetingPlaybackRange(fileStart: 0, fileEnd: 1, timelineStart: 0.5),
+                            MeetingPlaybackRange(fileStart: 1, fileEnd: 2, timelineStart: 2.5)]
+        let source = MeetingPlayback(capability: .mixed, microphonePath: microphone.path, systemPath: system.path,
+            durationSeconds: 3.5, microphoneRanges: microphoneRanges, systemRanges: systemRanges, message: "Retained")
+        let controller = MeetingAudioPlaybackController(temporaryDirectory: preparationRoot)
+        defer { controller.stop() }
+        controller.load(source)
+        XCTAssertFalse(controller.state.isAvailable, "Preparation runs off the main actor")
+        let ready = expectation(for: NSPredicate { _, _ in controller.state.isAvailable && !controller.state.waveform.isEmpty }, evaluatedWith: nil)
+        await fulfillment(of: [ready], timeout: 5)
+        XCTAssertEqual(controller.state.duration, 3.5, accuracy: 0.001)
+        controller.selectTrack(.mine)
+        let microphoneWave = controller.state.waveform
+        XCTAssertEqual(microphoneWave.count, 96)
+        XCTAssertGreaterThan(microphoneWave[12], 0.5)
+        XCTAssertEqual(microphoneWave[47], 0, accuracy: 0.001)
+        XCTAssertGreaterThan(microphoneWave[69], microphoneWave[12])
+        controller.selectTrack(.other)
+        let systemWave = controller.state.waveform
+        XCTAssertEqual(systemWave[5], 0, accuracy: 0.001)
+        XCTAssertGreaterThan(systemWave[25], 0.05)
+        XCTAssertEqual(systemWave[52], 0, accuracy: 0.001)
+        XCTAssertGreaterThan(systemWave[80], systemWave[25])
+        controller.seek(to: 0.8)
+        controller.setSpeed(2)
+        controller.play()
+        let gap = try await observePosition(1.7, controller: controller)
+        XCTAssertTrue(controller.state.isPlaying)
+        XCTAssertEqual(gap.tracks[0], gap.position, accuracy: 0.12)
+        XCTAssertEqual(gap.tracks[1], gap.position - 0.5, accuracy: 0.12)
+        let resumed = try await observePosition(2.6, controller: controller)
+        XCTAssertEqual(resumed.tracks[0], resumed.position, accuracy: 0.12)
+        XCTAssertEqual(resumed.tracks[1], resumed.position - 0.5, accuracy: 0.12)
+        XCTAssertEqual(try Data(contentsOf: microphone), originalMicrophone)
+        XCTAssertEqual(try Data(contentsOf: system), originalSystem)
+        let stoppedPlayer = try XCTUnwrap(controller.activePlayer)
+        try FileManager.default.removeItem(at: microphone)
+        let unavailable = expectation(for: NSPredicate { _, _ in
+            !controller.state.isAvailable && controller.state.errorMessage?.contains("no longer retained") == true
+        }, evaluatedWith: nil)
+        await fulfillment(of: [unavailable], timeout: 5)
+        XCTAssertNil(controller.activePlayer)
+        let cleaned = expectation(for: NSPredicate { _, _ in
+            (try? FileManager.default.contentsOfDirectory(atPath: preparationRoot.path).isEmpty) == true
+        }, evaluatedWith: nil)
+        await fulfillment(of: [cleaned], timeout: 5)
+        XCTAssertFalse(stoppedPlayer.isPlaying)
+    }
+
+    @MainActor
+    func testInvalidGapRangesFailAndReplacingPreparationDiscardsTemporaryMedia() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let preparationRoot = root.appendingPathComponent("playback")
+        try FileManager.default.createDirectory(at: preparationRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let microphone = try audio(root.appendingPathComponent("mic.caf"), amplitude: 0.2)
+        let controller = MeetingAudioPlaybackController(temporaryDirectory: preparationRoot)
+        defer { controller.stop() }
+        let invalid = MeetingPlayback(capability: .microphoneOnly, microphonePath: microphone.path, durationSeconds: 4,
+            microphoneRanges: [MeetingPlaybackRange(fileStart: 0, fileEnd: 4, timelineStart: 0)], message: "Invalid")
+        controller.load(invalid)
+        let failed = expectation(for: NSPredicate { _, _ in controller.state.errorMessage != nil }, evaluatedWith: nil)
+        await fulfillment(of: [failed], timeout: 5)
+        XCTAssertFalse(controller.state.isAvailable)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: preparationRoot.path), [])
+        let giantGap = 1_000_000_000_000.0
+        controller.load(MeetingPlayback(capability: .microphoneOnly, microphonePath: microphone.path,
+            durationSeconds: giantGap + 1,
+            microphoneRanges: [MeetingPlaybackRange(fileStart: 0, fileEnd: 1, timelineStart: 0),
+                               MeetingPlaybackRange(fileStart: 1, fileEnd: 2, timelineStart: giantGap)], message: "Giant gap"))
+        let space = expectation(for: NSPredicate { _, _ in
+            controller.state.errorMessage?.contains("temporary disk space") == true
+        }, evaluatedWith: nil)
+        await fulfillment(of: [space], timeout: 5)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: preparationRoot.path), [])
+        let gap = MeetingPlayback(capability: .microphoneOnly, microphonePath: microphone.path, durationSeconds: 3,
+            microphoneRanges: [MeetingPlaybackRange(fileStart: 0, fileEnd: 1, timelineStart: 0),
+                               MeetingPlaybackRange(fileStart: 1, fileEnd: 2, timelineStart: 2)], message: "Superseded")
+        controller.load(gap)
+        let replacement = MeetingPlayback(capability: .microphoneOnly, microphonePath: microphone.path, message: "Replacement")
+        controller.load(replacement)
+        let ready = expectation(for: NSPredicate { _, _ in !controller.state.waveform.isEmpty }, evaluatedWith: nil)
+        await fulfillment(of: [ready], timeout: 5)
+        XCTAssertEqual(controller.state.source, replacement)
+        XCTAssertEqual(controller.state.duration, 2, accuracy: 0.001)
+        let cleaned = expectation(for: NSPredicate { _, _ in
+            (try? FileManager.default.contentsOfDirectory(atPath: preparationRoot.path).isEmpty) == true
+        }, evaluatedWith: nil)
+        await fulfillment(of: [cleaned], timeout: 5)
+    }
+
+    @MainActor
     func testTimelineMarkerControlsHaveExplicitLegendAndUnavailableState() {
         let view = MeetingManagementView(readModelProvider: { nil }, mutationExecutorProvider: { nil },
             playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in })
@@ -336,12 +439,17 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         controller.pause()
     }
 
-    private func audio(_ url: URL, amplitude: Float) throws -> URL {
-        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
-        let writer = try AVAudioFile(forWriting: url, settings: format.settings)
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
-        buffer.frameLength = 16_000
-        for i in 0..<16_000 { buffer.floatChannelData?[0][i] = i < 8_000 ? amplitude : 0 }
+    private func audio(_ url: URL, amplitude: Float, secondAmplitude: Float = 0) throws -> URL {
+        let compressed = url.pathExtension == "m4a"
+        let rate = compressed ? 48_000 : 8_000
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: Double(rate), channels: 1))
+        var settings = format.settings
+        if compressed { settings[AVFormatIDKey] = kAudioFormatMPEG4AAC }
+        let writer = try AVAudioFile(forWriting: url, settings: settings)
+        let frames = AVAudioFrameCount(rate * 2)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        buffer.frameLength = frames
+        for i in 0..<Int(frames) { buffer.floatChannelData?[0][i] = i < rate ? amplitude : secondAmplitude }
         try writer.write(from: buffer)
         return url
     }

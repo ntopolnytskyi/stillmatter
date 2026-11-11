@@ -74,15 +74,43 @@ public struct MeetingPlayback: Equatable {
     public let durationSeconds: Double
     public let microphoneOffsetSeconds: Double
     public let systemOffsetSeconds: Double
+    /// Empty arrays on both tracks select legacy offset playback. Otherwise every
+    /// retained track requires ordered ranges covering its complete decoded file.
+    /// Timeline positions are seconds from the shared Meeting origin.
+    public let microphoneRanges: [MeetingPlaybackRange]
+    public let systemRanges: [MeetingPlaybackRange]
     public let message: String
     public init(capability: Capability, microphonePath: String? = nil, systemPath: String? = nil, durationSeconds: Double = 0,
-                microphoneOffsetSeconds: Double = 0, systemOffsetSeconds: Double = 0, message: String) {
+                microphoneOffsetSeconds: Double = 0, systemOffsetSeconds: Double = 0, microphoneRanges: [MeetingPlaybackRange] = [],
+                systemRanges: [MeetingPlaybackRange] = [], message: String) {
         self.capability = capability; self.microphonePath = microphonePath; self.systemPath = systemPath
         self.durationSeconds = durationSeconds; self.microphoneOffsetSeconds = microphoneOffsetSeconds
         self.systemOffsetSeconds = systemOffsetSeconds; self.message = message
+        self.microphoneRanges = microphoneRanges; self.systemRanges = systemRanges
     }
 }
-public struct MeetingTranscriptSegment: Equatable, Identifiable { public let id: String; public let startSeconds: Double; public let endSeconds: Double; public let track: String; public let speaker: String; public let text: String; public let seekSeconds: Double? }
+public struct MeetingTranscriptSegment: Equatable, Identifiable {
+    public let id: String
+    public let startSeconds: Double
+    public let endSeconds: Double
+    public let track: String
+    public let speaker: String
+    public let text: String
+    public let seekSeconds: Double?
+    public let playbackRanges: [Range<Double>]
+
+    init(id: String, startSeconds: Double, endSeconds: Double, track: String, speaker: String, text: String,
+         seekSeconds: Double?, playbackRanges: [Range<Double>] = []) {
+        self.id = id
+        self.startSeconds = startSeconds
+        self.endSeconds = endSeconds
+        self.track = track
+        self.speaker = speaker
+        self.text = text
+        self.seekSeconds = seekSeconds
+        self.playbackRanges = playbackRanges
+    }
+}
 public struct MeetingActionDraft: Equatable { public let title: String; public let comment: String; public init(title: String, comment: String) { self.title = title; self.comment = comment } }
 public struct MeetingBrowserDetail: Equatable { public let actionDrafts: [String: MeetingActionDraft]; public let decisions: [MeetingCitedOutcome]; public let openQuestions: [MeetingCitedOutcome]; public let transcript: [MeetingTranscriptSegment]; public let row: MeetingBrowserRow; public let doorwayText: String; public let doorwayVersion: WorkspaceFileVersion?; public let humanNotes: String; public let notesVersion: WorkspaceFileVersion?; public let artifacts: [MeetingArtifact]; public let job: MeetingJobPresentation?; public let jobs: [MeetingJobPresentation]; public let summaryVersion: WorkspaceFileVersion?; public let summary: MeetingSummarySections?; public let extraction: MeetingSummaryExtraction?; public let myActionItems: [MeetingActionItem]; public let otherActionItems: [MeetingActionItem]; public let staleProposals: [ActionItemProposal]; public let playback: MeetingPlayback
     public init(row: MeetingBrowserRow, doorwayText: String, doorwayVersion: WorkspaceFileVersion? = nil, humanNotes: String = "", notesVersion: WorkspaceFileVersion? = nil, artifacts: [MeetingArtifact] = [], job: MeetingJobPresentation? = nil, jobs: [MeetingJobPresentation] = [], summaryVersion: WorkspaceFileVersion? = nil, summary: MeetingSummarySections? = nil, extraction: MeetingSummaryExtraction? = nil, myActionItems: [MeetingActionItem] = [], otherActionItems: [MeetingActionItem] = [], staleProposals: [ActionItemProposal] = [], transcript: [MeetingTranscriptSegment] = [], decisions: [MeetingCitedOutcome] = [], openQuestions: [MeetingCitedOutcome] = [], playback: MeetingPlayback = MeetingPlayback(capability: .unavailable, message: "Recording Bundle unavailable"), actionDrafts: [String: MeetingActionDraft] = [:]) { self.actionDrafts=actionDrafts; self.decisions=decisions; self.openQuestions=openQuestions; self.transcript=transcript; self.playback=playback; self.row=row; self.doorwayText=doorwayText; self.doorwayVersion=doorwayVersion; self.humanNotes=humanNotes; self.notesVersion=notesVersion ?? doorwayVersion; self.artifacts=artifacts; self.job=job; self.jobs=jobs; self.summaryVersion=summaryVersion; self.summary=summary; self.extraction=extraction; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.staleProposals=staleProposals }
@@ -625,8 +653,23 @@ public final class MeetingManagementService {
             let start = segment.startSeconds + offset
             let end = segment.endSeconds + offset
             let valid = start.isFinite && end.isFinite && segment.startSeconds >= 0 && end >= start && end <= playback.durationSeconds
-            let target: Double? = playback.capability != .unavailable && valid ? start : nil
-            result.append(MeetingTranscriptSegment(id: segment.id, startSeconds: segment.startSeconds, endSeconds: segment.endSeconds, track: segment.track.speakerLabel, speaker: segment.speaker, text: segment.text, seekSeconds: target))
+            let timeline = segment.track == .microphone ? playback.microphoneRanges : playback.systemRanges
+            let mapped: [Range<Double>]
+            let target: Double?
+            if !playback.microphoneRanges.isEmpty {
+                let fileEnd = timeline.last?.fileEnd ?? 0
+                if segment.startSeconds >= 0, segment.startSeconds <= segment.endSeconds, segment.endSeconds <= fileEnd {
+                    mapped = MeetingPlaybackRange.project(segment.startSeconds..<segment.endSeconds, through: timeline)
+                } else {
+                    mapped = []
+                }
+                target = mapped.first?.lowerBound
+            } else {
+                mapped = []
+                target = playback.capability != .unavailable && valid ? start : nil
+            }
+            result.append(MeetingTranscriptSegment(id: segment.id, startSeconds: segment.startSeconds, endSeconds: segment.endSeconds,
+                track: segment.track.speakerLabel, speaker: segment.speaker, text: segment.text, seekSeconds: target, playbackRanges: mapped))
         }
         return result
     }
@@ -701,8 +744,13 @@ public final class MeetingManagementService {
         guard let micSpans = Self.playbackClockSpans(mic, relocated: relocated), let systemSpans = optionalSystemSpans else {
             return unavailable("Playback unavailable: recording timing metadata is malformed or unreadable. Original evidence is preserved.")
         }
-        guard !Self.playbackTimingContainsGaps(micSpans), !Self.playbackTimingContainsGaps(systemSpans) else {
-            return unavailable("Playback unavailable: capture timing contains gaps or invalid clock anchors that this player cannot reproduce. Original evidence is preserved.")
+        guard let micRanges = MeetingPlaybackRange.trackRanges(micSpans, duration: micDuration),
+              let systemRanges = MeetingPlaybackRange.trackRanges(systemSpans, duration: systemDuration ?? 0) else {
+            return unavailable("Playback unavailable: invalid clock anchors. Original evidence is preserved.")
+        }
+        let hasGaps = micRanges.count > 1 || systemRanges.count > 1
+        if hasGaps && mixed && (micSpans.isEmpty || systemSpans.isEmpty) {
+            return unavailable("Playback unavailable: both tracks need clock anchors to align across a capture gap.")
         }
         let partial = bundle.state == .partial
         let offsets: (mic: Double, system: Double)
@@ -711,8 +759,11 @@ public final class MeetingManagementService {
         return MeetingPlayback(capability: mixed ? .mixed : .microphoneOnly,
             microphonePath: micPath,
             systemPath: mixed ? systemPath : nil,
-            durationSeconds: max(offsets.mic + micDuration, offsets.system + (systemDuration ?? 0)),
+            durationSeconds: max(offsets.mic + (micRanges.last?.timelineEnd ?? 0),
+                                 offsets.system + (systemRanges.last?.timelineEnd ?? 0)),
             microphoneOffsetSeconds: offsets.mic, systemOffsetSeconds: offsets.system,
+            microphoneRanges: hasGaps ? micRanges.map { $0.shifted(by: offsets.mic) } : [],
+            systemRanges: hasGaps && mixed ? systemRanges.map { $0.shifted(by: offsets.system) } : [],
             message: mixed ? (partial ? "Microphone and system audio (partial recording)" : "Microphone and system audio")
                 : (partial ? "Partial recording: microphone-only audio; system audio unavailable." : "Microphone-only audio; system audio unavailable."))
     }
@@ -726,21 +777,6 @@ public final class MeetingManagementService {
         guard let data = try? Data(contentsOf: url),
               let timing = try? decoder.decode(Timing.self, from: data) else { return nil }
         return timing.audioClockSpans ?? []
-    }
-
-    /// AVAudioPlayer can reproduce file silence and starting offsets, but cannot insert
-    /// silence where discontinuous capture anchors describe contiguous file frames.
-    private static func playbackTimingContainsGaps(_ spans: [AudioClockSpan]) -> Bool {
-        guard let first = spans.first else { return false } // Legacy recordings have no clock map.
-        let origin = first.hostStart - Double(first.startFrame) / first.sampleRate
-        return spans.contains { span in
-            guard span.sampleRate.isFinite, span.sampleRate > 0,
-                  span.hostStart.isFinite, span.hostEnd.isFinite,
-                  span.startFrame >= 0, span.endFrame > span.startFrame else { return true }
-            let expectedStart = origin + Double(span.startFrame) / span.sampleRate
-            let expectedEnd = origin + Double(span.endFrame) / span.sampleRate
-            return !origin.isFinite || abs(span.hostStart - expectedStart) > 0.005 || abs(span.hostEnd - expectedEnd) > 0.005
-        }
     }
 
     private static func playbackOffsets(mic: [AudioClockSpan], system: [AudioClockSpan]) -> (mic: Double, system: Double) {

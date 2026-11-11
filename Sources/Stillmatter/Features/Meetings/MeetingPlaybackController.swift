@@ -10,6 +10,8 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
     private(set) var state = MeetingPlaybackTransportState()
     var onChange: ((MeetingPlaybackTransportState) -> Void)?
     private(set) var activePlayer: MeetingAudioPlayer?
+    private let temporaryDirectory: URL
+    private var preparation: Task<PreparedMeetingAudio, Error>?
     private var waveformRevision = UUID()
     private var waveforms: [MeetingPlaybackTrack: [Double]] = [:]
     #if DEBUG
@@ -31,10 +33,14 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
 
     var activeTrackCount: Int { activePlayer?.activeTrackCount ?? 0 }
 
+    init(temporaryDirectory: URL = FileManager.default.temporaryDirectory) {
+        self.temporaryDirectory = temporaryDirectory
+    }
+
+    deinit { preparation?.cancel() }
+
     func load(_ source: MeetingPlayback) {
-        let missing = [source.microphonePath, source.systemPath].compactMap { $0 }
-            .contains { !FileManager.default.isReadableFile(atPath: $0) }
-        if missing {
+        if hasUnreadableMedia(source) {
             stop()
             state = MeetingPlaybackTransportState(source: source, duration: source.durationSeconds,
                 errorMessage: "Source no longer retained or readable. Playback unavailable.")
@@ -48,8 +54,44 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
         state = MeetingPlaybackTransportState(source: source, duration: source.durationSeconds)
         publish()
         guard source.capability != .unavailable else { return }
+        if source.microphoneRanges.isEmpty && source.systemRanges.isEmpty {
+            installPlayer(source)
+        } else {
+            prepareGapPlayback(source, revision: waveformRevision)
+        }
+    }
+
+    private func prepareGapPlayback(_ source: MeetingPlayback, revision: UUID) {
+        let microphone = PreparedMeetingAudio.Input(path: source.microphonePath ?? "", ranges: source.microphoneRanges)
+        let system = source.systemPath.map { PreparedMeetingAudio.Input(path: $0, ranges: source.systemRanges) }
+        let duration = source.durationSeconds
+        let directory = temporaryDirectory
+        let task = Task.detached(priority: .userInitiated) {
+            try PreparedMeetingAudio.prepare(microphone: microphone, system: system, duration: duration, in: directory)
+        }
+        preparation = task
+        Task { [weak self] in
+            let result = await task.result
+            guard let self, self.waveformRevision == revision else { return }
+            self.preparation = nil
+            switch result {
+            case let .success(preparedAudio):
+                if self.hasUnreadableMedia(source) {
+                    self.load(source)
+                } else {
+                    self.installPlayer(source, preparedAudio: preparedAudio)
+                }
+            case let .failure(error):
+                self.state = MeetingPlaybackTransportState(source: source, duration: duration,
+                    errorMessage: error.localizedDescription)
+                self.publish()
+            }
+        }
+    }
+
+    private func installPlayer(_ source: MeetingPlayback, preparedAudio: PreparedMeetingAudio? = nil) {
         do {
-            let nextPlayer = try MeetingAudioPlayer(playback: source)
+            let nextPlayer = try MeetingAudioPlayer(playback: source, preparedAudio: preparedAudio)
             activePlayer = nextPlayer
             #if DEBUG
             nextPlayer.onStopAttempt = { [weak self] effective in
@@ -64,6 +106,10 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
                 // Player commands and its timer run on the controller's main run loop.
                 MainActor.assumeIsolated {
                     guard let self, let nextPlayer, self.activePlayer === nextPlayer else { return }
+                    if self.hasUnreadableMedia(source) {
+                        self.load(source)
+                        return
+                    }
                     self.state = MeetingPlaybackTransportState(
                         source: source,
                         position: position,
@@ -78,7 +124,7 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
             }
             state = MeetingPlaybackTransportState(source: source, duration: nextPlayer.duration, isAvailable: true)
             publish()
-            loadWaveform(source, duration: nextPlayer.duration, revision: waveformRevision)
+            loadWaveform(source, preparedAudio: preparedAudio, duration: nextPlayer.duration, revision: waveformRevision)
         } catch {
             state = MeetingPlaybackTransportState(source: source, duration: source.durationSeconds,
                 errorMessage: "Audio cannot be prepared for playback. Inspect the Recording Bundle and its source recordings.")
@@ -87,11 +133,16 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
     }
 
     func play() {
-        if let source = state.source {
-            let paths = [source.microphonePath, source.systemPath].compactMap { $0 }
-            if paths.contains(where: { !FileManager.default.isReadableFile(atPath: $0) }) { load(source); return }
+        if let source = state.source, hasUnreadableMedia(source) {
+            load(source)
+            return
         }
         activePlayer?.play()
+    }
+
+    private func hasUnreadableMedia(_ source: MeetingPlayback) -> Bool {
+        [source.microphonePath, source.systemPath].compactMap { $0 }
+            .contains { !FileManager.default.isReadableFile(atPath: $0) }
     }
     func pause() { activePlayer?.pause() }
 
@@ -121,6 +172,8 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
     }
 
     private func stopCurrentPlayer() {
+        preparation?.cancel()
+        preparation = nil
         guard let oldPlayer = activePlayer else { return }
         activePlayer = nil
         oldPlayer.onTimeChange = nil
@@ -130,15 +183,17 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
         oldPlayer.stop()
     }
 
-    private func loadWaveform(_ source: MeetingPlayback, duration: Double, revision: UUID) {
-        let microphonePath = source.microphonePath
-        let systemPath = source.systemPath
-        let microphoneOffset = source.microphoneOffsetSeconds
-        let systemOffset = source.systemOffsetSeconds
+    private func loadWaveform(_ source: MeetingPlayback, preparedAudio: PreparedMeetingAudio?, duration: Double, revision: UUID) {
+        let microphonePath = preparedAudio?.microphone.path ?? source.microphonePath
+        let systemPath = preparedAudio?.system?.path ?? source.systemPath
+        let microphoneOffset = preparedAudio?.microphone.offset ?? source.microphoneOffsetSeconds
+        let systemOffset = preparedAudio?.system?.offset ?? source.systemOffsetSeconds
         Task { [weak self] in
             let samples = await Task.detached(priority: .utility) {
-                sampleMeetingWaveform(microphonePath: microphonePath, systemPath: systemPath,
-                    duration: duration, microphoneOffset: microphoneOffset, systemOffset: systemOffset)
+                withExtendedLifetime(preparedAudio) {
+                    sampleMeetingWaveform(microphonePath: microphonePath, systemPath: systemPath,
+                        duration: duration, microphoneOffset: microphoneOffset, systemOffset: systemOffset)
+                }
             }.value
             guard let self, self.waveformRevision == revision, self.state.source == source else { return }
             self.waveforms = samples

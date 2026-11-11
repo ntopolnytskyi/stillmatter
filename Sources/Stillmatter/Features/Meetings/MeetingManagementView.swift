@@ -1278,7 +1278,8 @@ final class MeetingManagementView: NSView {
         audioTimeWidth?.constant = labelWidth
         waveformWidth?.constant = -(52 + labelWidth + 2 * GraphiteFocusPresentation.Space.compact) // graphite-focus-native-exception: reserve native playback face and measured time label width
         if let source = state.source {
-            audioStatus.stringValue = state.errorMessage ?? source.message
+            let preparing = !state.isAvailable && !source.microphoneRanges.isEmpty
+            audioStatus.stringValue = state.errorMessage ?? (preparing ? "Preparing audio and preserving capture gaps…" : source.message)
         } else {
             audioStatus.stringValue = "Recording Bundle unavailable. Check the recording media location."
         }
@@ -2245,6 +2246,7 @@ final class MeetingManagementView: NSView {
         // Sorted segments give deterministic priority to the first matching track during overlaps.
         let active = seconds.flatMap { time in
             displayedDetail?.transcript.first {
+                if !$0.playbackRanges.isEmpty { return $0.playbackRanges.contains { $0.contains(time) } }
                 guard let start = $0.seekSeconds else { return false }
                 return start <= time && time < start + ($0.endSeconds - $0.startSeconds)
             }?.id

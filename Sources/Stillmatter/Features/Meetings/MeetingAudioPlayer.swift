@@ -4,11 +4,12 @@ import StillmatterCore
 import StillmatterPresentation
 #endif
 
-/// Plays the immutable Recording Bundle tracks together without rendering a new media file.
+/// Plays retained or temporarily aligned tracks on one audio device clock.
 final class MeetingAudioPlayer {
     private let players: [AVAudioPlayer]
     private let clock: AVAudioPlayer
     private let offsets: [Double]
+    private var preparedAudio: PreparedMeetingAudio?
     private var timer: Timer?
     private var position = 0.0
     private var deviceStart = 0.0
@@ -28,9 +29,10 @@ final class MeetingAudioPlayer {
     var trackVolumes: [Float] { players.map(\.volume) }
     var trackPositions: [Double] { players.map(\.currentTime) }
 
-    init(playback: MeetingPlayback) throws {
-        guard let microphone = playback.microphonePath else { throw PlayerError.unavailable }
-        let paths = [microphone, playback.systemPath].compactMap { $0 }
+    init(playback: MeetingPlayback, preparedAudio: PreparedMeetingAudio? = nil) throws {
+        guard let microphone = preparedAudio?.microphone.path ?? playback.microphonePath else { throw PlayerError.unavailable }
+        let system = preparedAudio?.system?.path ?? playback.systemPath
+        let paths = [microphone, system].compactMap { $0 }
         let prepared = try paths.map { path -> AVAudioPlayer in
             let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
             guard player.duration.isFinite, player.duration > 0, player.prepareToPlay() else {
@@ -39,7 +41,9 @@ final class MeetingAudioPlayer {
             player.enableRate = true
             return player
         }
-        let trackOffsets = [playback.microphoneOffsetSeconds, playback.systemPath == nil ? nil : playback.systemOffsetSeconds].compactMap { $0 }
+        let micOffset = preparedAudio?.microphone.offset ?? playback.microphoneOffsetSeconds
+        let otherOffset = preparedAudio?.system?.offset ?? playback.systemOffsetSeconds
+        let trackOffsets = [micOffset, system == nil ? nil : otherOffset].compactMap { $0 }
         guard trackOffsets.count == prepared.count,
               trackOffsets.allSatisfy({ $0.isFinite && $0 >= 0 }),
               let longestIndex = prepared.indices.max(by: { trackOffsets[$0] + prepared[$0].duration < trackOffsets[$1] + prepared[$1].duration }) else {
@@ -47,6 +51,7 @@ final class MeetingAudioPlayer {
         }
         players = prepared
         offsets = trackOffsets
+        self.preparedAudio = preparedAudio
         clock = prepared[longestIndex]
         duration = trackOffsets[longestIndex] + clock.duration
     }
@@ -145,6 +150,7 @@ final class MeetingAudioPlayer {
         timer?.invalidate()
         timer = nil
         players.forEach { $0.stop() }
+        preparedAudio = nil
         playing = false
         onTimeChange = nil
     }

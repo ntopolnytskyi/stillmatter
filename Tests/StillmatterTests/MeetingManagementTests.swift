@@ -876,6 +876,12 @@ final class MeetingManagementTests: XCTestCase {
         system.status = .partial
         let alignedBundle = try RecordingBundleFinalizer().finalize(mic: mic, system: system, reason: .recovery)
         try fixture.write(path, "---\ntitle: Offset\ncapture_session_id: offset-playback\nrecording_bundle: \(alignedBundle.bundleFilePath)\n---\n# Offset\n")
+        let citation = MeetingOutcomeCitation(segmentID: "after", startSeconds: 0.15, endSeconds: 0.20)
+        let extraction = MeetingSummaryExtraction(meeting: path, transcript: "Meetings/offset-playback/transcript.json",
+            decisions: [MeetingOutcome(id: "decision", text: "After dropout", citations: [citation])],
+            myActionItems: [], otherActionItems: [], openQuestions: [])
+        try fixture.write("Meetings/offset-playback/summary-extraction.json",
+                          String(decoding: try JSONEncoder().encode(extraction), as: UTF8.self))
         let playback = try MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback").playback
         XCTAssertEqual(playback.capability, .mixed)
         XCTAssertEqual(playback.microphoneOffsetSeconds, 0, accuracy: 0.001)
@@ -889,13 +895,46 @@ final class MeetingManagementTests: XCTestCase {
         let gapTiming = Data("""
         {"audioClockSpans":[
           {"hostStart":10,"hostEnd":10.1,"startFrame":0,"endFrame":4800,"sampleRate":48000,"generation":1},
-          {"hostStart":12,"hostEnd":12.1,"startFrame":4800,"endFrame":9600,"sampleRate":48000,"generation":2}
+          {"hostStart":12,"hostEnd":12.1,"startFrame":4800,"endFrame":9600,"sampleRate":48000,"generation":2},
+          {"hostStart":12.1,"hostEnd":12.15,"startFrame":9600,"endFrame":12000,"sampleRate":48000,"generation":3}
         ]}
         """.utf8)
         try gapTiming.write(to: micMetadata)
-        let unavailable = try MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback").playback
-        XCTAssertEqual(unavailable.capability, .unavailable, "Never compress an unrepresented capture gap")
-        XCTAssertTrue(unavailable.message.contains("capture timing contains gaps"))
+        let transcriptPath = "Meetings/offset-playback/transcript.json"
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture.vault.readMarkdown(relativePath: transcriptPath).data) as? [String: Any])
+        var withGap = document
+        withGap["segments"] = [
+            ["id": "after", "start": 0.15, "end": 0.20, "text": "After dropout", "language": "en", "track": "microphone", "speaker": "Me"],
+            ["id": "crossing", "start": 0.05, "end": 0.15, "text": "Before and after", "language": "en", "track": "microphone", "speaker": "Me"],
+            ["id": "boundary", "start": 0.10, "end": 0.10, "text": "Boundary", "language": "en", "track": "microphone", "speaker": "Me"],
+            ["id": "outside", "start": 0.23, "end": 0.30, "text": "Outside file", "language": "en", "track": "microphone", "speaker": "Me"]
+        ]
+        let saved = try JSONSerialization.data(withJSONObject: withGap)
+        try fixture.replace(transcriptPath, String(decoding: saved, as: UTF8.self))
+        let gapped = try MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback")
+        XCTAssertEqual(gapped.playback.capability, .mixed)
+        XCTAssertEqual(gapped.playback.durationSeconds, 2.15, accuracy: 0.001)
+        let after = try XCTUnwrap(gapped.transcript.first { $0.id == "after" })
+        XCTAssertEqual(after.startSeconds, 0.15)
+        XCTAssertEqual(try XCTUnwrap(after.seekSeconds), 2.05, accuracy: 0.001)
+        let crossing = try XCTUnwrap(gapped.transcript.first { $0.id == "crossing" })
+        XCTAssertEqual(crossing.playbackRanges.count, 2)
+        XCTAssertEqual(try XCTUnwrap(crossing.playbackRanges.first).upperBound, 0.1, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(crossing.playbackRanges.last).lowerBound, 2, accuracy: 0.001)
+        let decision = try XCTUnwrap(gapped.decisions.first?.citations.first)
+        XCTAssertEqual(decision.startSeconds, 0.15)
+        XCTAssertEqual(try XCTUnwrap(decision.seekSeconds), 2.05, accuracy: 0.001)
+        XCTAssertFalse(crossing.playbackRanges.contains { $0.contains(1) })
+        let boundary = try XCTUnwrap(gapped.transcript.first { $0.id == "boundary" })
+        XCTAssertEqual(try XCTUnwrap(boundary.seekSeconds), 2, accuracy: 0.001)
+        XCTAssertNil(gapped.transcript.first { $0.id == "outside" }?.seekSeconds)
+        XCTAssertEqual(gapped.playback.microphoneRanges.count, 2)
+        try Data("{}".utf8).write(to: systemMetadata)
+        let unanchored = try MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback").playback
+        XCTAssertEqual(unanchored.capability, .unavailable)
+        XCTAssertTrue(unanchored.message.contains("both tracks need clock anchors"))
+        try timing(10.1).write(to: systemMetadata)
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: transcriptPath).data, saved)
         XCTAssertEqual(try Data(contentsOf: micAudio), originalMic)
         try Data(#"{"audioClockSpans":[{"hostStart":10,"hostEnd":10.2,"startFrame":0,"endFrame":9600,"sampleRate":0,"generation":1}]}"#.utf8).write(to: micMetadata)
         let invalidAnchor = try MeetingManagementService(vault: fixture.vault).detail(for: "offset-playback").playback
