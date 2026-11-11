@@ -12,6 +12,7 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
     private(set) var activePlayer: MeetingAudioPlayer?
     private let temporaryDirectory: URL
     private var preparation: Task<PreparedMeetingAudio, Error>?
+    private var pendingSeek: Double?
     private var waveformRevision = UUID()
     private var waveforms: [MeetingPlaybackTrack: [Double]] = [:]
     #if DEBUG
@@ -82,6 +83,7 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
                     self.installPlayer(source, preparedAudio: preparedAudio)
                 }
             case let .failure(error):
+                self.pendingSeek = nil
                 self.state = MeetingPlaybackTransportState(source: source, duration: duration,
                     errorMessage: error.localizedDescription)
                 self.publish()
@@ -124,8 +126,13 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
             }
             state = MeetingPlaybackTransportState(source: source, duration: nextPlayer.duration, isAvailable: true)
             publish()
+            if let position = pendingSeek {
+                pendingSeek = nil
+                nextPlayer.seek(to: position)
+            }
             loadWaveform(source, preparedAudio: preparedAudio, duration: nextPlayer.duration, revision: waveformRevision)
         } catch {
+            pendingSeek = nil
             state = MeetingPlaybackTransportState(source: source, duration: source.durationSeconds,
                 errorMessage: "Audio cannot be prepared for playback. Inspect the Recording Bundle and its source recordings.")
             publish()
@@ -147,6 +154,10 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
     func pause() { activePlayer?.pause() }
 
     func seek(to seconds: Double) {
+        if preparation != nil {
+            pendingSeek = seconds
+            return
+        }
         guard state.isAvailable else { return }
         activePlayer?.seek(to: seconds)
     }
@@ -172,6 +183,7 @@ final class MeetingAudioPlaybackController: MeetingPlaybackTransport {
     }
 
     private func stopCurrentPlayer() {
+        pendingSeek = nil
         preparation?.cancel()
         preparation = nil
         guard let oldPlayer = activePlayer else { return }

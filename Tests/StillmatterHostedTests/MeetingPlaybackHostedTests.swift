@@ -25,8 +25,13 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         defer { controller.stop() }
         controller.load(source)
         XCTAssertFalse(controller.state.isAvailable, "Preparation runs off the main actor")
+        controller.seek(to: 0.25)
+        controller.seek(to: 2.2)
+        controller.load(source)
         let ready = expectation(for: NSPredicate { _, _ in controller.state.isAvailable && !controller.state.waveform.isEmpty }, evaluatedWith: nil)
         await fulfillment(of: [ready], timeout: 5)
+        XCTAssertEqual(controller.state.position, 2.2, accuracy: 0.001, "The latest source-link seek survives preparation and a same-Meeting refresh")
+        XCTAssertFalse(controller.state.isPlaying, "A source-link seek does not start playback")
         XCTAssertEqual(controller.state.duration, 3.5, accuracy: 0.001)
         controller.selectTrack(.mine)
         let microphoneWave = controller.state.waveform
@@ -78,6 +83,7 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         let invalid = MeetingPlayback(capability: .microphoneOnly, microphonePath: microphone.path, durationSeconds: 4,
             microphoneRanges: [MeetingPlaybackRange(fileStart: 0, fileEnd: 4, timelineStart: 0)], message: "Invalid")
         controller.load(invalid)
+        controller.seek(to: 2.5)
         let failed = expectation(for: NSPredicate { _, _ in controller.state.errorMessage != nil }, evaluatedWith: nil)
         await fulfillment(of: [failed], timeout: 5)
         XCTAssertFalse(controller.state.isAvailable)
@@ -96,12 +102,14 @@ final class MeetingPlaybackHostedTests: XCTestCase {
             microphoneRanges: [MeetingPlaybackRange(fileStart: 0, fileEnd: 1, timelineStart: 0),
                                MeetingPlaybackRange(fileStart: 1, fileEnd: 2, timelineStart: 2)], message: "Superseded")
         controller.load(gap)
+        controller.seek(to: 1.75)
         let replacement = MeetingPlayback(capability: .microphoneOnly, microphonePath: microphone.path, message: "Replacement")
         controller.load(replacement)
         let ready = expectation(for: NSPredicate { _, _ in !controller.state.waveform.isEmpty }, evaluatedWith: nil)
         await fulfillment(of: [ready], timeout: 5)
         XCTAssertEqual(controller.state.source, replacement)
         XCTAssertEqual(controller.state.duration, 2, accuracy: 0.001)
+        XCTAssertEqual(controller.state.position, 0, "Another Meeting cannot inherit a pending source-link seek")
         let cleaned = expectation(for: NSPredicate { _, _ in
             (try? FileManager.default.contentsOfDirectory(atPath: preparationRoot.path).isEmpty) == true
         }, evaluatedWith: nil)
