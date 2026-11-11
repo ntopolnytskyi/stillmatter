@@ -17,9 +17,10 @@ Reference: [ticket 03 local capability contract](local-capability-contract.md), 
 - `swift test --filter MeetingSummaryTests`: 9 passed, 0 failed.
 - `swift test`: 474 passed, 4 skipped, 0 failed.
 - Existing behavioral tests cover validated artifact publication, citation checks, note-task identity, preservation, regeneration, and timeout/retry. They use synthetic responses and do not verify RPC settlement, scoped prompt contents, local model selection, or real-model output quality.
+- Scenario disposition: malformed/undeclared worker outputs and unknown citation IDs are covered; partial RPC streams, acknowledgement/interleaved-event/settled/abort lifecycle, explicit token/context-budget exhaustion, silent-meeting analysis, late-meeting evidence coverage, and unknown/missing owner/date uncertainty are **not verified**. Existing fixture citations exercise the second of two short segments, not a long-recording tail-coverage case. The RPC subprocess suite required by ticket 25 has not been added or run.
 - UI tests skipped because no UI code changed.
 - The incremental 95% gate is not applicable: no shipped executable Swift lines changed (0/0). The final whole-source 95% gate remains assigned to ticket 50 and was not rerun here.
 
 ## Remaining acceptance work
 
-Implement Pi RPC with settled-generation/error/cancellation handling, select and verify an appropriate local provider, supply only explicitly permitted per-run Transcript/My Notes/context with tools disabled, and pass the real local quality cases. Keep app-side citation/source validation and publication atomic. Do not mark ticket 25 complete until those requirements and its remaining tests pass.
+Implement Pi RPC with settled-generation/error/cancellation handling, select and verify an appropriate local provider, supply only explicitly permitted per-run Transcript/My Notes/context with tools disabled, and add the missing budget, silence, long-recording tail, ownership/date, and local quality cases. Keep app-side citation/source validation and publication atomic. Do not mark ticket 25 complete until those requirements and its remaining tests pass.
