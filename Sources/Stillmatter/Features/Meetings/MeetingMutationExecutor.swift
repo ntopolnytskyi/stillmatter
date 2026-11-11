@@ -63,6 +63,8 @@ final class MeetingMutationExecutor: MeetingMutationExecuting {
                 case let .retry(meetingID, jobID):
                     try service.retryFailedJob(meetingID: meetingID, jobID: jobID)
                     return .none
+                case let .correctSpeaker(meetingID, segmentID, name):
+                    return .detail(try service.correctSpeaker(meetingID: meetingID, segmentID: segmentID, name: name))
                 case let .reprocess(meetingID, language):
                     return .job(try service.reprocess(meetingID: meetingID, language: language))
                 }

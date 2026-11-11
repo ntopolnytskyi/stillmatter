@@ -2157,6 +2157,14 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderTimeline(_ detail: MeetingBrowserDetail) {
+        transcriptReader.configureCorrection(enabled: !detail.row.isArchived && !meetingsModel.isDirty,
+            outdated: detail.analysisOutdated, reviewRequired: detail.speakerReviewRequired, review: detail.speakerCorrectionReview,
+            correct: { [weak self] segmentID, name, completion in
+                self?.meetingsModel.detail.correctSpeaker(segmentID: segmentID, name: name, completion: completion)
+            }, reprocess: { [weak self] in self?.confirmReprocess() }, playSource: { [weak self] in
+                guard let self, self.selectedID == detail.row.id, self.meetingsModel.detail.playbackState.isAvailable else { return }
+                if !self.meetingsModel.detail.playbackState.isPlaying { self.meetingsModel.detail.togglePlayback() }
+            })
         let phrases = TranscriptTimelineProjection.phrases(for: detail)
         transcriptReader.load(meetingID: detail.row.id, phrases: phrases,
             hasAudio: meetingsModel.detail.playbackState.isAvailable, duration: max(detail.playback.durationSeconds, detail.transcript.map(\.endSeconds).max() ?? 0), seek: { [weak self] phrase in

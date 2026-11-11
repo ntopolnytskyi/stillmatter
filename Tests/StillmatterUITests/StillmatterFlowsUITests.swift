@@ -233,6 +233,16 @@ final class StillmatterFlowsUITests: XCTestCase {
                       "The file timestamp at two seconds maps to Meeting time four seconds after the capture gap")
         XCTAssertEqual(try Data(contentsOf: transcriptURL), transcriptBefore)
         XCTAssertEqual(try Data(contentsOf: retainedMic), micBefore)
+        app.buttons["transcript-correct-early"].click()
+        let speakerName = app.textFields["meeting-speaker-name"]
+        XCTAssertTrue(speakerName.waitForExistence(timeout: 5))
+        let audition = app.buttons["meeting-speaker-audition"]
+        XCTAssertTrue(audition.isEnabled)
+        audition.click()
+        XCTAssertTrue(app.buttons["Pause Meeting audio"].waitForExistence(timeout: 5), "Audition seeks and plays the existing source")
+        app.buttons["Pause Meeting audio"].click()
+        speakerName.click(); speakerName.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(speakerName.exists)
         app.buttons["Play Meeting audio"].click()
         let second = app.tables["Meetings"].staticTexts["Missing evidence"].firstMatch
         XCTAssertTrue(second.waitForExistence(timeout: 10))

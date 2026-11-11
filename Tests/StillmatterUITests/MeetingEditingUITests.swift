@@ -4,6 +4,73 @@ import XCTest
 import StillmatterCore
 
 extension StillmatterFlowsUITests {
+    func testSpeakerCorrectionRepeatedKeyboardCancelValidationAndReopen() throws {
+        try seedMeeting(transcript: true, myActionItem: "Keep task")
+        openFixtureMeeting()
+        app.radioButtons["Transcript"].click()
+        let correct = app.buttons["transcript-correct-s0"]
+        XCTAssertTrue(correct.waitForExistence(timeout: 10))
+        correct.click()
+        let name = app.textFields["meeting-speaker-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["meeting-speaker-audition"].isEnabled)
+        name.typeKey("a", modifierFlags: .command)
+        name.typeKey(.delete, modifierFlags: [])
+        name.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["Enter a speaker name."].waitForExistence(timeout: 5))
+        name.typeText("Alice")
+        name.typeKey(.return, modifierFlags: [])
+        let notice = app.staticTexts["meeting-analysis-outdated"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 10))
+        let context = app.staticTexts["transcript-context-s0"]
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "Alice"), evaluatedWith: context)
+        waitForExpectations(timeout: 10)
+        correct.click()
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.typeKey("a", modifierFlags: .command); name.typeText("Discarded")
+        name.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(name.exists)
+        XCTAssertTrue((context.value as? String)?.contains("Alice") == true)
+        correct.click()
+        name.typeKey("a", modifierFlags: .command); name.typeText("Olena")
+        // A service validation failure keeps the draft and offers another apply.
+        name.typeKey("a", modifierFlags: .command); name.typeText(String(repeating: "x", count: 201))
+        app.buttons["meeting-speaker-apply"].click()
+        let error = app.staticTexts["meeting-speaker-feedback"]
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "1–200"), evaluatedWith: error)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(name.value as? String, String(repeating: "x", count: 201))
+        name.typeKey("a", modifierFlags: .command); name.typeText("Olena")
+        app.buttons["meeting-speaker-apply"].click()
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "Olena"), evaluatedWith: context)
+        waitForExpectations(timeout: 10)
+        let window = app.windows["Stillmatter"]
+        let frame = window.frame
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -4, dy: -4))
+        corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: 720 - frame.width, dy: 520 - frame.height)))
+        expectation(for: NSPredicate { _, _ in abs(window.frame.width - 720) < 3 }, evaluatedWith: window)
+        waitForExpectations(timeout: 10)
+        correct.click()
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertTrue(name.isHittable)
+        XCTAssertTrue(app.buttons["meeting-speaker-apply"].isHittable)
+        XCTAssertTrue(app.buttons["meeting-speaker-cancel"].isHittable)
+        name.typeKey(.escape, modifierFlags: [])
+        app.popUpButtons["meeting-transcript-view"].click(); app.menuItems["By speakers"].click()
+        XCTAssertTrue(app.staticTexts["Olena"].waitForExistence(timeout: 5))
+        app.buttons["meeting-speaker-reprocess"].click()
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5)); app.buttons["Cancel"].click()
+        relaunch(); openFixtureMeeting(); app.radioButtons["Transcript"].click()
+        XCTAssertTrue(notice.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Olena"].waitForExistence(timeout: 5))
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.json"))) as? [String: Any])
+        let source = try XCTUnwrap((document["segments"] as? [[String: Any]])?.first)
+        XCTAssertEqual(source["id"] as? String, "s0")
+        XCTAssertEqual(source["speaker"] as? String, "Olena")
+        XCTAssertEqual(source["text"] as? String, "Synthetic searchable moment 0")
+        XCTAssertEqual(source["start"] as? Double, 0)
+    }
+
     func testFiveMeetingTabsKeepDecisionsInSummaryAndAudioInTranscript() throws {
         try seedMeeting(transcript: true, myActionItem: "Extracted action title",
                         savedActionTitle: "Edited proposal title")

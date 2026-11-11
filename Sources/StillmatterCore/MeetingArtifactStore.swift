@@ -14,6 +14,10 @@ final class MeetingArtifactStore {
         let versions: [String: WorkspaceFileVersion]
         let reviewStates: [String: ProposalReviewState]
         let completionStates: [String: TodoStatus]
+        var speakerCorrectionRevision: String?
+        var speakerCorrectionReview: [String] = []
+        var analysisOutdated = false
+        var speakerReviewRequired = false
     }
     private struct Manifest: Codable {
         var version = 1
@@ -21,6 +25,9 @@ final class MeetingArtifactStore {
         var meetingPath: String
         var files: [String: String]
         var transcriptBaseHash: String?
+        var speakerCorrections: [MeetingSpeakerCorrection]?
+        var speakerCorrectionRevision: String?
+        var analysisSpeakerRevision: String?
         var transcriptSessionID: String?
         var legacyReview: [String: String]
         var reviewIntents: [String: String] = [:]
@@ -144,6 +151,27 @@ final class MeetingArtifactStore {
                 pair.json = try MeetingTranscriptCodec.encodeJSON(object)
                 pair.text = try MeetingTranscriptCodec.text(pair.json)
             }
+            if var corrections = state.speakerCorrections, !corrections.isEmpty {
+                guard var object = try JSONSerialization.jsonObject(with: pair.json) as? [String: Any],
+                      var segments = object["segments"] as? [[String: Any]] else {
+                    throw malformed(jsonPath, "Transcript segments must be objects.")
+                }
+                if let revision = state.speakerCorrectionRevision, object["speaker_identity_revision"] as? String == revision {
+                    let edited = MeetingSpeakerCorrection.acceptingExternalNames(corrections, from: document)
+                    if edited != corrections {
+                        corrections = edited; state.speakerCorrections = edited
+                        state.speakerCorrectionRevision = UUID().uuidString
+                    }
+                }
+                for (index, segment) in document.segments.enumerated() {
+                    let matches = corrections.filter { $0.sources.contains(where: { $0.matches(segment) }) }
+                    if matches.count == 1 { segments[index]["speaker"] = matches[0].name }
+                }
+                object["segments"] = segments
+                object["speaker_identity_revision"] = state.speakerCorrectionRevision
+                pair.json = try MeetingTranscriptCodec.encodeJSON(object)
+                pair.text = try MeetingTranscriptCodec.text(pair.json)
+            }
             transcript = try MeetingTranscriptCodec.document(pair.json, path: jsonPath)
             for (path, data) in [(jsonPath, pair.json), (textPath, pair.text)] {
                 let current = path == jsonPath ? jsonSource : textSource
@@ -186,12 +214,52 @@ final class MeetingArtifactStore {
             myActionItems: actionItems.filter { $0.item.owner == "me" }.map(\.outcome),
             otherActionItems: actionItems.filter { $0.item.owner != "me" }.map(\.outcome),
             openQuestions: try outcomes(openContent, path: required(state.files["open"], path: statePath, field: "open-items path")).map(\.outcome))
-        return Loaded(notes: notesContent, notesVersion: notesVersion, sections: sections,
+        var loaded = Loaded(notes: notesContent, notesVersion: notesVersion, sections: sections,
             summaryVersion: try combined(versions.filter { $0.key != "notes" }), extraction: extraction,
             transcript: transcript, paths: state.files, versions: versions,
             reviewStates: Dictionary(uniqueKeysWithValues: actionItems.map { item in
                 (item.outcome.id, item.item.review == "approved" ? .accepted : item.item.review == "rejected" ? .dismissed : ProposalReviewState(rawValue: item.item.review) ?? .pending)
             }), completionStates: Dictionary(uniqueKeysWithValues: actionItems.compactMap { value in value.completion.map { (value.outcome.id, $0) } }))
+        loaded.speakerCorrectionRevision = state.speakerCorrectionRevision
+        loaded.analysisOutdated = state.speakerCorrectionRevision != state.analysisSpeakerRevision
+        loaded.speakerReviewRequired = (state.speakerCorrections ?? []).contains { correction in
+            correction.sources.contains { source in
+                (transcript?.segments.filter { source.matches($0) }.count ?? 0) != 1
+            }
+        }
+        loaded.speakerCorrectionReview = (state.speakerCorrections ?? []).flatMap { correction in
+            correction.sources.filter { source in
+                (transcript?.segments.filter { source.matches($0) }.count ?? 0) != 1
+            }.map { "\(correction.name) · \($0.track.speakerLabel) \($0.start)–\($0.end) s" }
+        }
+        return loaded
+    }
+
+    func correctSpeaker(segmentID: String, name: String, meetingPath: String, meetingID: String) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 200, !name.contains(where: { $0.isNewline || $0.isASCII && $0.asciiValue! < 32 }) else {
+            throw malformed(meetingPath, "Enter a speaker name of 1–200 characters on one line.")
+        }
+        let loaded = try load(meetingPath: meetingPath, meetingID: meetingID)
+        guard let document = loaded.transcript, let segment = document.segments.first(where: { $0.id == segmentID }) else {
+            throw malformed(meetingPath, "This Transcript source changed. Reload Latest before correcting it.")
+        }
+        let statePath = sibling(meetingPath, "meeting-artifacts.json")
+        let source = try vault.readMarkdown(relativePath: statePath)
+        var state = try JSONDecoder().decode(Manifest.self, from: source.data)
+        var corrections = state.speakerCorrections ?? []
+        if let index = corrections.firstIndex(where: { $0.sources.contains(where: { $0.matches(segment) }) }) {
+            corrections[index].name = name
+        } else {
+            corrections.append(MeetingSpeakerCorrection(name: name, sources: MeetingSpeakerCorrection.sources(for: segment, in: document)))
+        }
+        state.speakerCorrections = corrections
+        state.speakerCorrectionRevision = UUID().uuidString
+        try MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint).publish([
+            .init(relativePath: statePath, data: try JSONEncoder().encode(state), expectedVersion: source.version)
+        ])
+        _ = try load(meetingPath: meetingPath, meetingID: meetingID)
     }
 
     /// Existing analysis producers publish into the current canonical files rather
@@ -237,6 +305,14 @@ final class MeetingArtifactStore {
             replacements.append(.init(relativePath: path, data: Data(try wrapped(kind, content).utf8), expectedVersion: base.versions[kind]))
         }
         replacements.append(.init(relativePath: sibling(meetingPath, "summary-extraction.json"), data: extractionData, expectedVersion: expectedExtraction))
+        let statePath = sibling(meetingPath, "meeting-artifacts.json")
+        let stateSource = try vault.readMarkdown(relativePath: statePath)
+        var state = try JSONDecoder().decode(Manifest.self, from: stateSource.data)
+        guard state.speakerCorrectionRevision == base.speakerCorrectionRevision else {
+            throw malformed(statePath, "Speaker identities changed during analysis. Retry using the current Transcript.")
+        }
+        state.analysisSpeakerRevision = state.speakerCorrectionRevision
+        replacements.append(.init(relativePath: statePath, data: try JSONEncoder().encode(state), expectedVersion: stateSource.version))
         try MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint).publish(replacements)
     }
 

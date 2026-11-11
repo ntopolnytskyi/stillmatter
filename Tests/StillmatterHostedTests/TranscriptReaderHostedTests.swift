@@ -144,6 +144,34 @@ final class TranscriptReaderHostedTests: XCTestCase {
     }
 
     @MainActor
+    func testSpeakerEditorApplyCancelAuditionAndErrors() throws {
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls())
+        let phrase = TranscriptReaderPhrase(id: "source", seconds: 1, speaker: "Guest", text: "Words", seekSeconds: 1)
+        var applied: String?
+        var auditioned: String?
+        reader.configureCorrection(enabled: true, outdated: false, reviewRequired: false,
+            correct: { _, name, completion in applied = name; completion(.failure(MeetingManagementError.unavailable)) }, reprocess: {})
+        reader.load(meetingID: "one", phrases: [phrase], hasAudio: true, seek: { auditioned = $0.id })
+        let button: NSButton = try find("transcript-correct-source", in: reader)
+        button.performClick(nil)
+        XCTAssertFalse(reader.speakerEditor.isHidden)
+        reader.speakerEditor.audition.performClick(nil)
+        XCTAssertEqual(auditioned, "source")
+        reader.speakerEditor.name.stringValue = "Alice"
+        reader.speakerEditor.apply.performClick(nil)
+        XCTAssertEqual(applied, "Alice")
+        XCTAssertFalse(reader.speakerEditor.isHidden)
+        XCTAssertFalse(reader.speakerEditor.feedback.stringValue.isEmpty)
+        XCTAssertEqual(reader.speakerEditor.name.stringValue, "Alice")
+        reader.speakerEditor.cancel.performClick(nil)
+        XCTAssertTrue(reader.speakerEditor.isHidden)
+        reader.configureCorrection(enabled: false, outdated: true, reviewRequired: true, correct: { _, _, _ in }, reprocess: {})
+        XCTAssertFalse(reader.analysisNotice.isHidden)
+        XCTAssertTrue(reader.analysisNotice.stringValue.contains("review"))
+        XCTAssertFalse(button.isEnabled)
+    }
+
+    @MainActor
     private func find<T: NSView>(_ id: String, in view: NSView) throws -> T {
         if view.accessibilityIdentifier() == id, let result = view as? T { return result }
         for child in view.subviews { if let found: T = try? find(id, in: child) { return found } }

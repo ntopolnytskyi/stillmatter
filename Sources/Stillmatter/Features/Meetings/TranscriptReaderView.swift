@@ -7,6 +7,14 @@ import StillmatterPresentation
 
 /// Native, paged read-only Transcript. Reading state outlives detail/status refreshes.
 final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
+    let speakerEditor: TranscriptSpeakerEditor
+    let analysisNotice = NSTextField(wrappingLabelWithString: "")
+    private let reprocess: NSButton
+    private var canCorrect = false
+    private var correctionButtons: [NSButton] = []
+    private var correct: (String, String, @escaping (Result<Void, Error>) -> Void) -> Void = { _, _, _ in }
+    private var requestReprocess: () -> Void = {}
+    private var playSource: () -> Void = {}
     let heading = NSTextField(labelWithString: "Transcript timeline")
     let audioHint = NSTextField(labelWithString: "")
     let windowFeedback = NSTextField(labelWithString: "")
@@ -39,6 +47,8 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
          saveView: @escaping (TranscriptReadingView) -> Void = { _ in },
          navigation: MeetingTimelineNavigation? = nil) {
         self.controls = controls
+        speakerEditor = TranscriptSpeakerEditor(controls: controls)
+        reprocess = controls.button("Reprocess…", identifier: "meeting-speaker-reprocess")
         self.state = TranscriptReaderState(view: view)
         self.saveView = saveView
         hourPicker = controls.popup(identifier: "meeting-transcript-hour")
@@ -82,6 +92,10 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
             kindButtons[kind] = button
             kinds.addArrangedSubview(button)
         }
+        analysisNotice.font = GraphiteFocusPresentation.Typography.metadata
+        analysisNotice.setAccessibilityIdentifier("meeting-analysis-outdated")
+        analysisNotice.isHidden = true; reprocess.isHidden = true
+        reprocess.target = self; reprocess.action = #selector(reprocessAnalysis)
         let options = NSStackView(views: [viewPicker, speakersButton])
         let jumpLabel = NSTextField(labelWithString: "Jump to")
         jumpLabel.font = GraphiteFocusPresentation.Typography.metadata
@@ -98,7 +112,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         windowFeedback.setAccessibilityIdentifier("meeting-transcript-window")
         rows.orientation = .vertical; rows.alignment = .leading; rows.spacing = GraphiteFocusPresentation.Space.compact
         let divider = NSBox(); divider.boxType = .separator
-        for child in [header, kinds, options, find, matchControls, paging, divider, rows] {
+        for child in [header, kinds, options, find, matchControls, paging, analysisNotice, reprocess, speakerEditor, divider, rows] {
             addArrangedSubview(child)
             child.widthAnchor.constraint(equalTo: widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
         }
@@ -123,12 +137,48 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         let unchanged = state.phrases == phrases && self.meetingID == meetingID && (duration == nil || state.duration == duration)
         self.seek = seek
         self.hasAudio = hasAudio
+        if self.meetingID != meetingID { speakerEditor.isHidden = true }
         self.meetingID = meetingID
         audioHint.stringValue = hasAudio ? "Select a timecode to seek" : "Audio unavailable · reading only"
         if unchanged { updateAudio(); return }
         state.load(meetingID: meetingID, phrases: phrases, duration: duration)
         search.stringValue = state.query
         render()
+    }
+    func configureCorrection(enabled: Bool, outdated: Bool, reviewRequired: Bool, review: [String] = [],
+        correct: @escaping (String, String, @escaping (Result<Void, Error>) -> Void) -> Void,
+        reprocess: @escaping () -> Void, playSource: @escaping () -> Void = {}) {
+        canCorrect = enabled; self.correct = correct; requestReprocess = reprocess; self.playSource = playSource
+        for button in correctionButtons { button.isEnabled = enabled }
+        analysisNotice.stringValue = reviewRequired
+            ? "Analysis outdated · source timing changed; speaker corrections need review. Saved choices: \(review.joined(separator: "; ")). Audition the source and correct again."
+            : "Analysis outdated · speaker names changed. Reprocess explicitly to update analysis. Approved Action Items are preserved."
+        analysisNotice.isHidden = !outdated && !reviewRequired; self.reprocess.isHidden = !outdated
+        self.reprocess.isEnabled = enabled
+        if !enabled { speakerEditor.isHidden = true }
+    }
+    @objc private func reprocessAnalysis() { requestReprocess() }
+    private func editSpeaker(_ phrase: TranscriptReaderPhrase) {
+        guard canCorrect else { return }
+        let origin = meetingID
+        speakerEditor.edit(name: phrase.speaker, hasAudio: hasAudio && phrase.seekSeconds != nil,
+            apply: { [weak self] name in
+                self?.correct(phrase.sourceSegmentID, name) { [weak self] result in
+                    guard let self, self.meetingID == origin else { return }
+                    switch result {
+                    case .success:
+                        self.speakerEditor.finish(error: nil)
+                        self.focusCorrection(phrase.id)
+                    case let .failure(error): self.speakerEditor.finish(error: error)
+                    }
+                }
+            }, cancel: { [weak self] in self?.focusCorrection(phrase.id) },
+            audition: { [weak self] in self?.seek(phrase); self?.playSource() })
+        speakerEditor.scrollToVisible(speakerEditor.bounds)
+    }
+    private func focusCorrection(_ id: String) {
+        let button = correctionButtons.first { $0.accessibilityIdentifier() == "transcript-correct-" + id }
+        window?.makeFirstResponder(button ?? search)
     }
     private var meetingID: String?
 
@@ -210,7 +260,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
     }
     private func render() {
         rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
-        timeButtons = []
+        timeButtons = []; correctionButtons = []
         phraseRows = [:]
         phraseLabels = [:]
         for (kind, button) in kindButtons { button.state = state.kinds.contains(kind) ? .on : .off }
@@ -293,6 +343,12 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
             highlight(context, phraseID: phrase.id, field: .context)
             body.addArrangedSubview(context)
             context.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+        }
+        if phrase.kind == .transcript {
+            let button = controls.actionButton("Correct speaker…", identifier: "transcript-correct-\(phrase.id)") { [weak self] in self?.editSpeaker(phrase) }
+            button.isEnabled = canCorrect
+            correctionButtons.append(button)
+            body.addArrangedSubview(button)
         }
         row.wantsLayer = true
         row.layer?.backgroundColor = colors.surfaceRaised.withAlphaComponent(0.35).cgColor

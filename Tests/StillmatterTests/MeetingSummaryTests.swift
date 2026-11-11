@@ -287,6 +287,23 @@ final class MeetingSummaryTests: XCTestCase {
         XCTAssertTrue(try fixture.inbox.items(category: .review).isEmpty)
     }
 
+    func testExplicitAnalysisAfterSpeakerCorrectionClearsOutdatedNoticeAndKeepsName() throws {
+        let fixture = try MeetingSummaryFixture()
+        let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        _ = try execute(fixture.executor(extraction: extraction), manifest: manifest)
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        let management = MeetingManagementService(vault: vault, inbox: fixture.inbox)
+        let initial = try management.detail(for: fixture.transcript.meetingRelativePath)
+        let segment = try XCTUnwrap(initial.transcript.first)
+        XCTAssertTrue(try management.correctSpeaker(meetingID: initial.row.id, segmentID: segment.id, name: "Alice").analysisOutdated)
+        _ = try execute(fixture.executor(extraction: extraction), manifest: manifest)
+        let regenerated = try management.detail(for: initial.row.id)
+        XCTAssertFalse(regenerated.analysisOutdated)
+        XCTAssertEqual(regenerated.transcript.first?.speaker, "Alice")
+    }
+
     func testProducerAfterMigrationPublishesCanonicalOutcomesAndRetainsApprovedTaskAndNotes() throws {
         let fixture = try MeetingSummaryFixture()
         let initial = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
