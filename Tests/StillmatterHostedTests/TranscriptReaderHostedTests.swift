@@ -136,6 +136,11 @@ final class TranscriptReaderHostedTests: XCTestCase {
         reader.previousPage.performClick(nil)
         reader.kindButtons[.transcript]?.performClick(nil)
         XCTAssertEqual(reader.state.results.count, 3)
+        reader.search.stringValue = "pending"
+        reader.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: reader.search))
+        let context: NSTextField = try find("transcript-context-action-s1", in: reader)
+        XCTAssertNotNil(context.attributedStringValue.attribute(.underlineStyle, at: 12, effectiveRange: nil))
+        XCTAssertEqual(reader.state.selectedMatch?.field, .context)
     }
 
     @MainActor

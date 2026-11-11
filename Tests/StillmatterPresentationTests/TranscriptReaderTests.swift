@@ -161,4 +161,20 @@ final class TranscriptReaderTests: XCTestCase {
         XCTAssertEqual(detail.transcript.first?.text, "Ship it")
     }
 
+    func testContextSearchFindsSpeakersAndActionReviewLabelsAcrossWindows() {
+        let reader = TranscriptReaderState()
+        reader.load(meetingID: "context", phrases: [
+            TranscriptReaderPhrase(id: "s", seconds: 1, speaker: "Alex", text: "Ship", seekSeconds: nil),
+            TranscriptReaderPhrase(id: "action", seconds: 14000, speaker: "Me", text: "Approve", seekSeconds: nil,
+                kind: .action, sourceSegmentID: "late", context: "My action · pending")
+        ])
+        reader.setQuery("Alex")
+        XCTAssertEqual(reader.results.map(\.id), ["s"])
+        XCTAssertEqual(reader.matches.count, 1)
+        reader.setQuery("pending")
+        XCTAssertEqual(reader.results.map(\.id), ["action"])
+        XCTAssertEqual(reader.matches.count, 1)
+        XCTAssertEqual(reader.selectedID, "action")
+    }
+
 }

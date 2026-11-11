@@ -26,7 +26,7 @@ public final class TranscriptReaderState {
     private var meetingID: String?
     public init(view: TranscriptReadingView = .timestamps) { self.view = view }
 
-    public var availableSpeakers: [String] { Array(Set(phrases.map(\.speaker))).sorted() }
+    public var availableSpeakers: [String] { Array(Set(phrases.map(\.speaker).filter { !$0.isEmpty })).sorted() }
     public var pageRows: [TranscriptReaderPhrase] { Array(results.dropFirst(page * pageSize).prefix(pageSize)) }
     public var selectedMatch: TranscriptSearchMatch? { matches.indices.contains(matchIndex) ? matches[matchIndex] : nil }
     public var matchNumber: Int { matches.isEmpty ? 0 : matchIndex + 1 }
@@ -37,7 +37,7 @@ public final class TranscriptReaderState {
 
     public func load(meetingID: String, phrases: [TranscriptReaderPhrase], duration: Double? = nil) {
         if self.meetingID != meetingID {
-            query = ""; speakers = []; kinds = Set(TranscriptReaderPhrase.Kind.allCases); windowStart = 0; selectedID = nil; page = 0; matchIndex = 0
+            query = ""; speakers = []; kinds = Set(TranscriptReaderPhrase.Kind.allCases); windowStart = 0; resetSelection()
         }
         self.meetingID = meetingID
         self.phrases = phrases.filter { $0.seconds.isFinite && $0.seconds >= 0 }
@@ -47,13 +47,14 @@ public final class TranscriptReaderState {
         refresh()
     }
     public func setQuery(_ query: String) {
-        self.query = query; selectedID = nil; page = 0; matchIndex = 0; refresh()
+        self.query = query; resetSelection(); refresh()
     }
     public func setKinds(_ kinds: Set<TranscriptReaderPhrase.Kind>) { self.kinds = kinds; refresh() }
     public func setWindow(hour: Int) { changeWindow(to: min(lastWindowStart, max(0, Double(hour) * 3600))) }
     private func changeWindow(to start: Double) {
-        query = ""; selectedID = nil; page = 0; matchIndex = 0; windowStart = start; refresh()
+        query = ""; resetSelection(); windowStart = start; refresh()
     }
+    private func resetSelection() { selectedID = nil; page = 0; matchIndex = 0 }
     public func setSpeakers(_ speakers: Set<String>) { self.speakers = speakers; refresh() }
     public func setView(_ view: TranscriptReadingView) { self.view = view; refresh() }
     public func nextPage() {
@@ -78,21 +79,23 @@ public final class TranscriptReaderState {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         results = phrases.filter { kinds.contains($0.kind) && (speakers.isEmpty || speakers.contains($0.speaker)) &&
             (term.isEmpty ? ($0.seconds >= windowStart && $0.seconds < windowStart + windowDuration)
-             : $0.text.localizedStandardContains(term)) }.sorted {
+             : $0.text.localizedStandardContains(term) || $0.metadata.localizedStandardContains(term)) }.sorted {
                 if view == .speakers && $0.speaker != $1.speaker { return $0.speaker < $1.speaker }
                 return $0.seconds == $1.seconds ? $0.id < $1.id : $0.seconds < $1.seconds
             }
         matches = []
         if !term.isEmpty {
             for phrase in results {
-                let text = phrase.text as NSString
-                var offset = 0
-                while offset < text.length {
-                    let range = text.range(of: term, options: [.caseInsensitive, .diacriticInsensitive],
-                                           range: NSRange(location: offset, length: text.length - offset))
-                    if range.location == NSNotFound { break }
-                    matches.append(TranscriptSearchMatch(phraseID: phrase.id, range: range))
-                    offset = range.location + range.length
+                for (field, value) in [(TranscriptSearchMatch.Field.text, phrase.text), (.context, phrase.metadata)] {
+                    let text = value as NSString
+                    var offset = 0
+                    while offset < text.length {
+                        let range = text.range(of: term, options: [.caseInsensitive, .diacriticInsensitive],
+                                               range: NSRange(location: offset, length: text.length - offset))
+                        if range.location == NSNotFound { break }
+                        matches.append(TranscriptSearchMatch(phraseID: phrase.id, range: range, field: field))
+                        offset = range.location + range.length
+                    }
                 }
             }
         }

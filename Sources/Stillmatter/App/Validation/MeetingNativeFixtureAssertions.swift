@@ -78,7 +78,7 @@ extension MeetingManagementView {
                 text: index == 235 ? "unique late phrase" : "ordinary", seekSeconds: Double(index * 60))
         }
         reader.load(meetingID: "fixture", phrases: phrases)
-        precondition(reader.pageRows.count == 100, "Ordinary browsing must bound a four-hour Transcript")
+        precondition(reader.pageRows.count == 15 && reader.pageRows.last?.seconds == 840, "Ordinary browsing must bound a four-hour Transcript")
         reader.setQuery("unique late phrase")
         precondition(reader.results.first?.id == "235", "Search must cover the whole recording")
         reader.setQuery("no match")

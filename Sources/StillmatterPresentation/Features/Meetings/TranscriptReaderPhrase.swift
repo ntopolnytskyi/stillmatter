@@ -8,6 +8,13 @@ public struct TranscriptReaderPhrase: Equatable, Identifiable {
             switch self { case .transcript: return "TRANSCRIPT"; case .decision: return "DECISION"; case .action: return "ACTION" }
         }
     }
+    public var metadata: String {
+        if kind == .transcript {
+            let initials = speaker.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()
+            return "\(initials)  \(speaker)"
+        }
+        return "\(context)\(speaker.isEmpty ? "" : " · \(speaker)")"
+    }
     public let kind: Kind
     public let sourceSegmentID: String
     public let context: String

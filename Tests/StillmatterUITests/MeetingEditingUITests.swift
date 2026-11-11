@@ -317,8 +317,16 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(app.staticTexts["TRANSCRIPT"].firstMatch.exists)
         XCTAssertTrue(app.popUpButtons["meeting-transcript-view"].exists)
         XCTAssertTrue(app.buttons["meeting-transcript-speakers"].exists)
-        attachMeetingScreenshot("Restored mixed Transcript timeline")
-        try app.windows.firstMatch.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/private/tmp/stillmatter-timeline-restored.png"))
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "Restored mixed Transcript timeline"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.typeKey("f", modifierFlags: .command)
+        let contextSearch = app.searchFields["meeting-transcript-search"]
+        contextSearch.typeText("My action")
+        XCTAssertTrue(app.staticTexts["Results 1–1 of 1"].waitForExistence(timeout: 10))
+        contextSearch.typeKey("a", modifierFlags: .command)
+        contextSearch.typeKey(.delete, modifierFlags: [])
         let transcript = app.buttons["meeting-transcript-kind-transcript"]
         let decisions = app.buttons["meeting-transcript-kind-decisions"]
         let actions = app.buttons["meeting-transcript-kind-actions"]
@@ -331,7 +339,7 @@ extension StillmatterFlowsUITests {
         transcript.click()
         let hour = app.popUpButtons["meeting-transcript-hour"]
         hour.click()
-        app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", "Hour 4")).firstMatch.click()
+        app.menuItems["Hour 4 · 03:00:00–03:58:01"].click()
         XCTAssertTrue(app.staticTexts["transcript-text-s90"].waitForExistence(timeout: 5))
         app.typeKey("f", modifierFlags: .command)
         let search = app.searchFields["meeting-transcript-search"]
