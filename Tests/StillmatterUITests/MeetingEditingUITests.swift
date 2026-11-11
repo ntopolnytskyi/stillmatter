@@ -354,7 +354,7 @@ extension StillmatterFlowsUITests {
         app.radioButtons["Transcript"].click()
         XCTAssertTrue(app.staticTexts["No Transcript available."].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["meeting-transcript-next"].isEnabled)
-        XCTAssertFalse(app.buttons["meeting-transcript-next-match"].isEnabled)
+        XCTAssertFalse(app.buttons["meeting-transcript-next-match"].exists, "Match controls stay hidden until a search is active")
         XCTAssertFalse(app.buttons["meeting-transcript-speakers"].isEnabled)
     }
 
