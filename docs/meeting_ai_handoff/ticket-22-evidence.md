@@ -1,65 +1,58 @@
 # Ticket 22 — Transcript playback evidence
 
-Scope: [ticket 22](../../.scratch/meeting-ai/issues/22-play-synchronized-tracks-through-the-transcript-waveform.md), based on `3686cc1f1ea3c94b315d52b2daf0d3c0c858c4de`. Dependencies 13 and 21 are resolved. The user approved controller, generated-audio hosted integration, and native UI test boundaries and this review baseline.
+Status is resolved. Dependencies 13 and 21 are resolved. The user approved controller, generated-audio hosted integration and native UI test boundaries. The original review baseline is `3686cc1f1ea3c94b315d52b2daf0d3c0c858c4de`. The capture-gap follow-up starts at `3be51cc3ebbfd0119b368a64538fa5511934ee7c`.
 
-## Behavior
+## Completed behavior
 
-The Transcript player uses the original validated microphone and system tracks. Both / My speech / Other participants changes their volumes without replacing the player or resetting the source position. Missing Other evidence disables that choice. Speed choices are 0.5×, 1×, 1.5× and 2×. Seek and speed changes preserve playing/paused intent; Play at EOF restarts. A shared device clock accounts for track starting offsets and rate. Source files are never rewritten by playback.
+Transcript contains the waveform, play/pause, elapsed/total time, Both/My speech/Other participants, 0.5×/1×/1.5×/2× speed, ten-second seeks and previous/next source markers. S/D/A/Q markers identify speech, Decisions, Actions and Questions. Drawing caches up to 64 groups and preserves collocated categories. Native tests verify player visibility across the five Meeting tabs.
 
-The player is visible only in Transcript. It has waveform mouse/arrow-key seeking, elapsed/total time, backward/forward ten seconds, and previous/next source markers. Speech, Decisions, Actions and Questions use S/D/A/Q labels and an explicit legend; marker drawing is bounded for dense recordings while navigation retains all validated markers. Shortcuts are Option-P (play/pause; Option-Space also works when not reserved by macOS), Option-Left/Right (ten seconds), and Option-1/2/3 (tracks). They apply in the selected Meeting's Transcript workspace and exclude text editors. Native popup/slider/button keyboard behavior remains available.
+Option-P toggles playback. Option-Left/Right seeks ten seconds and Option-1/2/3 selects tracks. Shortcuts apply within the Transcript workspace and exclude text editors. Option-Space is an alternative where macOS delivers it. The evaluation Mac reserves Option-Space for input-source switching. Native assertions exercise Option-P and verify that typing in Transcript search does not control playback.
 
-Clock offsets also apply to Transcript seeks and current-phrase highlights. Saved track-local timestamps and citation identity remain unchanged. Relocated recordings read their relocated timing metadata. Waveforms are sampled once per loaded source and cached per mix. Ticks publish small transport values and update active phrase styling; they do not rebuild the Transcript or reread full audio files. An unrelated source-equivalent document refresh retains the player, position, speed and mix. Replacing a Meeting invalidates player and waveform callbacks.
+Recorded clock spans now map each track's file ranges onto a common Meeting timeline. Internal capture gaps play as silence on the affected track. Transcript and outcome links seek to the mapped position. A phrase crossing a gap has separate active ranges, so highlighting clears through the dropout. Saved source timestamps and citation identities retain their existing representation.
 
-## Unsupported capability — not accepted as complete
+Playback preparation streams 8,192-frame buffers into a private temporary CAF directory. Contiguous tracks reuse their retained files directly. This keeps the existing tested transport and its supported rates. Waveforms sample the same prepared inputs. Stop, source replacement, cancellation, preparation errors and loss of an original during playback release temporary audio. A source click during preparation retains the latest requested seek and applies it when the player is ready. Replacement and failure clear it.
 
-**Discontinuous capture-clock playback remains unsupported.** `AudioClockSpan` can describe host-time gaps between contiguous file frames. The existing AVAudioPlayer transport cannot insert that missing silence. Furthermore, canonical Transcript segments and speaker turns currently retain per-file times; simply adding silence to playback without mapping those source references would shift Transcript/citation navigation. This change refuses playback when supplied clock anchors contain unrepresented gaps or invalid timing instead of silently compressing the recording. It also reports malformed/unreadable metadata explicitly. Legacy recordings without clock anchors retain the existing file-timeline fallback; they do not establish measured original-clock alignment.
+Original recordings remain read-only during preparation and playback. Filesystem readability checks detect removed originals on playback ticks. Ticks update transport and phrase styling without rebuilding the Transcript or rereading complete media files. Source-equivalent content refresh retains the player, position, speed and mix.
 
-To finish this requirement, add a validated common-timeline projection for track-local Transcript/citation timing and a gap-aware player/composition or background bounded-memory aligned derivative, preserving originals and handling cancellation/cleanup. Tests must verify actual decoded samples and navigation on both sides of capture gaps, rate changes and Meeting replacement. File silence and starting offsets tested here do **not** prove capture-gap playback.
+## Timing and compatibility limits
 
-Ticket 22 must remain unresolved while that acceptance criterion is unmet. No source-isolation, ASR/diarization quality, real-device synchronization or other hardware capability is established by these generated fixtures.
+Malformed, overlapping, inconsistent or undecodable timing receives an explicit unavailable message. Anchor validation retains the capture clock's five-millisecond tolerance. Mixed recordings with internal gaps require clock anchors for both retained tracks. Missing evidence cannot establish their original relative timing. Legacy recordings without clock anchors retain file-offset playback.
 
-## Verification
+The temporary rendering path requires sufficient disk space and reports capacity errors. No persisted Meeting schema or setting migration is introduced. Existing legacy, relocated-recording and restart scenarios pass. Synthetic fixtures isolate workspace, media, support and preferences.
 
-Final production source through `4663acd` passed the Release lanes below. All fixtures use disposable synthetic workspace, media, support and preferences. No new persistent setting or Meeting-file migration is introduced; playback preferences are session-local and reset when another source is selected.
+Hardware source isolation and speech-model quality remain covered by their declared evaluation tickets.
 
-## Timing regression and review
+## Final verification
 
-The stronger real-driver test exposed two independent scheduling defects. A disposable AVAudioPlayer probe reproduced resumed track drift in five out of five runs (approximately 0.15–0.16 source seconds), and a later-starting track advanced before its intended offset at 2×. Testing one change at a time showed that stopping and restoring track positions cancels old scheduled starts, while removing the second rate scaling corrects future start scheduling. Combined checks at 0.5×/1×/1.5×/2× observed no early Other track and resumed drift below 0.014 source seconds in that probe. The retained regression tests assert wall time and actual AVAudioPlayer track positions with their original tolerances. Corrected focused hosted tests: 8/8 passed. Probe evidence: `/private/tmp/stillmatter-22-timing-probe/{baseline,stop,delay,combined}.log`; passing focused log: `/private/tmp/stillmatter-22-hosted-scheduling-fixed.log`.
+Production source is committed through `39ba19e`.
 
-Three architecture iterations approved Object Oriented Design, Clean Architecture and API Design. API-001 (hidden/repeated supported rates) was fixed with one documented public supported-speed collection shared by transport and controls. Immutable transport snapshots remain separate from mutable player lifetime.
+- Full Release package passed **462 tests with four existing opt-in skips and zero failures**. Evidence is `/private/tmp/stillmatter-22-gap-package-final/{execution.json,tests.log,report.json}`.
+- Full Release app-hosted suite passed **51/51**. Generated CAF and AAC cases verify waveform silence, playback through gaps, source preservation, queued seeks, replacement, cancellation, cleanup and disk-space rejection. Existing tests verify actual driver timing at all four offered rates. Evidence is `/private/tmp/stillmatter-22-gap-hosted-final/{execution.json,results.xcresult,tests.log,report.json}`.
+- Focused main-app native flow passed **1/1**. Mouse and keyboard seeking, mix/speed/shortcuts, markers, editor focus, tab visibility, refresh stability, Meeting switching and purged audio are asserted. After a two-second capture gap, clicking the source timestamp at file time 0:02 moves the playhead to Meeting time 0:04 on the ten-second timeline. Retained audio and Transcript bytes are checked. Evidence is `/private/tmp/stillmatter-22-gap-native-final/{execution.json,results.xcresult,tests.log,report.json}`.
 
-Independent code review of `git diff 3686cc1f1ea3c94b315d52b2daf0d3c0c858c4de...HEAD` through `4663acd`:
+All three reports use fresh profiles and source inventories with compatible Release/-Onone compilation. Compiler artifacts were reused through the documented external-lane collection path, with source and build-input fingerprints checked before and after execution.
+
+The 95% changed-line gate passed against both baselines.
+
+| Scope | Covered / executable changed lines | Coverage |
+| --- | ---: | ---: |
+| Capture-gap follow-up | 272 / 273 | 99.63% |
+| Complete ticket 22 | 526 / 527 | 99.81% |
+
+Follow-up Core coverage is 107/107 and app/UI coverage is 165/166. Complete ticket coverage is Core 130/130, Presentation 8/8 and app/UI 388/389. Reports are `/private/tmp/stillmatter-22-gap-gate.json` and `/private/tmp/stillmatter-22-complete-gate.json`. Both gate commands exited zero.
+
+Whole-source coverage is **18,950/23,358 = 81.13%**. Core is 9,544/10,153, Presentation 1,197/1,391, runtime 327/347 and app/UI 7,882/11,467. Ticket 50 retains its 95% whole-source requirement.
+
+## Reviews
+
+Object Oriented Design, Clean Architecture and API Design approved the implementation. The public paired-range coverage contract was clarified after API review.
 
 ### Standards
 
-No documented-standard violations. One low-priority judgment: possible Primitive Obsession in the four private S/D/A/Q marker strings repeated by producer and renderer. A typed marker category could consolidate their identity/order. This is accepted as a nonblocking maintenance suggestion for the fixed internal category set; no untrusted category input is accepted.
+No hard documented violations. One accepted low-priority maintenance judgment remains about using a shared type for the four marker-category strings.
 
 ### Spec
 
-One P1 finding remains: the requirement to “Expose synchronized Both/My speech/Other participants playback using validated retained tracks and original timing,” including “source offsets, gaps, EOF and speed/seek behavior,” is incomplete for capture-clock gaps. Fail-closed behavior and this documentation do not remove that requirement. The reviewer found no additional scope creep or implemented-but-wrong behavior.
+No remaining findings. The capture-gap requirement is implemented. Review also found a source seek that could be dropped during preparation. Commit `39ba19e` queues it for the current source and adds regression assertions for refresh, paused intent and replacement isolation.
 
-Review summary: Standards 0 hard violations + 1 low-priority judgment (marker category typing); Spec 1 finding (capture-gap playback).
-
-### Native shortcut conflict
-
-Two native runs demonstrated that Option-Space never reached the app, including with the waveform explicitly focused. The local macOS symbolic-hotkey configuration has input-source switching enabled on Option-Space (binding 60, parameters `[32, 49, 524288]`). No system preference was changed. Option-P is now the primary play/pause shortcut; Option-Space remains an alternative where the OS delivers it. Native tests use Option-P and verify that the shortcut does not start playback while editing Transcript search text. This is an implementation shortcut choice, not a waiver of keyboard support.
-
-## Final test and coverage evidence
-
-- Full Release package: **462 tests, 4 existing opt-in skips, 0 failures**. `/private/tmp/stillmatter-22-package-complete/{execution.json,tests.log,report.json}`.
-- Full Release app-hosted: **49/49 passed**, including all eight playback tests and the microphone-only UI fallback assertions. `/private/tmp/stillmatter-22-hosted-complete/{execution.json,results.xcresult,tests.log,report.json}`.
-- Focused main-app native: **1/1 passed**, with generated distinguishable retained tracks, mouse/arrow seeking, three track shortcuts/choices, speed, ten-second controls, markers, Option-P, text-input exclusion, all four non-Transcript tabs, preserved source files, unrelated external title refresh, Meeting switching, and purged required audio. `/private/tmp/stillmatter-22-native-complete/{execution.json,results.xcresult,tests.log,report.json}`.
-- Additional native run on the same production build: **1/1 passed**, including arrow-key seeking during playback. Results are in `/private/tmp/stillmatter-22-native-keyboard.xcresult` and `/private/tmp/stillmatter-22-native-keyboard.log`.
-
-The mandatory changed-line report exited **0**, **275/275 = 100%**, against approved baseline `3686cc1f1ea3c94b315d52b2daf0d3c0c858c4de`. Report: `/private/tmp/stillmatter-22-incremental-gate.json`. All three compatible Release reports participate; no new exclusion, omitted shipped file, weakened threshold, or failed-lane report is accepted.
-
-| Changed module | Covered / executable changed lines |
-| --- | ---: |
-| Core | 38 / 38 |
-| Presentation | 8 / 8 |
-| App/UI | 229 / 229 |
-| Total | **275 / 275** |
-
-Existing whole-source debt is reported separately: **18,657/23,123 = 80.6858971587%**. Core 9,455/10,064; Presentation 1,197/1,391; runtime 327/347; App/UI 7,678/11,321. This is not a passing whole-source gate. Ticket 50 still requires 95% over all shipped source and its complete evaluation lanes.
-
-No Meeting/storage migration is introduced. Existing legacy/relocated-recording regression fixtures pass; native relaunch reconstructs the correct source and disabled state. Synthetic workspace/media/support/preferences remain isolated. `git diff --check` passes. Ticket 22 remains **unresolved** because validated capture-clock gaps cannot yet play with their original timing; dependent tickets cannot treat this slice as complete.
+`git diff --check` passes. Ticket 22 is resolved with the above evidence.
