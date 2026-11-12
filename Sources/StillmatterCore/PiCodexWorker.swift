@@ -326,7 +326,7 @@ public enum PiIntegrationTestResult: Equatable {
 
 /// Detects pi and verifies that its configured OpenAI Codex provider can answer a bounded, tool-free probe.
 public final class PiIntegration {
-    public static let codexModel = "gpt-5.5"
+    public static let codexModel = "gpt-6.1-sol"
     private let executableLocator: () -> URL?
     private let commandRunner: PiCommandRunning
     private let environment: [String: String]
@@ -596,6 +596,10 @@ public final class PiCodexWorker {
         if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
         guard hasTransferApproval() else { throw PiWorkerError.transferApprovalRequired }
         try manifest.validate()
+        let prompt = Self.prompt(for: manifest, suppliedContext: suppliedContext)
+        guard prompt.utf8.count <= 128 * 1024 else {
+            throw PiWorkerError.invalidManifest("Analysis input exceeds the 128 KiB request budget; no text was sent.")
+        }
         let command = PiCommand(
             executable: executableURL,
             arguments: [
@@ -608,8 +612,9 @@ public final class PiCodexWorker {
             environment: environment,
             timeout: TimeInterval(manifest.timeoutSeconds)
         )
-        let result = try commandRunner.runRPC(command, prompt: Self.prompt(for: manifest, suppliedContext: suppliedContext), cancellation: cancellation)
+        let result = try commandRunner.runRPC(command, prompt: prompt, cancellation: cancellation)
         if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
+        try requireTransferApproval()
         guard result.exitCode == 0 else {
             throw PiWorkerError.commandFailed(exitCode: result.exitCode, message: "Pi provider diagnostics were withheld to protect account credentials and Meeting content.")
         }
@@ -653,6 +658,12 @@ public final class PiCodexWorker {
             + manifest.expectedOutputs.map { "Intended output: \($0.relativePath)" }
             + ["Pi RPC completed with tools disabled; only approved Transcript and My Notes were supplied. Artifacts remain proposals until app validation/application."]
         return JobStageResult(artifacts: artifacts, logMessages: logs)
+    }
+
+    func requireTransferApproval() throws {
+        guard hasTransferApproval() else {
+            throw PiWorkerError.invalidResponse("Meeting text transfer approval was revoked. Analysis was not published; enable approval in Settings and retry.")
+        }
     }
 
     private static func prompt(for manifest: PiWorkflowManifest, suppliedContext: MeetingAnalysisContext) -> String {

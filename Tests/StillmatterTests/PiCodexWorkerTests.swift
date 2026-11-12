@@ -220,6 +220,35 @@ final class PiCodexWorkerTests: XCTestCase {
         XCTAssertTrue(String(describing: PiWorkerError.transferApprovalRequired).contains("No text was sent"))
     }
 
+    func testWorkerBoundsInputBeforeTransferAndPinsVerifiedChatGPTModel() throws {
+        XCTAssertEqual(PiIntegration.codexModel, "gpt-6.1-sol")
+        let fixture = try PiWorkerFixture()
+        let runner = RecordingPiCommandRunner(results: [])
+        let worker = PiCodexWorker(executableURL: URL(fileURLWithPath: "/usr/local/bin/pi"),
+            vaultRootURL: fixture.vaultURL, commandRunner: runner, hasTransferApproval: { true })
+        XCTAssertThrowsError(try worker.run(manifest: fixture.manifest(), suppliedContext: MeetingAnalysisContext(
+            transcript: String(repeating: "synthetic ", count: 15000))))
+        XCTAssertTrue(runner.commands.isEmpty)
+    }
+
+    func testErroredAssistantCannotPublishPartialArtifactOrLeakErrorMetadata() throws {
+        let fixture = try PiWorkerFixture()
+        let runner = RecordingPiCommandRunner(results: [.init(exitCode: 0, standardOutput: "", standardError: "")])
+        runner.rpcEventOverride = [
+            ["type": "response", "id": "stillmatter-analysis", "command": "prompt", "success": true],
+            ["type": "message_update", "assistantMessageEvent": ["type": "text_delta", "delta": "partial artifact"]],
+            ["type": "message_end", "message": ["role": "assistant", "stopReason": "error",
+                "errorMessage": "PRIVATE_ACCOUNT_TOKEN", "content": [["type": "text", "text": "partial artifact"]]]],
+            ["type": "agent_settled", "aborted": false]
+        ]
+        let worker = PiCodexWorker(executableURL: URL(fileURLWithPath: "/usr/local/bin/pi"),
+            vaultRootURL: fixture.vaultURL, commandRunner: runner, hasTransferApproval: { true })
+        XCTAssertThrowsError(try worker.run(manifest: fixture.manifest())) { error in
+            XCTAssertFalse(String(describing: error).contains("PRIVATE_ACCOUNT_TOKEN"))
+            XCTAssertFalse(String(describing: error).contains("partial artifact"))
+        }
+    }
+
     func testWorkerRejectsProviderFailureWithoutLeakingDiagnostics() throws {
         let fixture = try PiWorkerFixture()
         let runner = RecordingPiCommandRunner(results: [

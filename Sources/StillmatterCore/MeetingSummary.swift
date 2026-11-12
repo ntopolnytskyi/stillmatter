@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 public struct MeetingOutcomeCitation: Codable, Equatable {
     public let segmentID: String
@@ -115,6 +116,7 @@ public enum MeetingSummaryJob {
             The Markdown must use exactly these headings: Summary, Decisions, My action items, Other action items, Open questions.
             Use '-' when a section has no supported outcome. Cite every extracted outcome with one or more transcript segment IDs and exact start/end seconds from transcript.json; do not invent evidence.
             The extraction JSON must have schema_version=1, meeting and transcript matching the manifest paths, and arrays named decisions, my_action_items, other_action_items, and open_questions. Every array item must contain a stable id, concise text, and citations with segment_id, start_seconds, and end_seconds.
+            For a silent/empty Transcript, return no invented outcomes and say no speech was detected. Unknown owners and due dates must remain unspecified in the text; never assign an unknown owner to Me.
             Classify only commitments assigned to the user/Me as my_action_items. Commitments assigned to anyone else belong in other_action_items.
             Read My Notes at \(notesPath) as protected context. Never rewrite or delete its content. When a transcript commitment is already represented by one of its note-authored checkboxes, do not extract a second Action Item; reuse that checkbox's exact sm-item UUID as the outcome id so the app can enforce the identity match. Do not infer a match from title similarity alone.
             """,
@@ -122,7 +124,7 @@ public enum MeetingSummaryJob {
                 JobArtifactReference(relativePath: transcriptJSONRelativePath, role: "timestamped-transcript"),
                 JobArtifactReference(relativePath: meetingRelativePath, role: "meeting-doorway")
             ],
-            relatedContext: ["Projects/**", "People/**", notesPath],
+            relatedContext: [notesPath],
             expectedOutputs: [
                 PiWorkflowOutput(
                     relativePath: paths.summary,
@@ -174,6 +176,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
     private let inbox: TasksInbox
     private let queue: DispatchQueue
     private let onApplied: () -> Void
+    private let analysisBudget: MeetingAnalysisBudget
 
     public init(
         worker: PiCodexWorker,
@@ -181,7 +184,8 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         vault: WorkspaceVault,
         inbox: TasksInbox,
         queue: DispatchQueue = DispatchQueue(label: "Stillmatter.MeetingSummary", qos: .utility),
-        onApplied: @escaping () -> Void = {}
+        onApplied: @escaping () -> Void = {},
+        analysisBudget: MeetingAnalysisBudget = MeetingAnalysisBudget()
     ) {
         self.worker = worker
         self.workspaceRootURL = workspaceRootURL.standardizedFileURL
@@ -189,6 +193,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         self.inbox = inbox
         self.queue = queue
         self.onApplied = onApplied
+        self.analysisBudget = analysisBudget
     }
 
     public func execute(
@@ -228,10 +233,8 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let transcript = try decoder.decode(
-            TranscriptDocument.self,
-            from: Data(contentsOf: workspaceRootURL.appendingPathComponent(transcriptPath))
-        )
+        let transcriptData = try Data(contentsOf: workspaceRootURL.appendingPathComponent(transcriptPath))
+        let transcript = try decoder.decode(TranscriptDocument.self, from: transcriptData)
         let artifacts = MeetingArtifactStore(vault: vault, inbox: inbox)
         let canonicalID = try artifacts.identity(at: transcript.meetingRelativePath)
         let canonicalBase = try canonicalID.map { try artifacts.load(meetingPath: transcript.meetingRelativePath, meetingID: $0) }
@@ -239,39 +242,19 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
             ($0.relativePath, try vault.versionOfMarkdown(relativePath: $0.relativePath))
         })
         let notesPath = canonicalBase?.paths["notes"] ?? Self.notesPath(for: transcript.meetingRelativePath)
-        let transcriptEncoder = JSONEncoder()
-        transcriptEncoder.dateEncodingStrategy = .iso8601
-        let transcriptText = try transcriptEncoder.encode(transcript)
-        let notesText = try? String(contentsOf: workspaceRootURL.appendingPathComponent(notesPath), encoding: .utf8)
-        let suppliedContext = MeetingAnalysisContext(
-            transcript: String(decoding: transcriptText, as: UTF8.self),
-            myNotes: notesText.flatMap { $0.isEmpty ? nil : $0 }
-        )
-        let result = try worker.run(manifest: workflow, suppliedContext: suppliedContext, cancellation: cancellation)
+        let notesVersion = try vault.versionOfMarkdown(relativePath: notesPath)
+        let notesText = try canonicalBase?.notes ?? (notesVersion == nil ? nil :
+            String(contentsOf: workspaceRootURL.appendingPathComponent(notesPath), encoding: .utf8))
+        let result = try MeetingAnalysisProgress(root: vault.meetingArtifactStateURL.appendingPathComponent("Analysis"),
+            budget: analysisBudget).run(jobID: job.id, workflow: workflow, transcript: transcript,
+                notes: notesText.flatMap { $0.isEmpty ? nil : $0 }, worker: worker, cancellation: cancellation) { result, chunk in
+                    _ = try self.validateResult(result, transcript: chunk, transcriptPath: transcriptPath, manifest: job.manifest)
+                }
         guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
-        let artifactsByPath = Dictionary(uniqueKeysWithValues: result.artifacts.map { ($0.relativePath, $0) })
+        let (summary, validatedExtraction) = try validateResult(result, transcript: transcript,
+            transcriptPath: transcriptPath, manifest: job.manifest)
+        var extraction = validatedExtraction
         let paths = MeetingSummaryJob.artifactPaths(meetingRelativePath: transcript.meetingRelativePath)
-        guard let summary = artifactsByPath[paths.summary] else {
-            throw MeetingSummaryError.missingArtifact(paths.summary)
-        }
-        guard let extractionArtifact = artifactsByPath[paths.extraction] else {
-            throw MeetingSummaryError.missingArtifact(paths.extraction)
-        }
-
-        let summaryExpectation = try requiredExpectation(path: paths.summary, manifest: job.manifest)
-        try MarkdownGeneratedArtifactValidator().validate(summary, expectation: summaryExpectation)
-        try validateSummaryMetadata(
-            summary,
-            meetingPath: transcript.meetingRelativePath,
-            transcriptPath: transcriptPath
-        )
-        var extraction: MeetingSummaryExtraction
-        do {
-            extraction = try JSONDecoder().decode(MeetingSummaryExtraction.self, from: extractionArtifact.data)
-        } catch {
-            throw MeetingSummaryError.invalidExtraction("JSON does not match schema: \(error.localizedDescription)")
-        }
-        try validate(extraction, transcript: transcript, transcriptPath: transcriptPath)
 
         let noteItemIDs = try noteAuthoredItemIDs(at: notesPath)
         let extractedActionItemIDs = extraction.myActionItems + extraction.otherActionItems
@@ -296,6 +279,11 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         let sourceRef = Self.summarySourceRef(meetingRelativePath: transcript.meetingRelativePath)
         var queued = 0
         try cancellation.performIfActive {
+            try worker.requireTransferApproval()
+            guard try Data(contentsOf: workspaceRootURL.appendingPathComponent(transcriptPath)) == transcriptData,
+                  try vault.versionOfMarkdown(relativePath: notesPath) == notesVersion else {
+                throw MeetingSummaryError.invalidExtraction("Transcript or My Notes changed during analysis. Retry with current sources.")
+            }
             if let canonicalBase, let canonicalID {
                 try artifacts.publishGenerated(summary: summary.data, extraction: extraction, extractionData: sanitizedExtractionData,
                     base: canonicalBase, meetingPath: transcript.meetingRelativePath, meetingID: canonicalID,
@@ -334,6 +322,46 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                 "Queued \(queued) My Action Item proposal(s); suppressed \(duplicateNoteIDs.count) note-identity duplicate(s); kept \(extraction.otherActionItems.count) Other Action Item(s) reference-only"
             ]
         )
+    }
+
+    private func validateResult(_ result: JobStageResult, transcript: TranscriptDocument,
+                                transcriptPath: String, manifest: JobManifest) throws -> (GeneratedArtifact, MeetingSummaryExtraction) {
+        let paths = MeetingSummaryJob.artifactPaths(meetingRelativePath: transcript.meetingRelativePath)
+        guard result.artifacts.count == 2, Set(result.artifacts.map(\.relativePath)) == Set([paths.summary, paths.extraction]),
+              let summary = result.artifacts.first(where: { $0.relativePath == paths.summary }),
+              let data = result.artifacts.first(where: { $0.relativePath == paths.extraction })?.data else {
+            throw MeetingSummaryError.invalidExtraction("Analysis must return exactly the declared Summary and extraction.")
+        }
+        guard result.artifacts.allSatisfy({ $0.data.count <= 128 * 1024 }) else {
+            throw MeetingSummaryError.invalidExtraction("Analysis artifact exceeds the 128 KiB output budget.")
+        }
+        let expectation = try requiredExpectation(path: summary.relativePath, manifest: manifest)
+        try MarkdownGeneratedArtifactValidator().validate(summary, expectation: expectation)
+        try validateSummaryMetadata(summary, meetingPath: transcript.meetingRelativePath, transcriptPath: transcriptPath)
+        let extraction: MeetingSummaryExtraction
+        do { extraction = try JSONDecoder().decode(MeetingSummaryExtraction.self, from: data) }
+        catch { throw MeetingSummaryError.invalidExtraction("JSON does not match the extraction schema.") }
+        try validate(extraction, transcript: transcript, transcriptPath: transcriptPath)
+        let markdown = String(decoding: summary.data, as: UTF8.self)
+        let body = markdown.components(separatedBy: "---").dropFirst(2).joined(separator: "---")
+        // Fixed English headings and metadata cannot mask non-English generated narrative.
+        let narrative = body.components(separatedBy: .newlines).filter { !$0.hasPrefix("#") }.joined(separator: "\n")
+        for paragraph in narrative.components(separatedBy: "\n\n") {
+            try validateEnglish(paragraph)
+        }
+        for outcome in extraction.decisions + extraction.myActionItems + extraction.otherActionItems + extraction.openQuestions {
+            try validateEnglish(outcome.text)
+        }
+        return (summary, extraction)
+    }
+
+    private func validateEnglish(_ text: String) throws {
+        guard text.unicodeScalars.contains(where: { CharacterSet.letters.contains($0) }) else { return }
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        guard recognizer.dominantLanguage == .english else {
+            throw MeetingSummaryError.invalidExtraction("Generated narrative must be in English. Retry analysis.")
+        }
     }
 
     private func decodeWorkflow(from job: JobRecord) throws -> PiWorkflowManifest {
