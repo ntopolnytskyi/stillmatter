@@ -85,7 +85,8 @@ final class MeetingSummaryTests: XCTestCase {
             otherActionItems: [fixture.outcome(id: "other-1", text: "Alex checks capacity", segment: 1)],
             openQuestions: [fixture.outcome(id: "question-1", text: "Is legal approval ready?", segment: 1)]
         )
-        let executor = try fixture.executor(extraction: extraction)
+        var publicationCallbackRan = false
+        let executor = try fixture.executor(extraction: extraction, onApplied: { publicationCallbackRan = true })
         let manifest = try MeetingSummaryJob.manifest(
             transcript: fixture.transcript,
             transcriptJSONRelativePath: fixture.transcriptPath
@@ -121,6 +122,7 @@ final class MeetingSummaryTests: XCTestCase {
         XCTAssertEqual(reviewItems.first?.title, "Send the launch plan #ai-proposed")
         XCTAssertEqual(reviewItems.first?.sourceRef, "[[Meetings/2026/09/kickoff/summary#My action items|ref]]")
         XCTAssertFalse(reviewItems.contains { $0.title.contains("Alex") })
+        XCTAssertTrue(publicationCallbackRan)
     }
 
     func testProductionSummaryExecutorTimeoutKillsWorkerBeforeRetryAndQueueAdvances() throws {
@@ -458,7 +460,8 @@ private final class MeetingSummaryFixture {
         )
     }
 
-    func executor(extraction: MeetingSummaryExtraction) throws -> MeetingSummaryJobExecutor {
+    func executor(extraction: MeetingSummaryExtraction,
+                  onApplied: @escaping () -> Void = {}) throws -> MeetingSummaryJobExecutor {
         let summary = """
         ---
         type: meeting-summary
@@ -515,7 +518,8 @@ private final class MeetingSummaryFixture {
                 workspaceRootURL: workspaceURL,
                 appSupportRootURL: rootURL.appendingPathComponent("Application Support", isDirectory: true)
             ),
-            inbox: inbox
+            inbox: inbox,
+            onApplied: onApplied
         )
     }
 

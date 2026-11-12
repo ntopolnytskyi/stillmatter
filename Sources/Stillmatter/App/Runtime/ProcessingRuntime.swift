@@ -132,7 +132,8 @@ final class ProcessingRuntime {
 enum ChatGPTMeetingAnalysisFactory {
     static func make(settings: AppSettings, workspaceRootURL: URL, applicationSupportURL: URL,
                      inbox: TasksInbox?, piExecutableURL: URL?,
-                     currentTransferApproval: @escaping () -> Bool) -> JobExecuting {
+                     currentTransferApproval: @escaping () -> Bool,
+                     onApplied: @escaping () -> Void = {}) -> JobExecuting {
         guard settings.allowChatGPTMeetingAnalysis else {
             return UnavailableJobHandler(guidance: "Enable ChatGPT Meeting analysis in Settings, then Retry. This sends the Meeting Transcript and My Notes to ChatGPT through your installed Pi sign-in. No text is sent until enabled.")
         }
@@ -146,6 +147,6 @@ enum ChatGPTMeetingAnalysisFactory {
                                    hasTransferApproval: currentTransferApproval)
         return MeetingSummaryJobExecutor(worker: worker, workspaceRootURL: workspaceRootURL,
             vault: WorkspaceVault(workspaceRootURL: workspaceRootURL, appSupportRootURL: applicationSupportURL),
-            inbox: inbox)
+            inbox: inbox, onApplied: onApplied)
     }
 }

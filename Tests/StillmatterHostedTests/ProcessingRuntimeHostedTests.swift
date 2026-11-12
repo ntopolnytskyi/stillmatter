@@ -288,6 +288,19 @@ final class ProcessingRuntimeHostedTests: XCTestCase {
         XCTAssertFalse(runtime.transcriptionScheduler === unavailableScheduler)
         XCTAssertEqual(configuredPiPaths, [nil, "/usr/local/bin/pi"])
     }
+
+    @MainActor
+    func testPublishedMeetingSummaryRefreshesVisibleTaskSurfaces() {
+        let appDelegate = AppDelegate()
+        var taskRefreshes = 0
+        let observation = appDelegate.stateStore.observe([.tasks]) { _ in taskRefreshes += 1 }
+
+        appDelegate.publishMeetingSummaryChanges()
+        wait { taskRefreshes == 1 }
+
+        XCTAssertEqual(taskRefreshes, 1)
+        _ = observation
+    }
 }
 
 private final class HostedMicBackend: MicTrackRecordingBackend {
