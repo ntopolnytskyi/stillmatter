@@ -18,11 +18,22 @@ struct MeetingAnalysisProgress {
     let root: URL
     let budget: MeetingAnalysisBudget
 
-    func run(jobID: String, workflow: PiWorkflowManifest, transcript: TranscriptDocument, notes: String?,
+    func run(jobID: String, workflow: PiWorkflowManifest, transcript: TranscriptDocument, transcriptPath: String, notes: String?,
              worker: PiCodexWorker, cancellation: JobExecutionCancellation,
              validate: (JobStageResult, TranscriptDocument) throws -> Void) throws -> JobStageResult {
         guard (notes?.utf8.count ?? 0) <= 24 * 1024 else {
             throw MeetingSummaryError.invalidExtraction("My Notes exceeds the 24 KiB analysis context budget. No text was sent.")
+        }
+        if transcript.segments.isEmpty {
+            try worker.requireTransferApproval()
+            let extraction = MeetingSummaryExtraction(meeting: transcript.meetingRelativePath, transcript: transcriptPath,
+                decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+            let paths = MeetingSummaryJob.artifactPaths(meetingRelativePath: transcript.meetingRelativePath)
+            let result = JobStageResult(artifacts: [
+                .init(relativePath: paths.summary, data: Data(MeetingSummaryEvidence.render(narrative: "No speech was detected.", extraction: extraction).utf8)),
+                .init(relativePath: paths.extraction, data: try JSONEncoder().encode(extraction))])
+            try validate(result, transcript)
+            return result
         }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -37,7 +48,7 @@ struct MeetingAnalysisProgress {
         let context = MeetingAnalysisContext(transcript: String(decoding: try encoder.encode(transcript), as: UTF8.self), myNotes: notes)
         var identity = try encoder.encode(context)
         identity.append(try encoder.encode(workflow))
-        identity.append(Data((jobID + PiIntegration.codexModel + "analysis-v1").utf8))
+        identity.append(Data((jobID + PiIntegration.codexModel + "analysis-v2").utf8))
         let key = SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
         let directory = root.appendingPathComponent(key, isDirectory: true)
         var results: [JobStageResult] = []
@@ -71,7 +82,26 @@ struct MeetingAnalysisProgress {
             }
             results.append(result)
         }
-        return try merge(results, transcript: transcript)
+        guard requests < budget.requestsPerAttempt else {
+            throw MeetingSummaryError.invalidExtraction("Analysis checkpointed all \(chunks.count) parts. Retry to reconcile the complete Meeting.")
+        }
+        // Reconcile using original evidence only. Generated chunk text never becomes prompt context.
+        var citedIDs: Set<String> = []
+        let paths = MeetingSummaryJob.artifactPaths(meetingRelativePath: transcript.meetingRelativePath)
+        for result in results {
+            let summary = result.artifacts.first { $0.relativePath == paths.summary }!
+            citedIDs.formUnion(try MeetingSummaryEvidence.citedSegmentIDs(in: String(decoding: summary.data, as: UTF8.self), transcript: transcript))
+            let extraction = try JSONDecoder().decode(MeetingSummaryExtraction.self,
+                from: result.artifacts.first { $0.relativePath == paths.extraction }!.data)
+            for item in extraction.decisions + extraction.myActionItems + extraction.otherActionItems + extraction.openQuestions {
+                citedIDs.formUnion(item.citations.map(\.segmentID))
+            }
+        }
+        let evidence = document(transcript, segments: transcript.segments.filter { citedIDs.contains($0.id) })
+        let result = try worker.run(manifest: workflow, suppliedContext: MeetingAnalysisContext(
+            transcript: String(decoding: try encoder.encode(evidence), as: UTF8.self), myNotes: notes), cancellation: cancellation)
+        try validate(result, evidence)
+        return result
     }
 
     private func split(_ transcript: TranscriptDocument, encoder: JSONEncoder) throws -> [TranscriptDocument] {
@@ -95,82 +125,14 @@ struct MeetingAnalysisProgress {
         guard groups.count <= 256 else {
             throw MeetingSummaryError.invalidExtraction("Meeting exceeds the 256-part analysis budget. No evidence was truncated.")
         }
-        return groups.map { segments in
-            TranscriptDocument(schemaVersion: transcript.schemaVersion, captureSessionID: transcript.captureSessionID,
-                meetingRelativePath: transcript.meetingRelativePath, language: transcript.language,
-                detectedLanguages: transcript.detectedLanguages, engine: transcript.engine, model: transcript.model,
-                generatedAt: transcript.generatedAt, audioSources: [], segments: segments, diagnostics: [])
-        }
+        return groups.map { document(transcript, segments: $0) }
     }
 
-    private func merge(_ results: [JobStageResult], transcript: TranscriptDocument) throws -> JobStageResult {
-        let paths = MeetingSummaryJob.artifactPaths(meetingRelativePath: transcript.meetingRelativePath)
-        var summaries: [String] = []
-        var extractions: [MeetingSummaryExtraction] = []
-        for result in results {
-            let summary = String(decoding: result.artifacts.first { $0.relativePath == paths.summary }!.data, as: UTF8.self)
-            // Preserve every chunk's narrative; outcome sections are rendered from validated extraction below.
-            let lines = summary.components(separatedBy: .newlines)
-            var collecting = false
-            var body: [String] = []
-            for line in lines {
-                if line == "# Summary" || line == "## Summary" { collecting = true; continue }
-                if collecting, line.hasPrefix("#") { break }
-                if collecting { body.append(line) }
-            }
-            summaries.append(body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
-            extractions.append(try JSONDecoder().decode(MeetingSummaryExtraction.self,
-                from: result.artifacts.first { $0.relativePath == paths.extraction }!.data))
-        }
-        // Chunk-local model IDs must not collide across distinct evidence. Preserve explicit note UUID identity.
-        var seenIDs: Set<String> = []
-        func outcomes(_ select: (MeetingSummaryExtraction) -> [MeetingOutcome]) -> [MeetingOutcome] {
-            extractions.enumerated().flatMap { index, extraction in select(extraction).compactMap { item in
-                let id = UUID(uuidString: item.id) == nil ? "part-\(index)-\(item.id)" : item.id.lowercased()
-                guard seenIDs.insert(id).inserted else { return nil }
-                return MeetingOutcome(id: id, text: item.text, citations: item.citations)
-            }}
-        }
-        let combined = MeetingSummaryExtraction(meeting: transcript.meetingRelativePath, transcript: extractions[0].transcript,
-            decisions: outcomes { $0.decisions }, myActionItems: outcomes { $0.myActionItems },
-            otherActionItems: outcomes { $0.otherActionItems }, openQuestions: outcomes { $0.openQuestions })
-        func render(_ items: [MeetingOutcome]) -> String {
-            items.isEmpty ? "-" : items.map { item in
-                "- \(item.text) " + item.citations.map { "[\($0.segmentID) \($0.startSeconds)–\($0.endSeconds)]" }.joined(separator: " ")
-            }.joined(separator: "\n")
-        }
-        let summary = """
-        ---
-        type: meeting-summary
-        schema_version: 1
-        meeting: \(transcript.meetingRelativePath)
-        transcript: \(combined.transcript)
-        generated_at: \(ISO8601DateFormatter().string(from: Date()))
-        ---
-
-        # Summary
-
-        \(summaries.joined(separator: "\n\n"))
-
-        ## Decisions
-
-        \(render(combined.decisions))
-
-        ## My action items
-
-        \(render(combined.myActionItems))
-
-        ## Other action items
-
-        \(render(combined.otherActionItems))
-
-        ## Open questions
-
-        \(render(combined.openQuestions))
-        """
-        return JobStageResult(artifacts: [.init(relativePath: paths.summary, data: Data(summary.utf8)),
-            .init(relativePath: paths.extraction, data: try JSONEncoder().encode(combined))],
-            logMessages: ["Validated all \(results.count) analysis parts before publication."])
+    private func document(_ transcript: TranscriptDocument, segments: [TranscriptSegment]) -> TranscriptDocument {
+        TranscriptDocument(schemaVersion: transcript.schemaVersion, captureSessionID: transcript.captureSessionID,
+            meetingRelativePath: transcript.meetingRelativePath, language: transcript.language,
+            detectedLanguages: transcript.detectedLanguages, engine: transcript.engine, model: transcript.model,
+            generatedAt: transcript.generatedAt, audioSources: [], segments: segments, diagnostics: [])
     }
 
     private struct Checkpoint: Codable {

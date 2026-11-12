@@ -115,6 +115,8 @@ public enum MeetingSummaryJob {
             The Markdown frontmatter must set type: meeting-summary, schema_version: 1, meeting and transcript to the exact source paths, and generated_at to an ISO-8601 timestamp.
             The Markdown must use exactly these headings: Summary, Decisions, My action items, Other action items, Open questions.
             Use '-' when a section has no supported outcome. Cite every extracted outcome with one or more transcript segment IDs and exact start/end seconds from transcript.json; do not invent evidence.
+            Cite every Summary paragraph with bracketed segment IDs, e.g. [segment-00001]. For an empty Transcript the Summary narrative must be exactly: No speech was detected.
+            Reconcile the entire supplied evidence chronologically: later explicit corrections supersede earlier decisions, and repeated commitments produce one outcome with combined citations.
             The extraction JSON must have schema_version=1, meeting and transcript matching the manifest paths, and arrays named decisions, my_action_items, other_action_items, and open_questions. Every array item must contain a stable id, concise text, and citations with segment_id, start_seconds, and end_seconds.
             For a silent/empty Transcript, return no invented outcomes and say no speech was detected. Unknown owners and due dates must remain unspecified in the text; never assign an unknown owner to Me.
             Classify only commitments assigned to the user/Me as my_action_items. Commitments assigned to anyone else belong in other_action_items.
@@ -246,7 +248,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         let notesText = try canonicalBase?.notes ?? (notesVersion == nil ? nil :
             String(contentsOf: workspaceRootURL.appendingPathComponent(notesPath), encoding: .utf8))
         let result = try MeetingAnalysisProgress(root: vault.meetingArtifactStateURL.appendingPathComponent("Analysis"),
-            budget: analysisBudget).run(jobID: job.id, workflow: workflow, transcript: transcript,
+            budget: analysisBudget).run(jobID: job.id, workflow: workflow, transcript: transcript, transcriptPath: transcriptPath,
                 notes: notesText.flatMap { $0.isEmpty ? nil : $0 }, worker: worker, cancellation: cancellation) { result, chunk in
                     _ = try self.validateResult(result, transcript: chunk, transcriptPath: transcriptPath, manifest: job.manifest)
                 }
@@ -271,7 +273,9 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
             )
         }
         let sanitizedExtractionData = try JSONEncoder().encode(extraction)
-        var publishedArtifacts = result.artifacts
+        let renderedSummary = GeneratedArtifact(relativePath: paths.summary, data: Data(MeetingSummaryEvidence.render(
+            narrative: MeetingSummaryEvidence.narrative(in: String(decoding: summary.data, as: UTF8.self)), extraction: extraction).utf8))
+        var publishedArtifacts = result.artifacts.map { $0.relativePath == paths.summary ? renderedSummary : $0 }
         if let extractionIndex = publishedArtifacts.firstIndex(where: { $0.relativePath == paths.extraction }) {
             publishedArtifacts[extractionIndex] = GeneratedArtifact(relativePath: paths.extraction, data: sanitizedExtractionData)
         }
@@ -285,7 +289,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                 throw MeetingSummaryError.invalidExtraction("Transcript or My Notes changed during analysis. Retry with current sources.")
             }
             if let canonicalBase, let canonicalID {
-                try artifacts.publishGenerated(summary: summary.data, extraction: extraction, extractionData: sanitizedExtractionData,
+                try artifacts.publishGenerated(summary: renderedSummary.data, extraction: extraction, extractionData: sanitizedExtractionData,
                     base: canonicalBase, meetingPath: transcript.meetingRelativePath, meetingID: canonicalID,
                     expectedExtraction: expectedVersions[paths.extraction] ?? nil)
             } else {
@@ -343,7 +347,8 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         catch { throw MeetingSummaryError.invalidExtraction("JSON does not match the extraction schema.") }
         try validate(extraction, transcript: transcript, transcriptPath: transcriptPath)
         let markdown = String(decoding: summary.data, as: UTF8.self)
-        let body = markdown.components(separatedBy: "---").dropFirst(2).joined(separator: "---")
+        _ = try MeetingSummaryEvidence.citedSegmentIDs(in: markdown, transcript: transcript)
+        let body = MeetingSummaryEvidence.narrative(in: markdown)
         // Fixed English headings and metadata cannot mask non-English generated narrative.
         let narrative = body.components(separatedBy: .newlines).filter { !$0.hasPrefix("#") }.joined(separator: "\n")
         for paragraph in narrative.components(separatedBy: "\n\n") {
@@ -356,6 +361,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
     }
 
     private func validateEnglish(_ text: String) throws {
+        let text = text.replacingOccurrences(of: #"\[[^\]]+\]|[\"“][^\"”]+[\"”]"#, with: "", options: .regularExpression)
         guard text.unicodeScalars.contains(where: { CharacterSet.letters.contains($0) }) else { return }
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(text)
@@ -425,6 +431,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
             guard !outcome.citations.isEmpty else {
                 throw MeetingSummaryError.invalidExtraction("outcome \(outcome.id) has no transcript citation")
             }
+            try MeetingSummaryEvidence.validateQuotes(in: outcome.text, sources: outcome.citations.compactMap { segments[$0.segmentID]?.text })
             for citation in outcome.citations {
                 guard let segment = segments[citation.segmentID] else {
                     throw MeetingSummaryError.invalidExtraction("outcome \(outcome.id) cites unknown segment \(citation.segmentID)")
