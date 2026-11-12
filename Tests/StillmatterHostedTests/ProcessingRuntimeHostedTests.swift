@@ -263,6 +263,31 @@ final class ProcessingRuntimeHostedTests: XCTestCase {
             currentTransferApproval: { settings.allowChatGPTMeetingAnalysis })
         XCTAssertTrue(configured is MeetingSummaryJobExecutor)
     }
+
+    func testInstallingPiReconfiguresFailedAnalysisHandlerOnRetry() throws {
+        let store = try JobStore(databaseURL: support.appendingPathComponent("pi-install-retry.sqlite"))
+        let handler = HostedWorkflowControl()
+        var installedPi: URL?
+        var configuredPiPaths: [String?] = []
+        let runtime = ProcessingRuntime(applicationSupportURL: support, componentInstaller: installer(),
+            jobStore: { store }, mayResumeTranscription: { _ in false },
+            makeAnalysis: { _, piURL in
+                configuredPiPaths.append(piURL?.path)
+                return handler
+            },
+            locatePiExecutable: { installedPi })
+        defer { runtime.stop() }
+
+        runtime.configure(settings: settings(workspace), searchIndex: nil, indexGeneration: 0)
+        let unavailableScheduler = try XCTUnwrap(runtime.transcriptionScheduler)
+        XCTAssertEqual(configuredPiPaths, [nil])
+
+        installedPi = URL(fileURLWithPath: "/usr/local/bin/pi")
+        runtime.configure(settings: settings(workspace), searchIndex: nil, indexGeneration: 0)
+
+        XCTAssertFalse(runtime.transcriptionScheduler === unavailableScheduler)
+        XCTAssertEqual(configuredPiPaths, [nil, "/usr/local/bin/pi"])
+    }
 }
 
 private final class HostedMicBackend: MicTrackRecordingBackend {

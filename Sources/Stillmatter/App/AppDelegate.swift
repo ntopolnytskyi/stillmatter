@@ -133,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return false
             #endif
         },
-        makeAnalysis: { [weak self] root in ChatGPTMeetingAnalysisFactory.make(settings: self?.settingsStore.settings ?? AppSettings(), workspaceRootURL: root, applicationSupportURL: Self.applicationSupportURL, inbox: self?.tasksInbox, piExecutableURL: PiIntegration.locateExecutable(), currentTransferApproval: { [weak self] in self?.settingsStore.settings.allowChatGPTMeetingAnalysis == true }) }
+        makeAnalysis: { [weak self] root, piExecutableURL in ChatGPTMeetingAnalysisFactory.make(settings: self?.settingsStore.settings ?? AppSettings(), workspaceRootURL: root, applicationSupportURL: Self.applicationSupportURL, inbox: self?.tasksInbox, piExecutableURL: piExecutableURL, currentTransferApproval: { [weak self] in self?.settingsStore.settings.allowChatGPTMeetingAnalysis == true }) }
     )
     var heavyExecutionGate: JobHeavyExecutionGate { processingRuntime.heavyExecutionGate }
     private var transcriptionScheduler: JobScheduler? { processingRuntime.transcriptionScheduler }

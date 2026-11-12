@@ -243,8 +243,10 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         transcriptEncoder.dateEncodingStrategy = .iso8601
         let transcriptText = try transcriptEncoder.encode(transcript)
         let notesText = try? String(contentsOf: workspaceRootURL.appendingPathComponent(notesPath), encoding: .utf8)
-        var suppliedContext = ["transcript": String(decoding: transcriptText, as: UTF8.self)]
-        if let notesText, !notesText.isEmpty { suppliedContext["myNotes"] = notesText }
+        let suppliedContext = MeetingAnalysisContext(
+            transcript: String(decoding: transcriptText, as: UTF8.self),
+            myNotes: notesText.flatMap { $0.isEmpty ? nil : $0 }
+        )
         let result = try worker.run(manifest: workflow, suppliedContext: suppliedContext, cancellation: cancellation)
         guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let artifactsByPath = Dictionary(uniqueKeysWithValues: result.artifacts.map { ($0.relativePath, $0) })

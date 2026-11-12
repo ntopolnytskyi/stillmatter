@@ -15,7 +15,8 @@ final class ProcessingRuntime {
     private let mayResumeTranscription: (String) -> Bool
     private let isProbe: () -> Bool
     private let makeTranscription: ((URL, SearchIndex?) -> JobExecuting)?
-    private let makeAnalysis: (URL) -> JobExecuting
+    private let makeAnalysis: (URL, URL?) -> JobExecuting
+    private let locatePiExecutable: () -> URL?
     private let wakeNotificationCenter: NotificationCenter
     private let schedulerClock: () -> Date
     private(set) var transcriptionScheduler: JobScheduler?
@@ -28,7 +29,8 @@ final class ProcessingRuntime {
          jobStore: @escaping () -> JobStore?, mayResumeTranscription: @escaping (String) -> Bool,
          isProbe: @escaping () -> Bool = { false },
          makeTranscription: ((URL, SearchIndex?) -> JobExecuting)? = nil,
-         makeAnalysis: ((URL) -> JobExecuting)? = nil,
+         makeAnalysis: ((URL, URL?) -> JobExecuting)? = nil,
+         locatePiExecutable: @escaping () -> URL? = { PiIntegration.locateExecutable() },
          wakeNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
          schedulerClock: @escaping () -> Date = Date.init,
          analysis: JobExecuting = UnavailableJobHandler(guidance:
@@ -39,7 +41,8 @@ final class ProcessingRuntime {
         self.mayResumeTranscription = mayResumeTranscription
         self.isProbe = isProbe
         self.makeTranscription = makeTranscription
-        self.makeAnalysis = makeAnalysis ?? { _ in analysis }
+        self.makeAnalysis = makeAnalysis ?? { _, _ in analysis }
+        self.locatePiExecutable = locatePiExecutable
         self.wakeNotificationCenter = wakeNotificationCenter
         self.schedulerClock = schedulerClock
         wakeObserver = wakeNotificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -75,14 +78,15 @@ final class ProcessingRuntime {
             return
         }
         let component = componentInstaller.installedModelURL()?.path ?? "missing-model"
+        let piExecutable = locatePiExecutable()
         let owner = root.standardizedFileURL.resolvingSymlinksInPath().path
-        let key = [owner, component, String(indexGeneration), String(settings.allowChatGPTMeetingAnalysis)].joined(separator: "\n")
+        let key = [owner, component, piExecutable?.path ?? "missing-pi", String(indexGeneration), String(settings.allowChatGPTMeetingAnalysis)].joined(separator: "\n")
         guard configurationKey != key else { return }
         transcriptionScheduler?.pauseSynchronously()
         do {
             try MeetingWorkflowJob.migrate(store: store, workspaceRootURL: root)
             let transcription = makeTranscription?(root, searchIndex) ?? localTranscription(root: root, index: searchIndex)
-            let analysis = makeAnalysis(root)
+            let analysis = makeAnalysis(root, piExecutable)
             let registry = JobHandlerRegistry(handlers: [
                 MeetingWorkflowJob.type: MeetingWorkflowHandler(transcription: transcription, analysis: analysis),
                 TranscriptionJob.type: transcription, MeetingSummaryJob.type: analysis

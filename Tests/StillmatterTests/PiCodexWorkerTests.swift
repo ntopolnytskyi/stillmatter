@@ -177,7 +177,8 @@ final class PiCodexWorkerTests: XCTestCase {
         )
         let manifest = fixture.manifest()
 
-        let result = try worker.run(manifest: manifest, suppliedContext: ["transcript": "[u1] Me: Ship it.", "myNotes": "Review next week."])
+        let result = try worker.run(manifest: manifest, suppliedContext: MeetingAnalysisContext(
+            transcript: "[u1] Me: Ship it.", myNotes: "Review next week."))
 
         XCTAssertEqual(result.artifacts.map(\.relativePath), [
             "Generated/kickoff-summary.md",
@@ -198,6 +199,7 @@ final class PiCodexWorkerTests: XCTestCase {
         let prompt = try XCTUnwrap(runner.rpcPrompts.first)
         XCTAssertTrue(prompt.contains("[u1] Me: Ship it."))
         XCTAssertTrue(prompt.contains("Review next week."))
+        XCTAssertTrue(prompt.contains("generated Summary, Action Item, Decision, and Open Question content in English"))
         XCTAssertFalse(prompt.contains("Do not mutate"))
         XCTAssertEqual(try fixture.contents(of: "Meetings/kickoff/transcript.md"), "# Transcript\nA decision was made.")
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.vaultURL.appendingPathComponent("Generated/kickoff-summary.md").path))
@@ -209,7 +211,8 @@ final class PiCodexWorkerTests: XCTestCase {
         let worker = PiCodexWorker(executableURL: URL(fileURLWithPath: "/usr/local/bin/pi"),
             vaultRootURL: fixture.vaultURL, commandRunner: runner)
 
-        XCTAssertThrowsError(try worker.run(manifest: fixture.manifest(), suppliedContext: ["transcript": "private text"])) { error in
+        XCTAssertThrowsError(try worker.run(manifest: fixture.manifest(),
+            suppliedContext: MeetingAnalysisContext(transcript: "private text"))) { error in
             XCTAssertEqual(error as? PiWorkerError, .transferApprovalRequired)
         }
         XCTAssertTrue(runner.commands.isEmpty)
@@ -217,19 +220,15 @@ final class PiCodexWorkerTests: XCTestCase {
         XCTAssertTrue(String(describing: PiWorkerError.transferApprovalRequired).contains("No text was sent"))
     }
 
-    func testWorkerRejectsUnapprovedContextAndProviderFailureWithoutLeakingDiagnostics() throws {
+    func testWorkerRejectsProviderFailureWithoutLeakingDiagnostics() throws {
         let fixture = try PiWorkerFixture()
         let runner = RecordingPiCommandRunner(results: [
             PiCommandResult(exitCode: 1, standardOutput: "", standardError: "account-secret-token")
         ])
         let worker = PiCodexWorker(executableURL: URL(fileURLWithPath: "/usr/local/bin/pi"),
             vaultRootURL: fixture.vaultURL, commandRunner: runner, hasTransferApproval: { true })
-        XCTAssertThrowsError(try worker.run(manifest: fixture.manifest(),
-            suppliedContext: ["voiceProfile": "private sentinel"])) { error in
-            XCTAssertEqual(error as? PiWorkerError, .invalidManifest("Only Transcript and My Notes may be sent to ChatGPT"))
-        }
-        XCTAssertTrue(runner.commands.isEmpty)
-        XCTAssertThrowsError(try worker.run(manifest: fixture.manifest())) { error in
+        XCTAssertThrowsError(try worker.run(manifest: fixture.manifest(), suppliedContext: MeetingAnalysisContext(
+            transcript: "Synthetic transcript only."))) { error in
             guard case let PiWorkerError.commandFailed(_, message) = error else {
                 return XCTFail("Expected a provider failure")
             }
