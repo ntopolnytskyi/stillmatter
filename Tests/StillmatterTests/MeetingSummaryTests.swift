@@ -633,7 +633,23 @@ final class MeetingSummaryTests: XCTestCase {
                 decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
             let executor = try fixture.executor(extraction: empty, budget: .init(chunkBytes: long ? 1024 : 24 * 1024), runnerOverride: ScopedLiveMeetingRunner(workspace: fixture.workspaceURL, summaryPath: fixture.summaryPath))
             let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
-            _ = try execute(executor, manifest: manifest, timeout: 190)
+            let store = try JobStore(databaseURL: fixture.rootURL.appendingPathComponent("quality-jobs.sqlite"))
+            let jobID = "quality-\(scenario)"
+            _ = try store.enqueue(id: jobID, manifest: manifest.owned(by: fixture.workspaceURL))
+            let scheduler = JobScheduler(store: store, executor: executor, workspaceRootURL: fixture.workspaceURL,
+                executionTimeout: 180)
+            scheduler.start()
+            defer { scheduler.stop() }
+            let deadline = Date().addingTimeInterval(365)
+            while Date() < deadline {
+                let status = try store.job(id: jobID)?.status
+                if status == .succeeded || status == .failed { break }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            let job = try XCTUnwrap(store.job(id: jobID))
+            XCTAssertEqual(job.status, .succeeded, job.failureDetails ?? "Live quality workflow did not settle")
+            guard job.status == .succeeded else { throw MeetingSummaryError.invalidExtraction(job.failureDetails ?? "Live quality failed") }
+            XCTAssertLessThanOrEqual(job.stages.first?.attemptCount ?? 0, 2)
             let extraction = try JSONDecoder().decode(MeetingSummaryExtraction.self,
                 from: Data(contentsOf: fixture.workspaceURL.appendingPathComponent(fixture.extractionPath)))
             let all = extraction.decisions + extraction.myActionItems + extraction.otherActionItems + extraction.openQuestions
