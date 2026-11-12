@@ -33,7 +33,8 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
     let previousPage: NSButton
     let matchFeedback = NSTextField(labelWithString: "")
     let feedback = NSTextField(labelWithString: "")
-    private let rows = NSStackView()
+    private let rows = TranscriptRowsDocumentView()
+    let itemsScroll = NSScrollView()
     private let matchControls = NSStackView()
     private let controls: GraphiteFocusControls
     private let saveView: (TranscriptReadingView) -> Void
@@ -44,6 +45,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
     private var activeID: String?
     private var phraseLabels: [String: NSTextField] = [:]
     private var phraseRows: [String: NSView] = [:]
+    private var phraseKinds: [String: TranscriptReaderPhrase.Kind] = [:]
     private var timeButtons: [NSButton] = []
 
     init(controls: GraphiteFocusControls, view: TranscriptReadingView = .timestamps,
@@ -67,8 +69,8 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         search.placeholderString = "Search entire recording…"
         search.setAccessibilityLabel("Search entire recording")
         search.delegate = self
-        viewPicker.addItems(withTitles: TranscriptReadingView.allCases.map(\.rawValue))
-        viewPicker.selectItem(withTitle: view.rawValue)
+        viewPicker.addItems(withTitles: TranscriptReadingView.allCases.map(\.title))
+        viewPicker.selectItem(withTitle: view.title)
         viewPicker.target = self; viewPicker.action = #selector(changeView)
         speakersButton.target = self; speakersButton.action = #selector(showSpeakers)
         nextMatch.target = self; nextMatch.action = #selector(moveNextMatch)
@@ -79,6 +81,9 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
                                   bottom: GraphiteFocusPresentation.Space.panel, right: GraphiteFocusPresentation.Space.panel)
         spacing = GraphiteFocusPresentation.Space.panel
         wantsLayer = true
+        setAccessibilityIdentifier("meeting-transcript-panel")
+        setAccessibilityRole(.group)
+        setAccessibilityElement(true)
         heading.font = GraphiteFocusPresentation.Typography.sectionHeading
         heading.setAccessibilityIdentifier("meeting-transcript-heading")
         audioHint.font = GraphiteFocusPresentation.Typography.metadata
@@ -99,23 +104,33 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         analysisNotice.setAccessibilityIdentifier("meeting-analysis-outdated")
         analysisNotice.isHidden = true; reprocess.isHidden = true
         reprocess.target = self; reprocess.action = #selector(reprocessAnalysis)
-        let options = NSStackView(views: [viewPicker, speakersButton])
+        let filterBar = NSStackView(views: [kinds, NSView(), viewPicker, speakersButton])
+        filterBar.alignment = .centerY
         let jumpLabel = NSTextField(labelWithString: "Jump to")
         jumpLabel.font = GraphiteFocusPresentation.Typography.metadata
         hourPicker.target = self; hourPicker.action = #selector(changeHour)
-        let find = NSStackView(views: [jumpLabel, hourPicker, search])
+        let find = NSStackView(views: [jumpLabel, hourPicker, NSView(), windowFeedback, previousPage, nextPage])
         search.setContentHuggingPriority(.defaultLow, for: .horizontal)
         hourPicker.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         for control in [matchFeedback, previousMatch, nextMatch] { matchControls.addArrangedSubview(control) }
-        let paging = NSStackView(views: [windowFeedback, feedback, NSView(), previousPage, nextPage])
+        let paging = NSStackView(views: [feedback])
         windowFeedback.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         windowFeedback.lineBreakMode = .byTruncatingTail
         feedback.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         windowFeedback.font = GraphiteFocusPresentation.Typography.metadata
         windowFeedback.setAccessibilityIdentifier("meeting-transcript-window")
-        rows.orientation = .vertical; rows.alignment = .leading; rows.spacing = GraphiteFocusPresentation.Space.compact
+        rows.orientation = .vertical; rows.alignment = .leading; rows.spacing = GraphiteFocusPresentation.Space.flush
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        itemsScroll.hasVerticalScroller = true
+        itemsScroll.hasHorizontalScroller = false
+        itemsScroll.drawsBackground = false
+        itemsScroll.documentView = rows
+        itemsScroll.setAccessibilityIdentifier("meeting-transcript-items-scroll")
+        itemsScroll.setAccessibilityLabel("Transcript items")
+        itemsScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        rows.widthAnchor.constraint(equalTo: itemsScroll.contentView.widthAnchor).isActive = true
         let divider = NSBox(); divider.boxType = .separator
-        for child in [header, kinds, options, find, matchControls, paging, analysisNotice, reprocess, divider, rows] {
+        for child in [header, filterBar, search, find, matchControls, paging, analysisNotice, reprocess, divider, itemsScroll] {
             addArrangedSubview(child)
             child.widthAnchor.constraint(equalTo: widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.panel).isActive = true
         }
@@ -137,6 +152,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
 
     func load(meetingID: String, phrases: [TranscriptReaderPhrase], hasAudio: Bool, duration: Double? = nil,
               seek: @escaping (TranscriptReaderPhrase) -> Void) {
+        let meetingChanged = self.meetingID != meetingID
         let unchanged = state.phrases == phrases && self.meetingID == meetingID && (duration == nil || state.duration == duration)
         self.seek = seek
         self.hasAudio = hasAudio
@@ -152,6 +168,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         state.load(meetingID: meetingID, phrases: phrases, duration: duration)
         search.stringValue = state.query
         render()
+        if meetingChanged { scrollSelection() }
     }
     func configureCorrection(enabled: Bool, outdated: Bool, reviewRequired: Bool, review: [MeetingSpeakerCorrectionReview] = [],
         correct: @escaping (String, String, @escaping (Result<Void, Error>) -> Void) -> Void,
@@ -244,13 +261,13 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         }
     }
     func controlTextDidChange(_ notification: Notification) {
-        state.setQuery(search.stringValue); render()
+        state.setQuery(search.stringValue); render(); scrollSelection()
     }
     @objc func changeKinds() {
         state.setKinds(Set(kindButtons.compactMap { $0.value.state == .on ? $0.key : nil }))
-        render()
+        render(); scrollSelection()
     }
-    @objc func changeHour() { state.setWindow(hour: hourPicker.indexOfSelectedItem); search.stringValue = state.query; render() }
+    @objc func changeHour() { state.setWindow(hour: hourPicker.indexOfSelectedItem); search.stringValue = state.query; render(); scrollSelection() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); applyPanelColors() }
     private var colors: GraphiteFocusPresentation.Colors { .init(environment: .system(window: window)) }
     private func applyPanelColors() {
@@ -263,6 +280,8 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         for (kind, button) in kindButtons {
             let selected = state.kinds.contains(kind)
             button.isBordered = false; button.wantsLayer = true
+            button.image = nil
+            button.imagePosition = .noImage
             button.contentTintColor = selected ? colors.accent : colors.textMetadata
             button.layer?.cornerRadius = GraphiteFocusPresentation.Radius.compact
             button.layer?.backgroundColor = (selected ? colors.accent.withAlphaComponent(0.15) : colors.surfaceRaised).cgColor
@@ -271,8 +290,8 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         }
     }
     @objc func changeView() {
-        guard let title = viewPicker.titleOfSelectedItem, let view = TranscriptReadingView(rawValue: title) else { return }
-        state.setView(view); saveView(view); render()
+        guard let title = viewPicker.titleOfSelectedItem, let view = TranscriptReadingView.allCases.first(where: { $0.title == title }) else { return }
+        state.setView(view); saveView(view); render(); scrollSelection()
     }
     @objc func moveNextMatch() { state.nextMatch(); render(); scrollSelection() }
     @objc func movePreviousMatch() { state.previousMatch(); render(); scrollSelection() }
@@ -303,6 +322,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
         timeButtons = []; correctionButtons = []
         phraseRows = [:]
+        phraseKinds = [:]
         phraseLabels = [:]
         for (kind, button) in kindButtons { button.state = state.kinds.contains(kind) ? .on : .off }
         applyPanelColors()
@@ -313,12 +333,14 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         hourPicker.selectItem(at: Int(state.windowStart / 3600))
         hourPicker.isEnabled = !state.phrases.isEmpty
         windowFeedback.stringValue = state.isSearching ? "Search results across entire recording" :
-            "\(Self.time(state.windowStart))–\(Self.time(state.windowEnd)) · \(state.results.count) events · 15 minute window"
+            "\(Self.time(state.windowStart))–\(Self.time(state.windowEnd))"
         matchControls.isHidden = !state.isSearching
         nextMatch.isEnabled = state.canNextMatch; previousMatch.isEnabled = state.canPreviousMatch
         nextPage.isEnabled = state.canNextPage; previousPage.isEnabled = state.canPreviousPage
+        nextPage.title = state.isSearching || (state.page + 1) * state.pageSize < state.results.count ? "Next results" : "Next 15 min"
+        previousPage.title = state.isSearching || state.page > 0 ? "Previous results" : "Previous 15 min"
         speakersButton.isEnabled = !state.phrases.isEmpty
-        speakersButton.title = state.speakers.isEmpty ? "Show speakers · All" : "Show speakers · \(state.speakers.count) selected"
+        speakersButton.title = state.speakers.isEmpty ? "Speakers: All" : "Speakers: " + (state.speakers.count == 1 ? state.speakers.sorted().first ?? "All" : "\(state.speakers.count) selected")
         if state.results.isEmpty {
             feedback.stringValue = state.phrases.isEmpty ? "No Transcript available." : state.isSearching ? "No matches in this recording." : "No moments in this window or selected filters."
         } else {
@@ -328,14 +350,16 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         matchFeedback.stringValue = state.matches.isEmpty ? "" : "Match \(state.matchNumber) of \(state.matches.count)"
         var priorSpeaker: String?
         for phrase in state.pageRows {
-            if state.view == .speakers && phrase.speaker != priorSpeaker {
-                let heading = NSTextField(labelWithString: phrase.speaker.isEmpty ? "Source unavailable" : phrase.speaker)
-                heading.font = GraphiteFocusPresentation.Typography.sectionHeading
-                rows.addArrangedSubview(heading)
+            if state.view == .speakers && phrase.kind == .transcript && phrase.speaker != priorSpeaker {
+                let speaker = NSTextField(labelWithString: phrase.speaker.isEmpty ? "Unknown speaker" : phrase.speaker)
+                speaker.font = GraphiteFocusPresentation.Typography.sectionHeading
+                speaker.textColor = colors.textPrimary
+                rows.addArrangedSubview(speaker)
             }
-            priorSpeaker = phrase.speaker
+            priorSpeaker = phrase.kind == .transcript ? phrase.speaker : nil
             let row = phraseRow(phrase)
             phraseRows[phrase.id] = row
+            phraseKinds[phrase.id] = phrase.kind
             rows.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         }
@@ -360,13 +384,26 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
             time.widthAnchor.constraint(equalToConstant: 88).isActive = true // graphite-focus-native-exception: aligned timeline timecode column
             timeWidth = 88 + GraphiteFocusPresentation.Space.panel
             timeButtons.append(time); row.addArrangedSubview(time)
+        }
+        if phrase.kind != .transcript {
             let kind = NSTextField(labelWithString: phrase.kind.caption)
             kind.font = GraphiteFocusPresentation.Typography.caption; kind.textColor = colors.accent
             kind.setAccessibilityIdentifier("transcript-kind-\(phrase.id)")
             body.addArrangedSubview(kind)
         }
+        if phrase.kind == .transcript {
+            let button = controls.actionButton(phrase.speaker.isEmpty ? "Unknown speaker…" : phrase.speaker, identifier: "transcript-correct-\(phrase.id)") { [weak self] in self?.editSpeaker(phrase) }
+            button.isBordered = false
+            button.font = GraphiteFocusPresentation.Typography.control
+            button.contentTintColor = colors.textSecondary
+            button.setAccessibilityLabel("Correct speaker: " + phrase.speaker)
+            button.toolTip = "Correct speaker…"
+            button.isEnabled = canCorrect && !isSavingCorrection
+            correctionButtons.append(button)
+            body.addArrangedSubview(button)
+        }
         let text = GraphiteFocusContextTextField(wrappingLabelWithString: phrase.text)
-        text.font = phrase.id == activeID ? GraphiteFocusPresentation.Typography.activeTranscriptSegment : GraphiteFocusPresentation.Typography.rowTitle
+        text.font = phrase.id == activeID ? GraphiteFocusPresentation.Typography.activeTranscriptSegment : GraphiteFocusPresentation.Typography.body
         text.textColor = colors.textPrimary; text.isSelectable = true
         text.setAccessibilityIdentifier("transcript-text-\(phrase.id)")
         highlight(text, phraseID: phrase.id, field: .text)
@@ -377,7 +414,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         row.addArrangedSubview(body)
         body.widthAnchor.constraint(equalTo: row.widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.dense - timeWidth).isActive = true
         text.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
-        if state.view != .clearText || state.matches.contains(where: { $0.phraseID == phrase.id && $0.field == .context }) {
+        if phrase.kind != .transcript || state.matches.contains(where: { $0.phraseID == phrase.id && $0.field == .context }) {
             let context = NSTextField(wrappingLabelWithString: phrase.metadata)
             context.setAccessibilityIdentifier("transcript-context-\(phrase.id)")
             context.font = GraphiteFocusPresentation.Typography.metadata; context.textColor = colors.textMetadata
@@ -385,16 +422,10 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
             body.addArrangedSubview(context)
             context.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
         }
-        if phrase.kind == .transcript {
-            let button = controls.actionButton("Correct speaker…", identifier: "transcript-correct-\(phrase.id)") { [weak self] in self?.editSpeaker(phrase) }
-            button.isEnabled = canCorrect && !isSavingCorrection
-            correctionButtons.append(button)
-            body.addArrangedSubview(button)
-        }
         row.wantsLayer = true
-        row.layer?.backgroundColor = colors.surfaceRaised.withAlphaComponent(0.35).cgColor
+        row.layer?.backgroundColor = (phrase.id == activeID ? colors.accent.withAlphaComponent(0.12) : phrase.kind == .transcript ? NSColor.clear : colors.surfaceRaised.withAlphaComponent(0.35)).cgColor
         row.layer?.cornerRadius = GraphiteFocusPresentation.Radius.compact
-        row.layer?.borderWidth = GraphiteFocusPresentation.Stroke.width
+        row.layer?.borderWidth = phrase.id == state.selectedID ? GraphiteFocusPresentation.Stroke.width : 0
         row.layer?.borderColor = (phrase.id == state.selectedID ? colors.accent : colors.structuralStroke).cgColor
         return row
     }
@@ -431,10 +462,11 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         guard activeID != id else { return }
         activeID = id
         for (phraseID, row) in phraseRows {
+            row.layer?.backgroundColor = (phraseID == id ? colors.accent.withAlphaComponent(0.12) : phraseKinds[phraseID] == .transcript ? NSColor.clear : colors.surfaceRaised.withAlphaComponent(0.35)).cgColor
             row.layer?.borderColor = (phraseID == state.selectedID ? colors.accent : colors.structuralStroke).cgColor
             if let label = phraseLabels[phraseID] {
                 let content = NSMutableAttributedString(attributedString: label.attributedStringValue)
-                content.addAttribute(.font, value: phraseID == id ? GraphiteFocusPresentation.Typography.activeTranscriptSegment : GraphiteFocusPresentation.Typography.rowTitle,
+                content.addAttribute(.font, value: phraseID == id ? GraphiteFocusPresentation.Typography.activeTranscriptSegment : GraphiteFocusPresentation.Typography.body,
                                      range: NSRange(location: 0, length: content.length))
                 label.attributedStringValue = content
                 updatePhraseStatus(phraseID)
@@ -451,12 +483,22 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         phraseLabels[id]?.setAccessibilityHelp(status.joined(separator: ". "))
     }
     private func scrollSelection() {
-        guard let id = state.selectedID, let row = rows.arrangedSubviews.first(where: { $0.accessibilityIdentifier() == "transcript-row-\(id)" }) else { return }
-        layoutSubtreeIfNeeded(); row.scrollToVisible(row.bounds)
+        layoutSubtreeIfNeeded()
+        if let id = state.selectedID, let row = phraseRows[id] {
+            row.scrollToVisible(row.bounds)
+        } else {
+            itemsScroll.contentView.scroll(to: .zero)
+            itemsScroll.reflectScrolledClipView(itemsScroll.contentView)
+        }
     }
     static func time(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0, seconds < Double(Int.max) else { return "Time unavailable" }
         let value = Int(seconds)
         return String(format: "%02d:%02d:%02d", value / 3600, value / 60 % 60, value % 60)
     }
+}
+
+/// Top-origin document keeps the first transcript item at the top of its viewport.
+private final class TranscriptRowsDocumentView: NSStackView {
+    override var isFlipped: Bool { true }
 }

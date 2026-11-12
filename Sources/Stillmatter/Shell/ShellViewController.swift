@@ -628,7 +628,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         let bottomConstraints: [(NSView, NSLayoutConstraint)] = [
             (todayWorkbenchView, todayWorkbenchView.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large)),
             (captureRecordingView, captureRecordingView.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large)),
-            (meetingManagementView, meetingManagementView.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large)),
+            // Meetings owns its inner scrollers and fills the viewport without outer padding.
+            (meetingManagementView, meetingManagementView.bottomAnchor.constraint(equalTo: container.bottomAnchor)),
             (proposalReviewView, proposalReviewView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.page)),
             (todoLedgerView, todoLedgerView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large)),
             (settingsFormView, settingsFormView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -GraphiteFocusPresentation.Space.large)),
@@ -790,7 +791,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         meetingManagementView.refresh(isVisible: showsMeetingWorkspace)
         meetingViewportHeight?.isActive = showsMeetingWorkspace
         contentScrollView?.hasVerticalScroller = !showsMeetingWorkspace
-        if showsMeetingWorkspace && changedTab, let scroll = contentScrollView {
+        if showsMeetingWorkspace, let scroll = contentScrollView {
             scroll.contentView.scroll(to: .zero)
             scroll.reflectScrolledClipView(scroll.contentView)
         }

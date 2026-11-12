@@ -29,11 +29,11 @@ final class TranscriptReaderHostedTests: XCTestCase {
         XCTAssertFalse(time.isEnabled)
         XCTAssertEqual(time.title, "00:00:42")
         XCTAssertNil(time.image, "Phrase timecodes have no play triangle")
-        reader.viewPicker.selectItem(withTitle: "Clear text")
+        reader.viewPicker.selectItem(withTitle: "Text only")
         reader.changeView()
         XCTAssertEqual(reader.state.view, .clearText)
         XCTAssertThrowsError(try find("transcript-time-one", in: reader) as NSButton)
-        reader.viewPicker.selectItem(withTitle: "By speakers")
+        reader.viewPicker.selectItem(withTitle: "Grouped by speaker")
         reader.changeView()
         XCTAssertEqual(reader.state.view, .speakers)
         reader.previousMatch.performClick(nil)
@@ -89,7 +89,7 @@ final class TranscriptReaderHostedTests: XCTestCase {
         reader.selectSpeaker(item)
         XCTAssertEqual(reader.state.results.count, 205)
         reader.selectSpeaker(NSMenuItem(title: "All speakers", action: nil, keyEquivalent: ""))
-        reader.viewPicker.selectItem(withTitle: "By speakers")
+        reader.viewPicker.selectItem(withTitle: "Grouped by speaker")
         reader.changeView()
         XCTAssertEqual(savedView, .speakers)
         navigation.show(seconds: 12240, segmentID: "s204", kind: .transcript)
@@ -130,7 +130,7 @@ final class TranscriptReaderHostedTests: XCTestCase {
         reader.search.stringValue = "budget"
         reader.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: reader.search))
         XCTAssertEqual(reader.state.results.count, 2)
-        reader.viewPicker.selectItem(withTitle: "Clear text")
+        reader.viewPicker.selectItem(withTitle: "Text only")
         reader.changeView()
         XCTAssertEqual(reader.state.results.count, 2)
         reader.previousPage.performClick(nil)
@@ -226,6 +226,41 @@ final class TranscriptReaderHostedTests: XCTestCase {
         reader.load(meetingID: "other", phrases: phrases("Other"), hasAudio: false, seek: { _ in })
         XCTAssertTrue(reader.state.speakers.isEmpty)
         XCTAssertEqual(reader.state.results.count, 3)
+    }
+
+    @MainActor
+    func testOnlyItemsScrollWhileControlsRemainFixedAndReaderFitsAvailableHeight() throws {
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = reader
+        reader.load(meetingID: "long", phrases: (0..<80).map {
+            TranscriptReaderPhrase(id: "s\($0)", seconds: Double($0 * 8), speaker: "Guest",
+                                   text: "A paragraph of the conversation to read while the controls stay visible.", seekSeconds: Double($0 * 8))
+        }, hasAudio: true, seek: { _ in })
+        window.contentView?.layoutSubtreeIfNeeded()
+        let headingBefore = reader.heading.convert(reader.heading.bounds, to: nil)
+        let filtersBefore = try XCTUnwrap(reader.kindButtons[.transcript]).convert(reader.kindButtons[.transcript]!.bounds, to: nil)
+        let document = try XCTUnwrap(reader.itemsScroll.documentView)
+        XCTAssertGreaterThan(document.bounds.height, reader.itemsScroll.contentView.bounds.height)
+        XCTAssertGreaterThan(reader.itemsScroll.bounds.height, 100)
+        XCTAssertFalse(reader.search.isDescendant(of: document))
+        XCTAssertFalse(reader.viewPicker.isDescendant(of: document))
+        XCTAssertFalse(reader.speakersButton.isDescendant(of: document))
+        reader.itemsScroll.contentView.scroll(to: NSPoint(x: 0, y: 200))
+        reader.itemsScroll.reflectScrolledClipView(reader.itemsScroll.contentView)
+        XCTAssertEqual(reader.itemsScroll.contentView.bounds.origin.y, 200, accuracy: 1)
+        XCTAssertEqual(reader.heading.convert(reader.heading.bounds, to: nil), headingBefore)
+        XCTAssertEqual(reader.kindButtons[.transcript]!.convert(reader.kindButtons[.transcript]!.bounds, to: nil), filtersBefore)
+        let phrases = reader.state.phrases
+        reader.load(meetingID: "another", phrases: phrases, hasAudio: true, seek: { _ in })
+        XCTAssertEqual(reader.itemsScroll.contentView.bounds.origin.y, 0, accuracy: 1)
+        window.setContentSize(NSSize(width: 1100, height: 500))
+        reader.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(reader.itemsScroll.bounds.height, 0)
+        XCTAssertLessThanOrEqual(reader.itemsScroll.frame.maxY, reader.bounds.height)
     }
 
     @MainActor

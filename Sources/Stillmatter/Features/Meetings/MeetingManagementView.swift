@@ -97,7 +97,7 @@ final class MeetingManagementView: NSView {
     private let summaryActionItems = NSStackView()
     private let summaryOtherItems = NSStackView()
     private var overviewScrollTop: NSLayoutConstraint?
-    private var timelineScrollTop: NSLayoutConstraint?
+    private var detailScroll: NSScrollView?
     let timelineRows = NSStackView()
     let timelineNavigation = MeetingTimelineNavigation()
     private let readTranscriptView: () -> TranscriptReadingView
@@ -140,9 +140,6 @@ final class MeetingManagementView: NSView {
     let waveform = MeetingWaveformView()
     let audioTime = NSTextField(labelWithString: "0:00 / 0:00")
     lazy var playbackSpeed = controls.popup(identifier: "meeting-playback-speed")
-    lazy var playbackPreviousMarker = controls.button("Previous marker", identifier: "meeting-playback-previous-marker")
-    lazy var playbackNextMarker = controls.button("Next marker", identifier: "meeting-playback-next-marker")
-    let playbackMarkerLegend = NSTextField(labelWithString: "S Speech · D Decisions · A Actions · Q Questions")
     private var playbackMarkers: [(citation: MeetingCitation, seconds: Double, symbol: String)] = []
     private var audioTimeWidth: NSLayoutConstraint?
     private var waveformWidth: NSLayoutConstraint?
@@ -221,7 +218,7 @@ final class MeetingManagementView: NSView {
         guard featureIsVisible, meetingsModel.detail.page == .transcript, window?.isKeyWindow == true,
               !textEditPanel.isOpen, let responder = window?.firstResponder as? NSView,
               !(responder is NSTextView),
-              responder.isDescendant(of: pinnedAudio) || responder === pageSelector ||
+              responder.isDescendant(of: pinnedAudio) || responder.isDescendant(of: timelinePage) || responder === pageSelector ||
                 (meetingDetailDocumentView.map { responder.isDescendant(of: $0) } ?? false),
               event.modifierFlags.intersection([.command, .option, .control, .shift]) == [.option],
               meetingsModel.detail.playbackState.isAvailable else { return false }
@@ -235,7 +232,7 @@ final class MeetingManagementView: NSView {
     private func navigateMeetingTab(for event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let responderIsInDetail = (window?.firstResponder as? NSView).map { responder in
-            responder === pageSelector || (meetingDetailDocumentView.map { responder.isDescendant(of: $0) } ?? false)
+            responder === pageSelector || responder.isDescendant(of: timelinePage) || (meetingDetailDocumentView.map { responder.isDescendant(of: $0) } ?? false)
         } ?? false
         guard featureIsVisible, selectedID != nil, !pageSelector.isHidden, !textEditPanel.isOpen,
               let firstResponder = window?.firstResponder as? NSView,
@@ -446,12 +443,12 @@ final class MeetingManagementView: NSView {
         waveform.target = self
         waveform.action = #selector(seekAudio(_:))
         waveform.setAccessibilityLabel("Meeting audio position")
-        waveform.toolTip = "Click or drag to seek Meeting audio"
+        waveform.toolTip = "Click or drag to seek Meeting audio. S: Speech · D: Decisions · A: Actions · Q: Questions"
         playButton.isEnabled = false
         waveform.isEnabled = false
         waveform.translatesAutoresizingMaskIntoConstraints = false
         waveform.heightAnchor.constraint(equalToConstant: 52).isActive = true
-        let transport = NSStackView(views: [playButton, waveform, audioTime])
+        let transport = NSStackView(views: [playButton, waveform, audioTime, playbackSpeed])
         transport.orientation = .horizontal
         transport.alignment = .centerY
         transport.spacing = GraphiteFocusPresentation.Space.compact
@@ -459,7 +456,7 @@ final class MeetingManagementView: NSView {
         // Reserve the time label's width and let the seek surface fill the rest of the player.
         audioTimeWidth = audioTime.widthAnchor.constraint(equalToConstant: 116)
         waveformWidth = waveform.widthAnchor.constraint(equalTo: transport.widthAnchor,
-            constant: -(52 + 116 + 2 * GraphiteFocusPresentation.Space.compact)) // graphite-focus-native-exception: playback face and time label reserve native transport geometry
+            constant: -(52 + 116 + playbackSpeed.intrinsicContentSize.width + 3 * GraphiteFocusPresentation.Space.compact)) // graphite-focus-native-exception: playback face and time label reserve native transport geometry
         audioTimeWidth?.isActive = true
         waveformWidth?.isActive = true
         waveform.widthAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
@@ -474,18 +471,7 @@ final class MeetingManagementView: NSView {
         playbackSpeed.target = self
         playbackSpeed.action = #selector(changePlaybackSpeed)
         playbackSpeed.toolTip = "Playback speed"
-        let options = NSStackView(views: [playbackSpeed])
-        options.spacing = GraphiteFocusPresentation.Space.compact
-        playbackPreviousMarker.target = self
-        playbackPreviousMarker.action = #selector(previousPlaybackMarker)
-        playbackNextMarker.target = self
-        playbackNextMarker.action = #selector(nextPlaybackMarker)
-        playbackPreviousMarker.isEnabled = false
-        playbackNextMarker.isEnabled = false
-        let markerControls = NSStackView(views: [playbackPreviousMarker, playbackNextMarker])
-        markerControls.spacing = GraphiteFocusPresentation.Space.compact
-        playbackMarkerLegend.font = GraphiteFocusPresentation.Typography.metadata
-        let audioSection = NSStackView(views: [audioStatus, transport, options, playbackMarkerLegend, markerControls])
+        let audioSection = NSStackView(views: [audioStatus, transport])
         audioSection.orientation = .vertical
         audioSection.alignment = .leading
         audioSection.spacing = GraphiteFocusPresentation.Space.compact
@@ -645,12 +631,12 @@ final class MeetingManagementView: NSView {
             container.orientation = .vertical
             container.alignment = .leading
         }
-        let stack = MeetingDetailDocumentView(views: [overviewPage, actionItemsPage, openItemsPage, notesPage, timelinePage, status])
+        let stack = MeetingDetailDocumentView(views: [overviewPage, actionItemsPage, openItemsPage, notesPage, status])
         meetingDetailDocumentView = stack
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = GraphiteFocusPresentation.Space.page
-        for page in [overviewPage, actionItemsPage, openItemsPage, notesPage, timelinePage] {
+        for page in [overviewPage, actionItemsPage, openItemsPage, notesPage] {
             page.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
             for item in page.arrangedSubviews where item is NSStackView && item !== retryRows {
                 item.widthAnchor.constraint(equalTo: page.widthAnchor,
@@ -668,10 +654,12 @@ final class MeetingManagementView: NSView {
         scroll.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pinnedAudio)
         addSubview(scroll)
+        detailScroll = scroll
+        addSubview(timelinePage)
+        timelinePage.translatesAutoresizingMaskIntoConstraints = false
         pinnedAudio.translatesAutoresizingMaskIntoConstraints = false
         // Hidden audio still has a frame; only the transcript should reserve space for it.
         overviewScrollTop = scroll.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact)
-        timelineScrollTop = scroll.topAnchor.constraint(equalTo: pinnedAudio.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -682,6 +670,12 @@ final class MeetingManagementView: NSView {
             pinnedAudio.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -GraphiteFocusPresentation.Space.panel),
             pinnedAudio.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact),
             pinnedAudio.arrangedSubviews[0].widthAnchor.constraint(equalTo: pinnedAudio.widthAnchor),
+            timelinePage.topAnchor.constraint(equalTo: pinnedAudio.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact),
+            timelinePage.leadingAnchor.constraint(equalTo: pinnedAudio.leadingAnchor),
+            timelinePage.trailingAnchor.constraint(equalTo: pinnedAudio.trailingAnchor),
+            timelinePage.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -GraphiteFocusPresentation.Space.panel),
+            timelineRows.widthAnchor.constraint(equalTo: timelinePage.widthAnchor),
+            timelineRows.heightAnchor.constraint(equalTo: timelinePage.heightAnchor),
             overviewScrollTop!,
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
@@ -703,6 +697,9 @@ final class MeetingManagementView: NSView {
         stack.alignment = .leading
         stack.spacing = GraphiteFocusPresentation.Space.compact
         if title == "Meeting audio" {
+            stack.setAccessibilityIdentifier("meeting-audio-panel")
+            stack.setAccessibilityRole(.group)
+            stack.setAccessibilityElement(true)
             stack.edgeInsets = NSEdgeInsets(top: GraphiteFocusPresentation.Space.panel,
                 left: GraphiteFocusPresentation.Space.panel,
                 bottom: GraphiteFocusPresentation.Space.panel, right: GraphiteFocusPresentation.Space.panel)
@@ -1240,11 +1237,10 @@ final class MeetingManagementView: NSView {
         waveform.doubleValue = state.position
         waveform.maxValue = max(state.duration, 1)
         waveform.isEnabled = state.isAvailable
+        playButton.superview?.isHidden = !state.isAvailable
         playButton.isEnabled = state.isAvailable
         playbackSpeed.isEnabled = state.isAvailable
         playbackSpeed.selectItem(at: MeetingPlaybackTransportState.supportedSpeeds.firstIndex(of: state.speed) ?? 1)
-        playbackPreviousMarker.isEnabled = state.isAvailable && !playbackMarkers.isEmpty
-        playbackNextMarker.isEnabled = state.isAvailable && !playbackMarkers.isEmpty
         playButton.title = state.isPlaying ? "Pause" : "Play"
         playButton.needsDisplay = true
         playButton.setAccessibilityLabel(state.isPlaying ? "Pause Meeting audio" : "Play Meeting audio")
@@ -1252,13 +1248,14 @@ final class MeetingManagementView: NSView {
         audioTime.stringValue = "\(timeLabel(state.position)) / \(timeLabel(state.duration))"
         let labelWidth: CGFloat = state.duration >= 3600 ? 180 : 116
         audioTimeWidth?.constant = labelWidth
-        waveformWidth?.constant = -(52 + labelWidth + 2 * GraphiteFocusPresentation.Space.compact) // graphite-focus-native-exception: reserve native playback face and measured time label width
+        waveformWidth?.constant = -(52 + labelWidth + playbackSpeed.intrinsicContentSize.width + 3 * GraphiteFocusPresentation.Space.compact) // graphite-focus-native-exception: reserve native playback face and measured time label width
         if let source = state.source {
             let preparing = !state.isAvailable && !source.microphoneRanges.isEmpty
             audioStatus.stringValue = state.errorMessage ?? (preparing ? "Preparing audio and preserving capture gaps…" : source.message)
         } else {
             audioStatus.stringValue = "Recording Bundle unavailable. Check the recording media location."
         }
+        audioStatus.isHidden = state.isAvailable && state.errorMessage == nil
         // Playback availability arrives asynchronously after detail rendering. Rebuild
         // evidence affordances on that transition, not on every playback timer tick.
         if availabilityChanged {
@@ -1288,21 +1285,6 @@ final class MeetingManagementView: NSView {
         let speeds = MeetingPlaybackTransportState.supportedSpeeds
         guard speeds.indices.contains(playbackSpeed.indexOfSelectedItem) else { return }
         meetingsModel.detail.setPlaybackSpeed(speeds[playbackSpeed.indexOfSelectedItem])
-    }
-
-    @objc private func previousPlaybackMarker() { seekPlaybackMarker(forward: false) }
-    @objc private func nextPlaybackMarker() { seekPlaybackMarker(forward: true) }
-
-    private func seekPlaybackMarker(forward: Bool) {
-        guard let detail = displayedDetail, selectedID == detail.row.id,
-              audioSource == detail.playback, meetingsModel.detail.playbackState.isAvailable,
-              !playbackMarkers.isEmpty else { return }
-        let position = meetingsModel.detail.playbackState.position
-        let marker = forward
-            ? playbackMarkers.first(where: { $0.seconds > position + 0.01 }) ?? playbackMarkers[0]
-            : playbackMarkers.last(where: { $0.seconds < position - 0.01 }) ?? playbackMarkers[playbackMarkers.count - 1]
-        meetingsModel.detail.seekPlayback(to: marker.seconds)
-        timelineNavigation.show(seconds: marker.citation.startSeconds, segmentID: marker.citation.segmentID, kind: .transcript)
     }
 
     private func detailOverview(_ detail: MeetingBrowserDetail) -> String {
@@ -1424,8 +1406,7 @@ final class MeetingManagementView: NSView {
         for (candidate, view) in pages { view.isHidden = page != candidate }
         pinnedAudio.isHidden = page != .transcript
         status.isHidden = page == .transcript
-        overviewScrollTop?.isActive = page != .transcript
-        timelineScrollTop?.isActive = page == .transcript
+        detailScroll?.isHidden = page == .transcript
         pageSelector.selectedSegment = MeetingDetailPage.allCases.firstIndex(of: page) ?? 0
     }
 
@@ -1637,8 +1618,6 @@ final class MeetingManagementView: NSView {
     private func clearEvidence(preserveTranscriptReader: Bool = false) {
         playbackMarkers = []
         waveform.markerLabels = []
-        playbackPreviousMarker.isEnabled = false
-        playbackNextMarker.isEnabled = false
         if !preserveTranscriptReader {
             timelineRows.arrangedSubviews.forEach { timelineRows.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
@@ -1739,8 +1718,6 @@ final class MeetingManagementView: NSView {
         }
         playbackMarkers.sort { $0.seconds < $1.seconds }
         waveform.markerLabels = playbackMarkers.map { ($0.seconds, $0.symbol) }
-        playbackPreviousMarker.isEnabled = meetingsModel.detail.playbackState.isAvailable && !playbackMarkers.isEmpty
-        playbackNextMarker.isEnabled = playbackPreviousMarker.isEnabled
     }
 
     private func renderOutcomes(_ detail: MeetingBrowserDetail) {
@@ -2180,6 +2157,7 @@ final class MeetingManagementView: NSView {
         if transcriptReader.superview == nil {
             timelineRows.addArrangedSubview(transcriptReader)
             transcriptReader.widthAnchor.constraint(equalTo: timelineRows.widthAnchor).isActive = true
+            transcriptReader.heightAnchor.constraint(equalTo: timelineRows.heightAnchor).isActive = true
         }
     }
 

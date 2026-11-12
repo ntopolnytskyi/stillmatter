@@ -117,12 +117,9 @@ final class MeetingPlaybackHostedTests: XCTestCase {
     }
 
     @MainActor
-    func testTimelineMarkerControlsHaveExplicitLegendAndUnavailableState() {
+    func testWaveformCombinesCollocatedAnnotations() {
         let view = MeetingManagementView(readModelProvider: { nil }, mutationExecutorProvider: { nil },
             playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in })
-        XCTAssertEqual(view.playbackMarkerLegend.stringValue, "S Speech · D Decisions · A Actions · Q Questions")
-        XCTAssertFalse(view.playbackNextMarker.isEnabled)
-        XCTAssertFalse(view.playbackPreviousMarker.isEnabled)
         view.waveform.maxValue = 100
         view.waveform.markerLabels = [(10, "S"), (10, "D"), (10, "A"), (10, "Q"), (99, "Q")]
         XCTAssertEqual(view.waveform.renderedMarkerLabels.map(\.symbols), ["SDAQ", "Q"], "Collocated outcomes remain visible alongside speech")
@@ -131,7 +128,7 @@ final class MeetingPlaybackHostedTests: XCTestCase {
     }
 
     @MainActor
-    func testTimelineMarkersNavigateValidatedSpeechAndOutcomeSources() async throws {
+    func testTimelineAnnotationsValidateSourcesAndWaveformSeeks() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appendingPathComponent("workspace")
@@ -182,24 +179,25 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         await fulfillment(of: [rows], timeout: 5)
         let row = try XCTUnwrap(view.meetingsModel.visibleRows.first)
         _ = view.meetingsModel.select(meetingID: row.id, selectedIDs: [row.id])
-        let loaded = expectation(for: NSPredicate { _, _ in view.playbackNextMarker.isEnabled }, evaluatedWith: nil)
+        let loaded = expectation(for: NSPredicate { _, _ in view.waveform.isEnabled }, evaluatedWith: nil)
         await fulfillment(of: [loaded], timeout: 5)
         XCTAssertEqual(controller.state.track, .both, "Playback includes every available track without a selection control")
         XCTAssertTrue(view.playbackSpeed.isEnabled)
         XCTAssertEqual(Set(view.waveform.markerLabels.map(\.symbol)), ["S", "D", "A", "Q"])
         XCTAssertEqual(view.waveform.markerLabels.count, 6, "Invalid citations and outside-recording speech do not become markers")
         view.openTimeline()
-        view.playbackNextMarker.performClick(nil)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = view
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.timelinePage.frame.minX, view.pinnedAudio.frame.minX, accuracy: 1)
+        XCTAssertEqual(view.timelinePage.frame.maxX, view.pinnedAudio.frame.maxX, accuracy: 1)
+        view.waveform.doubleValue = 0.25
+        view.waveform.sendAction(view.waveform.action, to: view.waveform.target)
         XCTAssertEqual(controller.state.position, 0.25)
-        // Publication to the feature model deliberately hops to its actor.
-        let first = expectation(for: NSPredicate { _, _ in view.meetingsModel.detail.playbackState.position == 0.25 }, evaluatedWith: nil)
-        await fulfillment(of: [first], timeout: 3)
-        view.playbackNextMarker.performClick(nil)
-        XCTAssertEqual(controller.state.position, 1.25)
-        let second = expectation(for: NSPredicate { _, _ in view.meetingsModel.detail.playbackState.position == 1.25 }, evaluatedWith: nil)
-        await fulfillment(of: [second], timeout: 3)
-        view.playbackPreviousMarker.performClick(nil)
-        XCTAssertEqual(controller.state.position, 0.25)
+
     }
     @MainActor
     func testTrackAndSpeedChangesPreserveSourcePositionAndOriginalFiles() throws {

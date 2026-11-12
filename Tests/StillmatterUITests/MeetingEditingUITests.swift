@@ -23,8 +23,8 @@ extension StillmatterFlowsUITests {
         name.typeKey(.return, modifierFlags: [])
         let notice = app.staticTexts["meeting-analysis-outdated"]
         XCTAssertTrue(notice.waitForExistence(timeout: 10))
-        let context = app.staticTexts["transcript-context-s0"]
-        expectation(for: NSPredicate(format: "value CONTAINS %@", "Alice"), evaluatedWith: context)
+        let context = app.buttons["transcript-correct-s0"]
+        expectation(for: NSPredicate(format: "title CONTAINS %@", "Alice"), evaluatedWith: context)
         waitForExpectations(timeout: 10)
         expectation(for: NSPredicate(format: "title CONTAINS %@", "2 selected"), evaluatedWith: app.buttons["meeting-transcript-speakers"])
         waitForExpectations(timeout: 5)
@@ -33,7 +33,7 @@ extension StillmatterFlowsUITests {
         name.typeKey("a", modifierFlags: .command); name.typeText("Discarded")
         name.typeKey(.escape, modifierFlags: [])
         XCTAssertFalse(name.exists)
-        XCTAssertTrue((context.value as? String)?.contains("Alice") == true)
+        XCTAssertTrue(context.label.contains("Alice") == true)
         correct.click()
         name.typeKey("a", modifierFlags: .command); name.typeText("Olena")
         // A service validation failure keeps the draft and offers another apply.
@@ -45,7 +45,7 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(name.value as? String, String(repeating: "x", count: 201))
         name.click(); name.typeKey("a", modifierFlags: .command); name.typeText("Olena")
         app.buttons["meeting-speaker-apply"].click()
-        expectation(for: NSPredicate(format: "value CONTAINS %@", "Olena"), evaluatedWith: context)
+        expectation(for: NSPredicate(format: "title CONTAINS %@", "Olena"), evaluatedWith: context)
         waitForExpectations(timeout: 10)
         let window = app.windows["Stillmatter"]
         let frame = window.frame
@@ -59,7 +59,7 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(app.buttons["meeting-speaker-apply"].isHittable)
         XCTAssertTrue(app.buttons["meeting-speaker-cancel"].isHittable)
         name.typeKey(.escape, modifierFlags: [])
-        app.popUpButtons["meeting-transcript-view"].click(); app.menuItems["By speakers"].click()
+        app.popUpButtons["meeting-transcript-view"].click(); app.menuItems["Grouped by speaker"].click()
         XCTAssertTrue(app.staticTexts["Olena"].waitForExistence(timeout: 5))
         app.buttons["meeting-speaker-reprocess"].click()
         XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5)); app.buttons["Cancel"].click()
@@ -376,10 +376,10 @@ extension StillmatterFlowsUITests {
         app.menuItems["Me"].click()
         XCTAssertTrue(app.staticTexts["Results 1–100 of 120"].waitForExistence(timeout: 10))
         picker.click()
-        app.menuItems["By speakers"].click()
-        XCTAssertEqual(picker.value as? String, "By speakers")
+        app.menuItems["Grouped by speaker"].click()
+        XCTAssertEqual(picker.value as? String, "Grouped by speaker")
         app.typeKey("2", modifierFlags: [.command, .shift])
-        XCTAssertEqual(picker.value as? String, "Clear text")
+        XCTAssertEqual(picker.value as? String, "Text only")
         XCTAssertFalse(app.buttons["transcript-time-s0"].exists)
         XCTAssertEqual(app.textViews.matching(identifier: "transcript-text-s0").count, 0)
         search.click()
@@ -396,7 +396,7 @@ extension StillmatterFlowsUITests {
         relaunch()
         openFixtureMeeting()
         app.radioButtons["Transcript"].click()
-        XCTAssertEqual(app.popUpButtons["meeting-transcript-view"].value as? String, "Clear text")
+        XCTAssertEqual(app.popUpButtons["meeting-transcript-view"].value as? String, "Text only")
         XCTAssertEqual(try Data(contentsOf: transcriptURL), original)
     }
 
@@ -408,7 +408,7 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(app.staticTexts["meeting-transcript-heading"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["ACTION"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["DECISION"].firstMatch.exists)
-        XCTAssertTrue(app.staticTexts["TRANSCRIPT"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["transcript-correct-s0"].exists)
         XCTAssertTrue(app.popUpButtons["meeting-transcript-view"].exists)
         XCTAssertTrue(app.buttons["meeting-transcript-speakers"].exists)
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
@@ -440,6 +440,49 @@ extension StillmatterFlowsUITests {
         search.typeText("moment 119")
         XCTAssertTrue(app.staticTexts["transcript-text-s119"].waitForExistence(timeout: 10))
         XCTAssertEqual(try Data(contentsOf: meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.json")), original)
+    }
+
+    func testTranscriptScrollKeepsPlayerAndControlsAlignedAndStationary() throws {
+        try seedMeeting(transcript: true, mixedTimeline: true)
+        openFixtureMeeting()
+        app.radioButtons["Transcript"].click()
+        let items = app.scrollViews["meeting-transcript-items-scroll"]
+        XCTAssertTrue(items.waitForExistence(timeout: 10))
+        let heading = app.staticTexts["meeting-transcript-heading"]
+        let search = app.searchFields["meeting-transcript-search"]
+        let filter = app.checkBoxes["meeting-transcript-kind-transcript"]
+        let player = app.staticTexts["Meeting audio"]
+        XCTAssertEqual(heading.frame.minX, player.frame.minX, accuracy: 1)
+        XCTAssertEqual(items.frame.minX, heading.frame.minX, accuracy: 1)
+        let headingFrame = heading.frame
+        let searchFrame = search.frame
+        let filterFrame = filter.frame
+        let playerFrame = player.frame
+        let readingMode = app.popUpButtons["meeting-transcript-view"]
+        let speakers = app.buttons["meeting-transcript-speakers"]
+        XCTAssertEqual(filter.frame.midY, readingMode.frame.midY, accuracy: 3)
+        XCTAssertEqual(filter.frame.midY, speakers.frame.midY, accuracy: 3)
+        XCTAssertGreaterThan(readingMode.frame.minX, filter.frame.maxX)
+        // Wheel events outside the item list must not scroll the meeting workspace.
+        player.scroll(byDeltaX: 0, deltaY: -300)
+        XCTAssertEqual(player.frame, playerFrame)
+        XCTAssertEqual(heading.frame, headingFrame)
+        player.scroll(byDeltaX: 0, deltaY: 300)
+        XCTAssertEqual(player.frame, playerFrame)
+        XCTAssertEqual(heading.frame, headingFrame)
+        let first = app.staticTexts["transcript-text-s0"]
+        let firstFrame = first.frame
+        items.scroll(byDeltaX: 0, deltaY: -300)
+        XCTAssertEqual(heading.frame, headingFrame)
+        XCTAssertEqual(search.frame, searchFrame)
+        XCTAssertEqual(filter.frame, filterFrame)
+        XCTAssertEqual(player.frame, playerFrame)
+        XCTAssertNotEqual(first.frame, firstFrame)
+        XCTAssertTrue(search.isHittable)
+        let screenshot = XCTAttachment(screenshot: app.windows["Stillmatter"].screenshot())
+        screenshot.name = "Transcript with fixed controls and scrolling items"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testEmptyTranscriptShowsFeedbackAndDisablesNavigation() throws {
