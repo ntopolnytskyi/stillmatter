@@ -525,6 +525,34 @@ final class ControlBehaviorRegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testChatGPTAnalysisApprovalExplainsTransferAndPersistsOnlyAfterSelection() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-chatgpt-approval-\(UUID().uuidString)")
+        let suite = "works.stillmatter.chatgpt.approval.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = SettingsStore(userDefaults: defaults)
+        let installer = TranscriptionComponentInstaller(paths: TranscriptionComponentPaths(applicationSupportURL: root), acquirer: NoModelAcquirer())
+        let view = SettingsFormView(settingsStore: store, transcriptionComponentInstaller: installer)
+        let controls = descendants(of: view)
+        let toggle = try XCTUnwrap(controls.compactMap { $0 as? NSButton }.first {
+            $0.accessibilityIdentifier() == "settings-chatgpt-analysis"
+        })
+        XCTAssertEqual(toggle.title, "Allow ChatGPT analysis of Meeting text")
+        XCTAssertFalse(store.settings.allowChatGPTMeetingAnalysis)
+        XCTAssertTrue(controls.compactMap { $0 as? NSTextField }.contains {
+            $0.stringValue.contains("Transcript and My Notes are sent to ChatGPT")
+                && $0.stringValue.contains("Audio, voice profiles, and search data are not sent")
+        })
+
+        toggle.performClick(nil)
+
+        XCTAssertTrue(SettingsStore(userDefaults: defaults).settings.allowChatGPTMeetingAnalysis)
+    }
+
+    @MainActor
     private func descendants(of view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + descendants(of: $0) }
     }

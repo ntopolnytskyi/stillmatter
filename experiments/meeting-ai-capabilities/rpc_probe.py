@@ -143,7 +143,7 @@ def actual_pi_local_probe(pi, base_url, model, prompt=None, expected_artifact=No
         command = [pi, '--mode', 'rpc', '--no-session', '--no-tools', '--no-mcp',
                    '--no-extensions', '--no-context-files', '--no-skills', '--no-prompt-templates',
                    '--no-approve', '--offline', '--provider', 'local-probe', '--model', model,
-                   '--system-prompt', 'You extract JSON from supplied synthetic evidence. No tools. Return only JSON.']
+                   '--system-prompt', 'You extract JSON from supplied synthetic evidence. No tools. Return only JSON. /no_think']
         return run_child(command, root, env=env, timeout=timeout, prompt=prompt,
                          expected_artifact=expected_artifact)
 

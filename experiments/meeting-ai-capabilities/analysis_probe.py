@@ -15,7 +15,7 @@ import time
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
-from rpc_probe import actual_pi_local_probe
+from rpc_probe import ProbeFailure, actual_pi_local_probe
 
 
 TRANSCRIPT = '''[u1] Olena: Я надішлю нотатки до релізу. Дату ще не визначено.
@@ -28,8 +28,7 @@ summary: array of {text: English string, citations: array of utterance IDs};
 actions: array of {text: English string, owner: speaker name, due: null or explicitly agreed date, citations: array of utterance IDs};
 decisions: array of {text: English string, citations: array of utterance IDs};
 openItems: array of {text: English string, citations: array of utterance IDs}.
-Translate Ukrainian outcomes into English. Do not invent owners, dates, decisions, or commitments.
-Questions without volunteers are open items, not assigned tasks. A rejected suggestion is not a decision.
+Use exactly those keys and JSON types; citations must be strings containing the exact bracketed IDs such as "u1", never numeric positions. Translate Ukrainian outcomes into English. Extract explicit promises as actions even when the owner has not agreed to a due date. Do not turn a decision, question, absence of volunteers, or rejected suggestion into an action. Questions without volunteers are open items, not assigned tasks. A rejected suggestion is not a decision. For any empty category return []. If the Transcript has no utterances, return {"summary":[],"actions":[],"decisions":[],"openItems":[]}.
 Transcript:\n''' + TRANSCRIPT
 
 
@@ -136,8 +135,15 @@ def evaluate(model, output, pi, server, timeout=180):
                     ('groundedOutcomes', PROMPT, None), ('emptyTranscript', no_speech, empty),
                     ('quotedInstruction', injection, None)]:
                 started = time.monotonic()
-                result = actual_pi_local_probe(pi, f'http://127.0.0.1:{port}/v1',
-                                               'synthetic-analysis', prompt=prompt, expected_artifact=expected, timeout=timeout)
+                try:
+                    result = actual_pi_local_probe(pi, f'http://127.0.0.1:{port}/v1',
+                                                   'synthetic-analysis', prompt=prompt, expected_artifact=expected, timeout=timeout)
+                except ProbeFailure as error:
+                    runs.append({'name': name, 'prompt': prompt,
+                                 'promptSha256': hashlib.sha256((prompt or 'Return only JSON: {"probe":"synthetic"}.').encode()).hexdigest(),
+                                 'elapsedSeconds': time.monotonic() - started,
+                                 'probeFailure': str(error)})
+                    continue
                 result['name'] = name
                 result['prompt'] = prompt
                 result['promptSha256'] = hashlib.sha256((prompt or 'Return only JSON: {\"probe\":\"synthetic\"}.').encode()).hexdigest()

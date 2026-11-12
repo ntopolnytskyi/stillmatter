@@ -30,6 +30,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.transcriptionModelChoice, .recommended)
         XCTAssertEqual(settings.transcriptionLanguage, .automatic)
         XCTAssertEqual(settings.teamsRecordingMode, .ask)
+        XCTAssertFalse(settings.allowChatGPTMeetingAnalysis)
     }
 
     func testSettingsPersistAcrossStoreInstances() {
@@ -46,12 +47,19 @@ final class AppSettingsTests: XCTestCase {
             calendarSourceSelection: .selected(["work", "personal"]),
             searchExcludedPatterns: ["Private/**", "Vendors/**"],
             transcriptionModelChoice: .full,
-            teamsRecordingMode: .automatic
+            teamsRecordingMode: .automatic,
+            allowChatGPTMeetingAnalysis: true
         )
 
         let reloadedStore = SettingsStore(userDefaults: defaults, storageKey: storageKey)
 
         XCTAssertEqual(reloadedStore.settings, firstStore.settings)
+    }
+
+    func testOlderSettingsDoNotGrantChatGPTTransferApproval() throws {
+        let settings = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"launchAtLoginEnabled":false}"#.utf8))
+
+        XCTAssertFalse(settings.allowChatGPTMeetingAnalysis)
     }
 
     func testCalendarSelectionFiltersToSelectedCalendars() {

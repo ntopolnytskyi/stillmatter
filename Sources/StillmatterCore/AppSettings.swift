@@ -66,6 +66,7 @@ public struct AppSettings: Codable, Equatable {
     public var transcriptionLanguage: TranscriptLanguage
     public var transcriptReadingView: TranscriptReadingView
     public var teamsRecordingMode: TeamsRecordingMode
+    public var allowChatGPTMeetingAnalysis: Bool
 
     public init(
         stillmatterRootURL: URL? = nil,
@@ -76,7 +77,8 @@ public struct AppSettings: Codable, Equatable {
         transcriptionModelChoice: TranscriptionModelChoice = .recommended,
         transcriptionLanguage: TranscriptLanguage = .automatic,
         transcriptReadingView: TranscriptReadingView = .timestamps,
-        teamsRecordingMode: TeamsRecordingMode = .ask
+        teamsRecordingMode: TeamsRecordingMode = .ask,
+        allowChatGPTMeetingAnalysis: Bool = false
     ) {
         self.stillmatterRootURL = stillmatterRootURL
         self.recordingMediaURL = recordingMediaURL
@@ -87,6 +89,7 @@ public struct AppSettings: Codable, Equatable {
         self.transcriptionLanguage = transcriptionLanguage
         self.transcriptReadingView = transcriptReadingView
         self.teamsRecordingMode = teamsRecordingMode
+        self.allowChatGPTMeetingAnalysis = allowChatGPTMeetingAnalysis
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -100,6 +103,7 @@ public struct AppSettings: Codable, Equatable {
         case transcriptionLanguage
         case transcriptReadingView
         case teamsRecordingMode
+        case allowChatGPTMeetingAnalysis
     }
 
     public init(from decoder: Decoder) throws {
@@ -123,6 +127,7 @@ public struct AppSettings: Codable, Equatable {
         transcriptReadingView = TranscriptReadingView(persistedValue: storedReadingView)
         let storedRecordingMode = try container.decodeIfPresent(String.self, forKey: .teamsRecordingMode)
         teamsRecordingMode = storedRecordingMode.flatMap(TeamsRecordingMode.init(rawValue:)) ?? .ask
+        allowChatGPTMeetingAnalysis = try container.decodeIfPresent(Bool.self, forKey: .allowChatGPTMeetingAnalysis) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -136,5 +141,6 @@ public struct AppSettings: Codable, Equatable {
         try container.encode(transcriptionLanguage, forKey: .transcriptionLanguage)
         try container.encode(transcriptReadingView, forKey: .transcriptReadingView)
         try container.encode(teamsRecordingMode, forKey: .teamsRecordingMode)
+        try container.encode(allowChatGPTMeetingAnalysis, forKey: .allowChatGPTMeetingAnalysis)
     }
 }

@@ -38,6 +38,8 @@ final class SettingsFormView: NSView {
     private let calendarSourcesButton: NSButton
     private let calendarEventStore = EKEventStore()
     private let launchAtLoginCheckbox: NSButton
+    private let chatGPTAnalysisCheckbox: NSButton
+    private let chatGPTAnalysisHint = NSTextField(wrappingLabelWithString: "When enabled, the Transcript and My Notes are sent to ChatGPT through your installed Pi sign-in to create a Summary and outcomes. Audio, voice profiles, and search data are not sent. Turn this off to stop future transfers.")
     private let searchExcludesField: NSTextField
     private let transcriptionModelPopup: NSPopUpButton
     private let teamsRecordingPopup: NSPopUpButton
@@ -78,6 +80,7 @@ final class SettingsFormView: NSView {
         retryPendingButton = controls.button("Retry workspace change", identifier: "settings-retry-workspace")
         calendarSourcesButton = controls.button("All readable calendars", identifier: "settings-calendar-sources")
         launchAtLoginCheckbox = controls.checkbox("Launch Stillmatter at login", identifier: "settings-launch-at-login")
+        chatGPTAnalysisCheckbox = controls.checkbox("Allow ChatGPT analysis of Meeting text", identifier: "settings-chatgpt-analysis")
         searchExcludesField = controls.textField(identifier: "settings-search-exclusions")
         transcriptionModelPopup = controls.popup(identifier: "settings-transcription-model")
         teamsRecordingPopup = controls.popup(identifier: "settings-teams-recording")
@@ -146,6 +149,8 @@ final class SettingsFormView: NSView {
         calendarSourcesButton.action = #selector(showCalendarSources(_:))
         launchAtLoginCheckbox.target = self
         launchAtLoginCheckbox.action = #selector(launchAtLoginChanged(_:))
+        chatGPTAnalysisCheckbox.target = self
+        chatGPTAnalysisCheckbox.action = #selector(chatGPTAnalysisChanged(_:))
 
         searchExcludesField.placeholderString = "Private/**, Archive/Old/**"
         searchExcludesField.target = self
@@ -187,6 +192,10 @@ final class SettingsFormView: NSView {
         stack.addArrangedSubview(searchFeedbackLabel)
         stack.addArrangedSubview(sectionHeader("Preferences"))
         stack.addArrangedSubview(launchAtLoginCheckbox)
+        stack.addArrangedSubview(chatGPTAnalysisCheckbox)
+        chatGPTAnalysisHint.textColor = .secondaryLabelColor
+        chatGPTAnalysisHint.maximumNumberOfLines = 0
+        stack.addArrangedSubview(chatGPTAnalysisHint)
         stack.addArrangedSubview(validationLabel)
         stack.addArrangedSubview(sectionHeader("Permissions & Components"))
         stack.addArrangedSubview(diagnosticsSummaryLabel)
@@ -373,6 +382,7 @@ final class SettingsFormView: NSView {
         }
         calendarSourcesButton.title = calendarSourcesTitle(settings: settings)
         launchAtLoginCheckbox.state = settings.launchAtLoginEnabled ? .on : .off
+        chatGPTAnalysisCheckbox.state = settings.allowChatGPTMeetingAnalysis ? .on : .off
         teamsRecordingPopup.selectItem(withTitle: settings.teamsRecordingMode.displayName)
         searchExcludesField.stringValue = settings.searchExcludedPatterns.joined(separator: ", ")
         if let index = TranscriptionModelChoice.allCases.firstIndex(of: settings.transcriptionModelChoice) {
@@ -587,6 +597,12 @@ final class SettingsFormView: NSView {
 
     @objc private func launchAtLoginChanged(_ sender: NSButton) {
         settingsStore.settings.launchAtLoginEnabled = sender.state == .on
+    }
+
+    @objc private func chatGPTAnalysisChanged(_ sender: NSButton) {
+        var settings = settingsStore.settings
+        settings.allowChatGPTMeetingAnalysis = sender.state == .on
+        settingsStore.settings = settings
     }
 
     @objc private func teamsRecordingChanged(_ sender: NSPopUpButton) {

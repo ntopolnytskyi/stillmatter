@@ -15,7 +15,6 @@ final class ProcessingRuntime {
     private let mayResumeTranscription: (String) -> Bool
     private let isProbe: () -> Bool
     private let makeTranscription: ((URL, SearchIndex?) -> JobExecuting)?
-    private let analysisConfiguration: () -> String
     private let makeAnalysis: (URL) -> JobExecuting
     private let wakeNotificationCenter: NotificationCenter
     private let schedulerClock: () -> Date
@@ -29,19 +28,17 @@ final class ProcessingRuntime {
          jobStore: @escaping () -> JobStore?, mayResumeTranscription: @escaping (String) -> Bool,
          isProbe: @escaping () -> Bool = { false },
          makeTranscription: ((URL, SearchIndex?) -> JobExecuting)? = nil,
-         analysisConfiguration: @escaping () -> String = { "default-analysis" },
          makeAnalysis: ((URL) -> JobExecuting)? = nil,
          wakeNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
          schedulerClock: @escaping () -> Date = Date.init,
          analysis: JobExecuting = UnavailableJobHandler(guidance:
-            "A fully local analysis provider is required. Configure the local model, then Retry this stage. Recording and Transcript are retained; no Meeting text was uploaded.")) {
+            "ChatGPT analysis is not approved. Enable it in Settings, then Retry this stage. Recording and Transcript are retained; no Meeting text was sent.")) {
         self.applicationSupportURL = applicationSupportURL
         self.componentInstaller = componentInstaller
         self.jobStore = jobStore
         self.mayResumeTranscription = mayResumeTranscription
         self.isProbe = isProbe
         self.makeTranscription = makeTranscription
-        self.analysisConfiguration = analysisConfiguration
         self.makeAnalysis = makeAnalysis ?? { _ in analysis }
         self.wakeNotificationCenter = wakeNotificationCenter
         self.schedulerClock = schedulerClock
@@ -79,7 +76,7 @@ final class ProcessingRuntime {
         }
         let component = componentInstaller.installedModelURL()?.path ?? "missing-model"
         let owner = root.standardizedFileURL.resolvingSymlinksInPath().path
-        let key = [owner, component, String(indexGeneration), analysisConfiguration()].joined(separator: "\n")
+        let key = [owner, component, String(indexGeneration), String(settings.allowChatGPTMeetingAnalysis)].joined(separator: "\n")
         guard configurationKey != key else { return }
         transcriptionScheduler?.pauseSynchronously()
         do {
@@ -125,5 +122,26 @@ final class ProcessingRuntime {
         return TranscriptionJobExecutor(pipeline: TranscriptionPipeline(workspaceRootURL: root,
             bundleValidator: RecordingBundleFinalizer(), engine: engine,
             diarizationEngine: diarization, searchIndex: index))
+    }
+}
+
+enum ChatGPTMeetingAnalysisFactory {
+    static func make(settings: AppSettings, workspaceRootURL: URL, applicationSupportURL: URL,
+                     inbox: TasksInbox?, piExecutableURL: URL?,
+                     currentTransferApproval: @escaping () -> Bool) -> JobExecuting {
+        guard settings.allowChatGPTMeetingAnalysis else {
+            return UnavailableJobHandler(guidance: "Enable ChatGPT Meeting analysis in Settings, then Retry. This sends the Meeting Transcript and My Notes to ChatGPT through your installed Pi sign-in. No text is sent until enabled.")
+        }
+        guard let piExecutableURL else {
+            return UnavailableJobHandler(guidance: "Pi CLI is unavailable. Install Pi and sign in to ChatGPT, then Retry analysis. No Meeting text was sent.")
+        }
+        guard let inbox else {
+            return UnavailableJobHandler(guidance: "The Meeting task inbox is unavailable. Check the workspace in Settings, then Retry. No Meeting text was sent.")
+        }
+        let worker = PiCodexWorker(executableURL: piExecutableURL, vaultRootURL: workspaceRootURL,
+                                   hasTransferApproval: currentTransferApproval)
+        return MeetingSummaryJobExecutor(worker: worker, workspaceRootURL: workspaceRootURL,
+            vault: WorkspaceVault(workspaceRootURL: workspaceRootURL, appSupportRootURL: applicationSupportURL),
+            inbox: inbox)
     }
 }

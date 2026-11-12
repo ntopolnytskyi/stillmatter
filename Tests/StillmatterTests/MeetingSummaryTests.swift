@@ -75,6 +75,8 @@ final class MeetingSummaryTests: XCTestCase {
 
     func testExecutorPublishesSummaryAndCitedExtractionAndQueuesOnlyMyActionItems() throws {
         let fixture = try MeetingSummaryFixture()
+        try Data("A note that must be sent only after approval.".utf8)
+            .write(to: fixture.workspaceURL.appendingPathComponent("Meetings/2026/09/kickoff/my-notes.md"))
         let extraction = MeetingSummaryExtraction(
             meeting: fixture.transcript.meetingRelativePath,
             transcript: fixture.transcriptPath,
@@ -98,6 +100,12 @@ final class MeetingSummaryTests: XCTestCase {
             stages: [workflow.stages[1]], sourceArtifacts: workflow.sourceArtifacts,
             expectedOutputs: workflow.expectedOutputs.filter { $0.stageID == MeetingSummaryJob.stageID }, metadata: workflow.metadata)
         let result = try execute(executor, manifest: summaryOnly)
+
+        let prompt = try XCTUnwrap(fixture.latestPiRunner?.prompts.first)
+        XCTAssertTrue(prompt.contains("I will send the launch plan."))
+        XCTAssertTrue(prompt.contains("A note that must be sent only after approval."))
+        XCTAssertTrue(prompt.contains("Do not include audio, voice profiles, unrelated workspace files"))
+        XCTAssertFalse(prompt.contains("PRIVATE_PROFILE_SECRET"))
 
         XCTAssertEqual(Set(result.artifacts.map(\.relativePath)), Set([fixture.summaryPath, fixture.extractionPath]))
         XCTAssertTrue(try fixture.contents(fixture.summaryPath).contains("## My action items"))
@@ -156,8 +164,16 @@ final class MeetingSummaryTests: XCTestCase {
             ["relative_path": fixture.summaryPath, "content": summaryText],
             ["relative_path": fixture.extractionPath, "content": extractionJSON]
         ]]
-        let responseURL = fixture.rootURL.appendingPathComponent("response.json")
-        try JSONSerialization.data(withJSONObject: responseObject, options: [.sortedKeys]).write(to: responseURL)
+        let responseURL = fixture.rootURL.appendingPathComponent("response.jsonl")
+        let assistant: [String: Any] = ["role": "assistant", "stopReason": "stop",
+            "content": [["type": "text", "text": String(decoding: try JSONSerialization.data(withJSONObject: responseObject, options: [.sortedKeys]), as: UTF8.self)]] as [[String: String]]]
+        let rpcEvents: [[String: Any]] = [
+            ["type": "response", "id": "stillmatter-analysis", "command": "prompt", "success": true],
+            ["type": "message_end", "message": assistant],
+            ["type": "agent_settled", "aborted": false]
+        ]
+        let rpcLines = try rpcEvents.map { try JSONSerialization.data(withJSONObject: $0) }
+        try rpcLines.reduce(into: Data()) { data, line in data.append(line); data.append(0x0A) }.write(to: responseURL)
         let countURL = fixture.rootURL.appendingPathComponent("worker-count")
         let executableURL = fixture.rootURL.appendingPathComponent("fake-pi.sh")
         let script = """
@@ -171,7 +187,8 @@ final class MeetingSummaryTests: XCTestCase {
         """
         try Data(script.utf8).write(to: executableURL)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
-        let worker = PiCodexWorker(executableURL: executableURL, vaultRootURL: fixture.workspaceURL)
+        let worker = PiCodexWorker(executableURL: executableURL, vaultRootURL: fixture.workspaceURL,
+            hasTransferApproval: { true })
         let executor = MeetingSummaryJobExecutor(worker: worker, workspaceRootURL: fixture.workspaceURL,
             vault: WorkspaceVault(workspaceRootURL: fixture.workspaceURL,
                 appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support")), inbox: fixture.inbox)
@@ -376,6 +393,7 @@ private final class MeetingSummaryFixture {
     let extractionPath = "Meetings/2026/09/kickoff/summary-extraction.json"
     let transcript: TranscriptDocument
     let inbox: TasksInbox
+    private(set) var latestPiRunner: MeetingSummaryPiRunner?
 
     init() throws {
         rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -482,10 +500,13 @@ private final class MeetingSummaryFixture {
             decoding: try JSONSerialization.data(withJSONObject: responseObject, options: [.sortedKeys]),
             as: UTF8.self
         )
+        let runner = MeetingSummaryPiRunner(response: response)
+        latestPiRunner = runner
         let worker = PiCodexWorker(
             executableURL: URL(fileURLWithPath: "/usr/local/bin/pi"),
             vaultRootURL: workspaceURL,
-            commandRunner: MeetingSummaryPiRunner(response: response)
+            commandRunner: runner,
+            hasTransferApproval: { true }
         )
         return MeetingSummaryJobExecutor(
             worker: worker,
@@ -503,14 +524,24 @@ private final class MeetingSummaryFixture {
     }
 }
 
-private final class MeetingSummaryPiRunner: PiCommandRunning {
+private final class MeetingSummaryPiRunner: PiRPCCommandRunning {
     let response: String
+    private(set) var prompts: [String] = []
 
     init(response: String) {
         self.response = response
     }
 
-    func run(_ command: PiCommand) throws -> PiCommandResult {
-        PiCommandResult(exitCode: 0, standardOutput: response, standardError: "")
+    func runRPC(_ command: PiCommand, prompt: String, cancellation: JobExecutionCancellation?) throws -> PiCommandResult {
+        prompts.append(prompt)
+        let message: [String: Any] = ["role": "assistant", "stopReason": "stop",
+            "content": [["type": "text", "text": response]] as [[String: String]]]
+        let events: [[String: Any]] = [
+            ["type": "response", "id": "stillmatter-analysis", "command": "prompt", "success": true],
+            ["type": "message_end", "message": message],
+            ["type": "agent_settled", "aborted": false]
+        ]
+        let lines = try events.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }
+        return PiCommandResult(exitCode: 0, standardOutput: lines.joined(separator: "\n"), standardError: "")
     }
 }

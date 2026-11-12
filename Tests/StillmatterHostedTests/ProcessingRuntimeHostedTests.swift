@@ -206,8 +206,8 @@ final class ProcessingRuntimeHostedTests: XCTestCase {
         wait { try store.job(id: "missing-analysis")?.status == .failed }
         let failure = try XCTUnwrap(store.job(id: "missing-analysis"))
         XCTAssertEqual(failure.stages.map(\.status), [.succeeded, .failed])
-        XCTAssertTrue(failure.failureDetails?.contains("fully local analysis provider") == true)
-        XCTAssertTrue(failure.failureDetails?.contains("no Meeting text was uploaded") == true)
+        XCTAssertTrue(failure.failureDetails?.contains("ChatGPT analysis is not approved") == true)
+        XCTAssertTrue(failure.failureDetails?.contains("no Meeting text was sent") == true)
     }
 
     func testConfigurationGuardsAndMigrationFailureRetainOriginalWork() throws {
@@ -237,6 +237,31 @@ final class ProcessingRuntimeHostedTests: XCTestCase {
         noStore.configure(settings: settings(workspace), searchIndex: nil, indexGeneration: 0)
         XCTAssertNil(noStore.transcriptionScheduler)
         noStore.stop()
+    }
+
+    func testChatGPTAnalysisFactoryRequiresApprovalAndConfiguredPiAndInbox() throws {
+        let inbox = try TasksInbox(databaseURL: support.appendingPathComponent("analysis-inbox.sqlite"))
+        let pi = URL(fileURLWithPath: "/usr/local/bin/pi")
+        var settings = AppSettings()
+        let denied = ChatGPTMeetingAnalysisFactory.make(settings: settings, workspaceRootURL: workspace,
+            applicationSupportURL: support, inbox: inbox, piExecutableURL: pi,
+            currentTransferApproval: { settings.allowChatGPTMeetingAnalysis })
+        XCTAssertTrue(denied is UnavailableJobHandler)
+
+        settings.allowChatGPTMeetingAnalysis = true
+        let missingPi = ChatGPTMeetingAnalysisFactory.make(settings: settings, workspaceRootURL: workspace,
+            applicationSupportURL: support, inbox: inbox, piExecutableURL: nil,
+            currentTransferApproval: { settings.allowChatGPTMeetingAnalysis })
+        XCTAssertTrue(missingPi is UnavailableJobHandler)
+        let missingInbox = ChatGPTMeetingAnalysisFactory.make(settings: settings, workspaceRootURL: workspace,
+            applicationSupportURL: support, inbox: nil, piExecutableURL: pi,
+            currentTransferApproval: { settings.allowChatGPTMeetingAnalysis })
+        XCTAssertTrue(missingInbox is UnavailableJobHandler)
+
+        let configured = ChatGPTMeetingAnalysisFactory.make(settings: settings, workspaceRootURL: workspace,
+            applicationSupportURL: support, inbox: inbox, piExecutableURL: pi,
+            currentTransferApproval: { settings.allowChatGPTMeetingAnalysis })
+        XCTAssertTrue(configured is MeetingSummaryJobExecutor)
     }
 }
 

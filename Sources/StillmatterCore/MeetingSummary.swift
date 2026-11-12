@@ -238,7 +238,14 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         let expectedVersions = try Dictionary(uniqueKeysWithValues: workflow.expectedOutputs.map {
             ($0.relativePath, try vault.versionOfMarkdown(relativePath: $0.relativePath))
         })
-        let result = try worker.run(manifest: workflow, cancellation: cancellation)
+        let notesPath = canonicalBase?.paths["notes"] ?? Self.notesPath(for: transcript.meetingRelativePath)
+        let transcriptEncoder = JSONEncoder()
+        transcriptEncoder.dateEncodingStrategy = .iso8601
+        let transcriptText = try transcriptEncoder.encode(transcript)
+        let notesText = try? String(contentsOf: workspaceRootURL.appendingPathComponent(notesPath), encoding: .utf8)
+        var suppliedContext = ["transcript": String(decoding: transcriptText, as: UTF8.self)]
+        if let notesText, !notesText.isEmpty { suppliedContext["myNotes"] = notesText }
+        let result = try worker.run(manifest: workflow, suppliedContext: suppliedContext, cancellation: cancellation)
         guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
         let artifactsByPath = Dictionary(uniqueKeysWithValues: result.artifacts.map { ($0.relativePath, $0) })
         let paths = MeetingSummaryJob.artifactPaths(meetingRelativePath: transcript.meetingRelativePath)
@@ -264,7 +271,6 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         }
         try validate(extraction, transcript: transcript, transcriptPath: transcriptPath)
 
-        let notesPath = canonicalBase?.paths["notes"] ?? Self.notesPath(for: transcript.meetingRelativePath)
         let noteItemIDs = try noteAuthoredItemIDs(at: notesPath)
         let extractedActionItemIDs = extraction.myActionItems + extraction.otherActionItems
         let duplicateNoteIDs = noteItemIDs.intersection(Set(extractedActionItemIDs.map { $0.id.lowercased() }))
