@@ -598,7 +598,7 @@ public final class PiCodexWorker {
         try manifest.validate()
         let prompt = Self.prompt(for: manifest, suppliedContext: suppliedContext)
         guard prompt.utf8.count <= 128 * 1024 else {
-            throw PiWorkerError.invalidManifest("Analysis input exceeds the 128 KiB request budget; no text was sent.")
+            throw PiWorkerError.invalidManifest("Analysis exceeds the supported 128 KiB request context. This request was not sent. Retrying cannot reduce the evidence; a larger analysis context is required.")
         }
         let command = PiCommand(
             executable: executableURL,

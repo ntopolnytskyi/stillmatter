@@ -350,6 +350,9 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         _ = try MeetingSummaryEvidence.citedSegmentIDs(in: markdown, transcript: transcript)
         let body = MeetingSummaryEvidence.narrative(in: markdown)
         // Fixed English headings and metadata cannot mask non-English generated narrative.
+        for heading in body.components(separatedBy: .newlines) where heading.hasPrefix("#") {
+            try validateEnglish(heading.replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression))
+        }
         let narrative = body.components(separatedBy: .newlines).filter { !$0.hasPrefix("#") }.joined(separator: "\n")
         for paragraph in narrative.components(separatedBy: "\n\n") {
             try validateEnglish(paragraph)

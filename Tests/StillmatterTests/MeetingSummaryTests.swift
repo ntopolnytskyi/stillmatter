@@ -371,7 +371,7 @@ final class MeetingSummaryTests: XCTestCase {
         let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
         let empty = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
             decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
-        for narrative in ["Ми вирішили розпочати проєкт наступного тижня і перевірити всі результати.",
+        for narrative in ["### Ризики\n\nLaunch planning. [segment-00001]", "Ми вирішили розпочати проєкт наступного тижня і перевірити всі результати.",
                           "Nous avons décidé de lancer le projet la semaine prochaine et de vérifier les résultats."] {
             XCTAssertThrowsError(try execute(fixture.executor(extraction: empty, narrative: narrative), manifest: manifest))
             XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceURL.appendingPathComponent(fixture.summaryPath).path))
@@ -461,6 +461,39 @@ final class MeetingSummaryTests: XCTestCase {
             "Meetings/2026/09/kickoff/my-notes.md"), atomically: true, encoding: .utf8)
         XCTAssertThrowsError(try execute(restarted, manifest: manifest))
         XCTAssertEqual(seen.count, 8)
+    }
+
+    func testDenseMeetingExhaustsWholeMeetingContextWithoutSendingOversizedReconciliation() throws {
+        let segments = (0..<8).map { index in TranscriptSegment(id: "segment-\(index)", startSeconds: Double(index * 3600),
+            endSeconds: Double(index * 3600 + 3), text: String(repeating: "Relevant evidence. ", count: 1200),
+            language: .english, track: .microphone, speaker: "Me") }
+        let fixture = try MeetingSummaryFixture(segments: segments)
+        let empty = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        var transferred = 0
+        let transform: (String, String) throws -> String = { prompt, response in
+            transferred += 1
+            let context = try JSONSerialization.jsonObject(with: Data(prompt.components(separatedBy: "Approved Meeting context:\n").last!.utf8)) as! [String: Any]
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let chunk = try decoder.decode(TranscriptDocument.self, from: Data((context["transcript"] as! String).utf8))
+            XCTAssertEqual(chunk.segments.count, 1)
+            var object = try JSONSerialization.jsonObject(with: Data(response.utf8)) as! [String: Any]
+            var artifacts = object["artifacts"] as! [[String: Any]]
+            artifacts[0]["content"] = MeetingSummaryEvidence.render(narrative: "The team reviewed the schedule. [\(chunk.segments[0].id)]", extraction: empty)
+            object["artifacts"] = artifacts
+            return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        XCTAssertThrowsError(try execute(fixture.executor(extraction: empty, transform: transform), manifest: manifest))
+        XCTAssertEqual(transferred, 8)
+        for _ in 0..<2 {
+            XCTAssertThrowsError(try execute(fixture.executor(extraction: empty, transform: transform), manifest: manifest)) { error in
+                XCTAssertTrue(String(describing: error).contains("supported 128 KiB"))
+                XCTAssertTrue(String(describing: error).contains("Retrying cannot reduce"))
+            }
+            XCTAssertEqual(transferred, 8, "No oversized request or repeated chunk may be sent")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceURL.appendingPathComponent(fixture.summaryPath).path))
     }
 
     func testNotesAndSingleSegmentBudgetsFailBeforeAnyTransfer() throws {
