@@ -136,6 +136,9 @@ final class MeetingManagementView: NSView {
     private var pendingSearchSourcePath: String?
     private var pendingReviewPath: String?
     private var reviewDetailPath: String?
+    private var reviewNavigationID: UUID?
+    private var reviewSelectionStarted = false
+    private var reviewUnavailable: (() -> Void)?
     private var restoredSearchSelectionNeedsOpen = false
     lazy var openRecordingButton = controls.button("Open Recording", identifier: "meeting-open-recording")
     let audioStatus = NSTextField(wrappingLabelWithString: "Recording Bundle unavailable")
@@ -215,8 +218,12 @@ final class MeetingManagementView: NSView {
         applySnapshot(meetingsModel.snapshot)
     }
 
-    func focusActionItems(_ meetingPath: String) {
+    func focusActionItems(_ meetingPath: String, unavailable: @escaping () -> Void) {
+        reviewNavigationID = UUID()
+        reviewSelectionStarted = false
+        reviewUnavailable = unavailable
         pendingReviewPath = meetingPath
+        reviewDetailPath = nil
         queryField.stringValue = ""
         startDateEnabled.state = .off
         endDateEnabled.state = .off
@@ -225,7 +232,21 @@ final class MeetingManagementView: NSView {
         archiveFilter.selectItem(at: 0)
         meetingsModel.setQueueFilter(.recorded)
         meetingsModel.updateFilters(MeetingBrowserFilters())
-        applySnapshot(meetingsModel.snapshot)
+        meetingsModel.refresh()
+    }
+
+    private func clearReviewNavigation() {
+        pendingReviewPath = nil
+        reviewDetailPath = nil
+        reviewNavigationID = nil
+        reviewSelectionStarted = false
+        reviewUnavailable = nil
+    }
+
+    private func failReviewNavigation() {
+        let unavailable = reviewUnavailable
+        clearReviewNavigation()
+        unavailable?()
     }
 
     private var featureIsVisible = false
@@ -276,8 +297,8 @@ final class MeetingManagementView: NSView {
         isHidden = !isVisible
         browserView.isHidden = !isVisible
         guard isVisible else {
-            pendingReviewPath = nil
-            reviewDetailPath = nil
+            clearReviewNavigation()
+            lastRenderedDetail = nil
             if featureIsVisible { meetingsModel.deactivate() }
             featureIsVisible = false
             restoredSelectionID = nil
@@ -849,17 +870,26 @@ final class MeetingManagementView: NSView {
     }
 
     func applySnapshot(_ snapshot: MeetingBrowserSnapshot?) {
-        if let path = pendingReviewPath,
-           let row = snapshot?.visibleRows.first(where: { $0.meetingRelativePath == path && !$0.isArchived }) {
+        if let path = pendingReviewPath, meetingsModel.loadState == .loaded {
+            guard let row = snapshot?.visibleRows.first(where: { $0.meetingRelativePath == path && !$0.isArchived }) else {
+                failReviewNavigation()
+                return
+            }
             pendingReviewPath = nil
             reviewDetailPath = path
+            let request = reviewNavigationID
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.featureIsVisible, self.reviewDetailPath == path,
-                      let index = self.rows.firstIndex(where: { $0.id == row.id && $0.meetingRelativePath == path }) else { return }
-                self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-                self.show(row: index)
-                self.selectPage(.actionItems)
-                self.onOpenSelection()
+                guard let self, self.featureIsVisible, self.reviewNavigationID == request else { return }
+                guard let index = self.rows.firstIndex(where: { $0.id == row.id && $0.meetingRelativePath == path }) else {
+                    self.failReviewNavigation()
+                    return
+                }
+                self.reviewSelectionStarted = true
+                _ = self.meetingsModel.select(meetingID: self.rows[index].id, selectedIDs: [self.rows[index].id])
+                if self.reviewNavigationID == request, let detail = self.meetingsModel.detail.detail,
+                   detail.row.meetingRelativePath == path {
+                    self.renderDetail(detail)
+                }
             }
         }
         if let sourcePath = pendingSearchSourcePath,
@@ -934,6 +964,13 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderBrowserLoadState(_ state: MeetingDetailLoadState) {
+        if reviewNavigationID != nil {
+            switch state {
+            case .failed, .unavailable: failReviewNavigation()
+            case .loaded: scheduleSnapshotRender()
+            default: break
+            }
+        }
         guard meetingsModel.snapshot == nil else { return }
         switch state {
         case .loading:
@@ -950,6 +987,12 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderLoadState(_ state: MeetingDetailLoadState) {
+        if reviewNavigationID != nil && reviewSelectionStarted {
+            switch state {
+            case .failed, .unavailable: failReviewNavigation()
+            default: break
+            }
+        }
         switch state {
         case .loading where meetingsModel.detail.isShowingStaleDetail:
             status.stringValue = "Refreshing this Meeting; the displayed detail is stale."
@@ -1017,8 +1060,11 @@ final class MeetingManagementView: NSView {
         let response = presentConfirmationAlert(alert)
         let decision: MeetingSelectionDecision = response == .alertFirstButtonReturn ? .save
             : response == .alertSecondButtonReturn ? .discard : .cancel
+        if decision == .cancel { clearReviewNavigation() }
         meetingsModel.resolvePendingSelection(decision) { [weak self] result in
             guard let self, case let .failure(error) = result else { return }
+            self.clearReviewNavigation()
+            if let detail = self.displayedDetail { self.renderDetail(detail) }
             self.resolveSaveFailure(error, pendingSelection: true)
         }
     }
@@ -1172,9 +1218,9 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderDetail(_ selected: MeetingBrowserDetail) {
-            let opensReview = reviewDetailPath == selected.row.meetingRelativePath
-            if reviewDetailPath != nil && !opensReview { return }
-            if opensReview { reviewDetailPath = nil }
+            let opensReview = reviewSelectionStarted && reviewDetailPath == selected.row.meetingRelativePath
+            if reviewNavigationID != nil && !opensReview { return }
+            if opensReview { clearReviewNavigation() }
             refreshModalText(from: selected)
             isApplyingFeatureState = true
             defer { isApplyingFeatureState = false }
@@ -1221,7 +1267,7 @@ final class MeetingManagementView: NSView {
                 timelineNavigation.jump = nil
                 closeTimeline()
             }
-            if opensReview { selectPage(.actionItems) }
+            if opensReview { selectPage(.actionItems); onOpenSelection() }
             summaryOverviewSection?.isHidden = false
             notesOverviewSection?.isHidden = false
             diagnosticsDisclosure.isHidden = false

@@ -44,7 +44,12 @@ final class ShellStateStoreTests: XCTestCase {
 
     func testExternalPathsInvalidateOnlyOwningFeature() {
         XCTAssertEqual(ShellChange.workspaceChanges(for: "Todos/todo.md"), [.tasks])
-        XCTAssertEqual(ShellChange.workspaceChanges(for: "Meetings/ready/meeting.md"), [])
+        XCTAssertEqual(ShellChange.workspaceChanges(for: "Meetings/ready/meeting.md"), [.tasks])
+        XCTAssertEqual(ShellChange.workspaceChanges(for: "Meetings/ready/action-items.md"), [.tasks])
+        XCTAssertEqual(ShellChange.workspaceChanges(for: "Meetings/ready/archive.json"), [.tasks])
+        XCTAssertEqual(ShellChange.workspaceChanges(for: "Meetings/ready"), [.tasks])
+        XCTAssertEqual(ShellChange.workspaceChanges(for: "Meetings"), [.tasks])
+        XCTAssertEqual(ShellChange.workspaceChanges(for: "Meetings-old/meeting.md"), [])
         XCTAssertEqual(ShellChange.workspaceChanges(for: "Todos-old/todo.md"), [])
     }
 

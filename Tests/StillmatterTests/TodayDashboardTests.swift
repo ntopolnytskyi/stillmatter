@@ -187,6 +187,40 @@ final class TodayDashboardTests: XCTestCase {
         XCTAssertThrowsError(try dashboard.load())
     }
 
+    func testTodayReportsInterruptedPublicationWithoutRecoveryWrites() throws {
+        enum Crash: Error { case injected }
+        let workspace = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let support = workspace.appendingPathComponent("support")
+        let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support)
+        let inbox = try TasksInbox(databaseURL: support.appendingPathComponent("operational.sqlite")).scoped(to: workspace)
+        let meeting = "Meetings/one/meeting.md"
+        try write("---\ntitle: One\ncapture_session_id: one\n---\n", to: meeting, in: workspace)
+        let extraction = MeetingSummaryExtraction(meeting: meeting, transcript: "Meetings/one/transcript.json", decisions: [],
+            myActionItems: [.init(id: "a", text: "Pending", citations: [])], otherActionItems: [], openQuestions: [])
+        try write(String(decoding: JSONEncoder().encode(extraction), as: UTF8.self), to: "Meetings/one/summary-extraction.json", in: workspace)
+        XCTAssertThrowsError(try MeetingArtifactStore(vault: vault, inbox: inbox, checkpoint: { if $0 == 1 { throw Crash.injected } }).load(meetingPath: meeting, meetingID: "one"))
+        let dashboard = TodayDashboard(workspaceRootURL: workspace, inbox: inbox)
+        let before = try Data(contentsOf: workspace.appendingPathComponent(meeting))
+        XCTAssertThrowsError(try dashboard.load())
+        XCTAssertEqual(try Data(contentsOf: workspace.appendingPathComponent(meeting)), before)
+        let service = MeetingManagementService(vault: vault, inbox: inbox)
+        let detail = try service.detail(for: "one")
+        XCTAssertEqual(try dashboard.load().inbox[1].items.first?.details, "1 awaiting approval")
+        let actions = try XCTUnwrap(detail.reviewItems.first).path
+        // After migration, an unadopted external checkbox has no review action yet.
+        let current = try String(contentsOf: workspace.appendingPathComponent(actions))
+        try write(current + "\n- [ ] Unadopted external task\n", to: actions, in: workspace)
+        XCTAssertEqual(try dashboard.load().inbox[1].items.first?.details, "1 awaiting approval")
+        // A cross-file duplicate must fail consistently with explicit Meeting reads.
+        let notes = "Meetings/one/my-notes.md"
+        let item = try XCTUnwrap(detail.reviewItems.first)
+        try write("<!-- stillmatter-artifact:notes:v1 -->\n" + item.rawLine.replacingOccurrences(of: item.id, with: UUID().uuidString.lowercased()), to: notes, in: workspace)
+        XCTAssertEqual(try dashboard.load().inbox[1].items.first?.details, "2 awaiting approval")
+        try write("<!-- stillmatter-artifact:notes:v1 -->\n" + (try XCTUnwrap(detail.reviewItems.first)).rawLine, to: notes, in: workspace)
+        XCTAssertThrowsError(try dashboard.load())
+    }
+
     private func write(_ contents: String, to relativePath: String, in workspace: URL) throws {
         let url = workspace.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

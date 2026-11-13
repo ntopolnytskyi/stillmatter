@@ -53,22 +53,36 @@ final class MeetingArtifactStore {
 
     /// Today must not adopt files, replay transactions or update review state just by viewing them.
     func pendingReviewCount(meetingPath: String, meetingID: String) throws -> Int {
-        let state = try manifest(at: sibling(meetingPath, "meeting-artifacts.json"))
-        let paths = try vault.markdownPaths(relativeTo: (meetingPath as NSString).deletingLastPathComponent)
-        let identified = try paths.filter { path in
-            guard (path as NSString).deletingLastPathComponent == (meetingPath as NSString).deletingLastPathComponent else { return false }
-            return hasArtifactMarker("actions", in: try decode(vault.readMarkdown(relativePath: path).data, path: path))
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        return try MeetingArtifactTransaction(vault: vault, identity: meetingID).readPublished {
+            try MeetingArtifactTransaction(vault: vault, identity: "workspace-tags").requirePublished()
+            return try publishedPendingReviewCount(meetingPath: meetingPath, meetingID: meetingID)
         }
-        guard identified.count <= 1 else { throw malformed(meetingPath, "Multiple files claim the Action Items identity.") }
-        let path = identified.first ?? state?.files["actions"].map { sibling(meetingPath, ($0 as NSString).lastPathComponent) }
-            ?? sibling(meetingPath, "action-items.md")
+    }
+
+    private func publishedPendingReviewCount(meetingPath: String, meetingID: String) throws -> Int {
+        let state = try manifest(at: sibling(meetingPath, "meeting-artifacts.json"))
+        let path = try artifactPath("actions", meetingPath: meetingPath, state: state)
         if let source = try optional(path) {
             let text = try decode(source.data, path: path)
             _ = try validateItems(text, path: path)
-            return TodoItemParser().parse(markdown: text, relativePath: path).filter {
-                // External checkboxes without metadata will be adopted as pending on explicit Meeting open.
+            var notePendingCount = 0
+            if let state {
+                guard state.meetingID == meetingID else { throw malformed(meetingPath, "The artifact manifest identity changed.") }
+                var contents = ["actions": text], resolvedPaths = ["actions": path]
+                for kind in ["notes", "decisions", "open"] {
+                    let otherPath = try artifactPath(kind, meetingPath: meetingPath, state: state)
+                    contents[kind] = try decode(vault.readMarkdown(relativePath: otherPath).data, path: otherPath)
+                    resolvedPaths[kind] = otherPath
+                }
+                try validateCanonicalItems(contents, paths: resolvedPaths, meetingPath: meetingPath)
+                notePendingCount = TodoItemParser().parse(markdown: contents["notes"] ?? "", relativePath: resolvedPaths["notes"] ?? "").filter {
+                    TodoItemParser.metadata(in: $0.rawText)?.review == "pending"
+                }.count
+            }
+            return notePendingCount + TodoItemParser().parse(markdown: text, relativePath: path).filter {
                 TodoItemParser.metadata(in: $0.rawText)?.review == "pending"
-                    || TodoItemParser.metadata(in: $0.rawText) == nil
+                    || (state == nil && TodoItemParser.metadata(in: $0.rawText) == nil)
             }.count
         }
         guard state == nil else { throw malformed(path, "The canonical Action Items file is missing.") }
@@ -81,6 +95,19 @@ final class MeetingArtifactStore {
             let review = try inbox?.proposalReviewState(id: "meeting-action:\(meetingID):\($0.id)")
             return review == nil || review == .pending
         }.count
+    }
+
+    private func artifactPath(_ kind: String, meetingPath: String, state: Manifest?, paths: [String]? = nil) throws -> String {
+        let directory = (meetingPath as NSString).deletingLastPathComponent
+        let candidates = try paths ?? vault.markdownPaths(relativeTo: directory)
+        let identified = try candidates.filter { path in
+            guard (path as NSString).deletingLastPathComponent == directory else { return false }
+            return hasArtifactMarker(kind, in: try decode(vault.readMarkdown(relativePath: path).data, path: path))
+        }
+        let name = try required(Self.names[kind], path: meetingPath, field: "artifact kind")
+        guard identified.count <= 1 else { throw malformed(name, "Multiple files claim this artifact identity. Keep one canonical file.") }
+        return identified.first ?? state?.files[kind].map { sibling(meetingPath, ($0 as NSString).lastPathComponent) }
+            ?? sibling(meetingPath, name)
     }
 
     /// Compatibility while the existing recorder/producer still owns legacy files.
@@ -145,14 +172,8 @@ final class MeetingArtifactStore {
         var contents: [String: String] = [:]
         var versions: [String: WorkspaceFileVersion] = [:]
         let paths = try vault.markdownPaths(relativeTo: (meetingPath as NSString).deletingLastPathComponent)
-        for (kind, name) in Self.names {
-            let identified = try paths.filter { path in
-                guard (path as NSString).deletingLastPathComponent == (meetingPath as NSString).deletingLastPathComponent else { return false }
-                return hasArtifactMarker(kind, in: try decode(vault.readMarkdown(relativePath: path).data, path: path))
-            }
-            guard identified.count <= 1 else { throw malformed(name, "Multiple files claim this artifact identity. Keep one canonical file.") }
-            let defaultPath = sibling(meetingPath, name)
-            let path = identified.first ?? (state.files[kind].map { sibling(meetingPath, ($0 as NSString).lastPathComponent) }) ?? defaultPath
+        for kind in Self.names.keys {
+            let path = try artifactPath(kind, meetingPath: meetingPath, state: state, paths: paths)
             guard let source = try optional(path) else { throw malformed(path, "The canonical file is missing. Restore it or its artifact identity, then Reload Latest.") }
             let full = try decode(source.data, path: path)
             let body = try removingMarker(kind, from: full)

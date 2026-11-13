@@ -16,7 +16,10 @@ public enum ShellChange: Hashable {
     /// Filesystem notifications remain domain-scoped, including directory events.
     public static func workspaceChanges(for relativePath: String) -> Set<ShellChange> {
         if relativePath == "Todos" || relativePath.hasPrefix("Todos/") { return [.tasks] }
-        return [] // Meetings have an independent revisioned read-model monitor.
+        // Today reminders and Todo references both project canonical Meeting state.
+        // The Meeting browser retains its independent revisioned monitor.
+        if relativePath == "Meetings" || relativePath.hasPrefix("Meetings/") { return [.tasks] }
+        return []
     }
 }
 

@@ -1026,7 +1026,12 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         }
         stateStore.state.select(.meetings)
         render()
-        meetingManagementView.focusActionItems(path)
+        meetingManagementView.focusActionItems(path) { [weak self] in
+            guard let self, self.currentTodayOwner(owner) else { return }
+            self.stateStore.state.select(.today)
+            self.render()
+            self.todayWorkbenchView.showUnavailableInboxItem(id: item.id)
+        }
     }
 
     private func openTodayDecision(_ item: InboxItem) {

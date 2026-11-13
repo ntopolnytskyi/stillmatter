@@ -154,6 +154,13 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "today-inbox-meeting-review:")).count, 2)
         XCTAssertTrue(first.label.contains("2 awaiting approval"))
         XCTAssertTrue(secondRow.label.contains("1 awaiting approval"))
+        let window = app.windows["Stillmatter"]
+        let original = window.frame
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -4, dy: -4))
+        corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: 880 - original.width, dy: 680 - original.height)))
+        expectation(for: NSPredicate { _, _ in abs(window.frame.width - 880) < 3 }, evaluatedWith: window)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(first.isHittable)
         XCTAssertFalse(app.buttons["proposal-accept-meeting-action:ui-fixture:action-fixture"].exists)
         let before = try Data(contentsOf: meetingURL)
         first.click()

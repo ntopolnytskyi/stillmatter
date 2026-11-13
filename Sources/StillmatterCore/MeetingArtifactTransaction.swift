@@ -18,6 +18,24 @@ final class MeetingArtifactTransaction {
 
     func recover() throws { try coordinated { try recoverPlan() } }
 
+    func requirePublished() throws {
+        guard !FileManager.default.fileExists(atPath: journal.path) else {
+            throw MeetingManagementError.malformed("Meeting changes await recovery. Open the Meeting to recover its saved work, then refresh Today.")
+        }
+    }
+
+    /// A projection may inspect committed files, but must never replay a write plan.
+    func readPublished<Value>(_ read: () throws -> Value) throws -> Value {
+        var coordinationError: NSError?
+        var outcome: Result<Value, Error>?
+        NSFileCoordinator().coordinate(readingItemAt: vault.rootURL, options: .withoutChanges, error: &coordinationError) { _ in
+            outcome = Result { try requirePublished(); return try read() }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let outcome else { throw MeetingManagementError.unavailable }
+        return try outcome.get()
+    }
+
     private func recoverPlan() throws {
         guard FileManager.default.fileExists(atPath: journal.path) else { return }
         let plan = try JSONDecoder().decode(Plan.self, from: Data(contentsOf: journal))
