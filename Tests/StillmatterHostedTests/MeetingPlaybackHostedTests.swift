@@ -147,7 +147,10 @@ final class MeetingPlaybackHostedTests: XCTestCase {
             system: nil, reason: .recovery)
         try Data("---\ntitle: Markers\ncapture_session_id: markers\nrecording_bundle: \(bundle.bundleFilePath)\n---\n# Markers\n".utf8)
             .write(to: folder.appendingPathComponent("meeting.md"))
-        let segments = [TranscriptSegment(id: "one", startSeconds: 0.25, endSeconds: 0.5, text: "First", language: .english, track: .microphone, speaker: "Me"),
+        let segments = (0..<205).map { index in
+            TranscriptSegment(id: "prefix-\(index)", startSeconds: Double(index) / 250, endSeconds: Double(index) / 250 + 0.001,
+                text: "Earlier phrase \(index)", language: .english, track: .microphone, speaker: "Me")
+        } + [TranscriptSegment(id: "one", startSeconds: 0.25, endSeconds: 0.5, text: "First", language: .english, track: .microphone, speaker: "Me"),
                         TranscriptSegment(id: "two", startSeconds: 1.25, endSeconds: 1.5, text: "Second", language: .english, track: .microphone, speaker: "Me"),
                         TranscriptSegment(id: "outside", startSeconds: 50, endSeconds: 51, text: "Unavailable", language: .english, track: .microphone, speaker: "Me")]
         let transcript = TranscriptDocument(schemaVersion: 1, captureSessionID: "markers", meetingRelativePath: meeting,
@@ -158,7 +161,7 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         try encoder.encode(transcript).write(to: folder.appendingPathComponent("transcript.json"))
         let valid = MeetingOutcomeCitation(segmentID: "one", startSeconds: 0.25, endSeconds: 0.5)
         let invalid = MeetingOutcomeCitation(segmentID: "unknown", startSeconds: 0.25, endSeconds: 0.5)
-        let outcome = MeetingOutcome(id: "decision", text: "Decide", citations: [valid, invalid])
+        let outcome = MeetingOutcome(id: "decision", text: "Decide", citations: [.init(segmentID: "two", startSeconds: 1.25, endSeconds: 1.5), invalid])
         let extraction = MeetingSummaryExtraction(meeting: meeting, transcript: "Meetings/markers/transcript.json",
             decisions: [outcome], myActionItems: [MeetingOutcome(id: "mine", text: "Do", citations: [valid])],
             otherActionItems: [MeetingOutcome(id: "other", text: "Review", citations: [valid])],
@@ -167,7 +170,7 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: root.appendingPathComponent("support"))
         let service = MeetingManagementService(vault: vault)
         let canonical = try service.detail(for: "markers")
-        XCTAssertEqual(canonical.transcript.count, 3)
+        XCTAssertEqual(canonical.transcript.count, 208)
         XCTAssertEqual(canonical.playback.capability, .microphoneOnly, canonical.playback.message)
         let readModel = MeetingReadModel(workspaceID: UUID().uuidString) { MeetingManagementReadSource(serviceProvider: { service }) }
         let controller = MeetingAudioPlaybackController()
@@ -184,7 +187,7 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         XCTAssertEqual(controller.state.track, .both, "Playback includes every available track without a selection control")
         XCTAssertTrue(view.playbackSpeed.isEnabled)
         XCTAssertEqual(Set(view.waveform.markerLabels.map(\.symbol)), ["S", "D", "A", "Q"])
-        XCTAssertEqual(view.waveform.markerLabels.count, 6, "Invalid citations and outside-recording speech do not become markers")
+        XCTAssertEqual(view.waveform.markerLabels.count, 211, "Invalid citations and outside-recording speech do not become markers")
         view.openTimeline()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -199,8 +202,8 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         XCTAssertEqual(controller.state.position, 0.25)
         XCTAssertTrue(view.markerPicker.isEnabled)
         let markers = try XCTUnwrap(view.markerPicker.menu).items.dropFirst()
-        XCTAssertEqual(markers.count, 6)
-        for item in markers {
+        XCTAssertEqual(markers.count, 211)
+        for item in markers.filter({ $0.title.hasSuffix("one") || $0.title.hasSuffix("two") }) {
             view.selectPlaybackMarker(item)
             XCTAssertEqual(view.timelineNavigation.jump?.segmentID, item.title.hasSuffix("two") ? "two" : "one")
             XCTAssertEqual(controller.state.position, item.title.hasSuffix("two") ? 1.25 : 0.25, accuracy: 0.001)
@@ -208,6 +211,26 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         }
         controller.play()
         view.selectPlaybackMarker(try XCTUnwrap(markers.first))
+        XCTAssertTrue(controller.state.isPlaying)
+        controller.pause()
+        func find<T: NSView>(_ id: String, in parent: NSView) throws -> T {
+            if parent.accessibilityIdentifier() == id, let result = parent as? T { return result }
+            for child in parent.subviews { if let result: T = try? find(id, in: child) { return result } }
+            throw NSError(domain: "Missing marker control", code: 1)
+        }
+        let decisionID = try XCTUnwrap(MeetingOutcomeDocument.entries(in: canonical.summary!.decisions, defaultKind: .decision).first?.id)
+        let source: NSButton = try find("meeting-outcome-source-" + decisionID + "-0", in: view)
+        source.performClick(nil)
+        XCTAssertEqual(view.selectedID, "markers")
+        XCTAssertEqual(view.meetingsModel.detail.page, .transcript)
+        XCTAssertEqual(view.timelineNavigation.jump?.segmentID, "two")
+        XCTAssertEqual(controller.state.position, 1.25, accuracy: 0.001)
+        XCTAssertFalse(controller.state.isPlaying)
+        let selected: NSTextField = try find("transcript-text-two", in: view)
+        XCTAssertTrue(selected.accessibilityHelp()?.contains("Selected source phrase") == true)
+        XCTAssertEqual(selected.stringValue, "Second")
+        controller.play(); source.performClick(nil)
+        XCTAssertEqual(controller.state.position, 1.25, accuracy: 0.001)
         XCTAssertTrue(controller.state.isPlaying)
         controller.pause()
         window.displayIfNeeded()

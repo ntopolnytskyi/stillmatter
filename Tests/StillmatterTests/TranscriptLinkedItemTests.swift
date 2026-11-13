@@ -53,6 +53,8 @@ final class TranscriptLinkedItemTests: XCTestCase {
         let path = "Meetings/linked/meeting.md"
         let draft = TranscriptLinkedItem(kind: .action, text: "Send edited report", source: source)
         let saved = try service.createTranscriptItem(draft, for: path, expectedVersion: detail.summaryVersion!)
+        XCTAssertThrowsError(try service.createTranscriptItem(draft, for: path, expectedVersion: saved.summaryVersion!))
+        XCTAssertEqual(try service.detail(for: path).reviewItems.count, 1)
         let action = try XCTUnwrap(saved.reviewItems.first)
         XCTAssertEqual(action.id, draft.id)
         XCTAssertEqual(action.text, "Send edited report")

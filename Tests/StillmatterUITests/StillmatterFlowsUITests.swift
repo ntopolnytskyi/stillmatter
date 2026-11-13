@@ -143,14 +143,14 @@ final class StillmatterFlowsUITests: XCTestCase {
         waitForExpectations(timeout: 5)
         XCTAssertEqual(String(describing: try XCTUnwrap(slider.value)), beforeArrow)
         XCTAssertTrue(app.buttons["Play Meeting audio"].exists, "Seeking must preserve paused playback")
-        let markers = app.popUpButtons["meeting-playback-markers"]
+        let markers = app.menuButtons["meeting-playback-markers"]
         XCTAssertTrue(markers.isEnabled)
         markers.click()
         app.typeKey("q", modifierFlags: [])
         app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Play Meeting audio"].exists)
-        let actions = app.popUpButtons["transcript-actions-early"]
+        let actions = app.menuButtons["transcript-actions-early"]
         actions.click()
         app.typeKey("j", modifierFlags: [])
         app.typeKey(.return, modifierFlags: [])

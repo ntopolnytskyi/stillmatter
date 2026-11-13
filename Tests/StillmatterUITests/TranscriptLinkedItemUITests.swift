@@ -13,7 +13,7 @@ extension StillmatterFlowsUITests {
         let phrase = app.staticTexts["transcript-text-s119"]
         XCTAssertTrue(phrase.waitForExistence(timeout: 5), app.debugDescription)
         func action(_ title: String) {
-            let menu = app.popUpButtons["transcript-actions-s119"]
+            let menu = app.menuButtons["transcript-actions-s119"]
             XCTAssertTrue(menu.waitForExistence(timeout: 5)); menu.click()
             app.menuItems[title].click()
         }

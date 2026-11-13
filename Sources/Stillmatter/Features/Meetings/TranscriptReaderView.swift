@@ -450,6 +450,10 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         }
         label.attributedStringValue = content
     }
+    private func hasRetainedSource(for phrase: TranscriptReaderPhrase) -> Bool {
+        state.phrases.contains { $0.kind == .transcript && $0.id == phrase.sourceSegmentID &&
+            $0.seconds == phrase.seconds && $0.seekSeconds == phrase.seekSeconds }
+    }
     private func contextMenu(_ phrase: TranscriptReaderPhrase) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -457,7 +461,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
             let item = NSMenuItem(title: title, action: #selector(copyValue(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = value; menu.addItem(item)
         }
-        let sourceExists = state.phrases.contains { $0.kind == .transcript && $0.id == phrase.sourceSegmentID && $0.seconds == phrase.seconds && $0.seekSeconds == phrase.seekSeconds }
+        let sourceExists = hasRetainedSource(for: phrase)
         for kind in TranscriptLinkedItem.Kind.allCases {
             let item = NSMenuItem(title: "Add " + kind.rawValue + "…", action: #selector(createLinkedItem(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = (phrase, kind)
@@ -472,12 +476,12 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
     }
     @objc func createLinkedItem(_ sender: NSMenuItem) {
         guard let (phrase, kind) = sender.representedObject as? (TranscriptReaderPhrase, TranscriptLinkedItem.Kind),
-              canCreate, state.phrases.contains(where: { $0.kind == .transcript && $0.id == phrase.sourceSegmentID && $0.seconds == phrase.seconds && $0.seekSeconds == phrase.seekSeconds }) else { return }
+              canCreate, hasRetainedSource(for: phrase) else { return }
         create(phrase, kind)
     }
     @objc func jumpToMoment(_ sender: NSMenuItem) {
         guard let phrase = sender.representedObject as? TranscriptReaderPhrase, hasAudio, phrase.seekSeconds != nil,
-              state.phrases.contains(where: { $0.kind == .transcript && $0.id == phrase.sourceSegmentID && $0.seconds == phrase.seconds && $0.seekSeconds == phrase.seekSeconds }) else { return }
+              hasRetainedSource(for: phrase) else { return }
         state.reveal(id: phrase.sourceSegmentID); search.stringValue = state.query; render(); scrollSelection(); seek(phrase)
     }
     @objc func copyValue(_ sender: NSMenuItem) {
