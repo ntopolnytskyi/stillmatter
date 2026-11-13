@@ -3,7 +3,7 @@ import Foundation
 /// Reads and patches canonical checkboxes, never their Todo reference labels.
 /// Every write is version checked and published through the recoverable file plan.
 public final class ItemTagStore {
-    private struct Record { let id: String; let path: String; let line: String }
+    private struct Record { let id: String; let path: String; let line: String; let lineNumber: Int }
     private static let catalogPath = "Tags/tags.json"
     private let vault: WorkspaceVault
     private let transaction: MeetingArtifactTransaction
@@ -20,7 +20,7 @@ public final class ItemTagStore {
     public func selection(itemID: String) throws -> ItemTagSelection {
         try transaction.recover()
         guard let record = try records().first(where: { $0.id == itemID }) else { throw TodoItemMutationError.itemNotFound(itemID) }
-        return ItemTagSelection(itemID: itemID, tags: ItemTags.read(record.line), catalog: try tags())
+        return ItemTagSelection(itemID: itemID, tags: ItemTags.read(record.line), catalog: try tags(), isEditable: try archiveCheck(for: record.path)?.archived != true)
     }
     public func applyAIAdditions(_ additions: [AIItemTagAddition]) throws {
         try transaction.recover()
@@ -85,23 +85,35 @@ public final class ItemTagStore {
         try ItemTags.validate(tags)
         return (tags, source.version)
     }
+    private func archiveCheck(for path: String) throws -> (dependency: WorkspaceMarkdownReplacement, archived: Bool)? {
+        guard path.hasPrefix("Meetings/") else { return nil }
+        let archive = (path as NSString).deletingLastPathComponent + "/archive.json"
+        let version = try vault.versionOfMarkdown(relativePath: archive)
+        let data = try version.map { _ in try vault.readMarkdown(relativePath: archive).data }
+        var archived = false
+        if let data {
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let value = object["archived"] as? Bool else {
+                throw MeetingManagementError.malformed(archive + ": Restore a valid archive flag before editing tags.")
+            }
+            archived = value
+        }
+        return (.init(relativePath: archive, data: data ?? Data(), expectedVersion: version), archived)
+    }
     private func readOnlyChecks(for paths: Set<String>) throws -> [WorkspaceMarkdownReplacement] {
-        try paths.filter { $0.hasPrefix("Meetings/") }.sorted().map { path in
-            let archive = (path as NSString).deletingLastPathComponent + "/archive.json"
-            let version = try vault.versionOfMarkdown(relativePath: archive)
-            let data = try version.map { _ in try vault.readMarkdown(relativePath: archive).data }
-            if let data, let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], object["archived"] as? Bool == true {
+        var dependencies: [String: WorkspaceMarkdownReplacement] = [:]
+        for path in paths.sorted() {
+            guard let check = try archiveCheck(for: path) else { continue }
+            guard !check.archived else {
                 throw MeetingManagementError.retryRejected("Tags in archived Meetings are read-only. This global change was not saved.")
             }
-            return WorkspaceMarkdownReplacement(relativePath: archive, data: data ?? Data(), expectedVersion: version)
-        }.reduce(into: []) { result, entry in
-            if !result.contains(where: { $0.relativePath == entry.relativePath }) { result.append(entry) }
+            dependencies[check.dependency.relativePath] = check.dependency
         }
+        return dependencies.values.sorted { $0.relativePath < $1.relativePath }
     }
     private func records() throws -> [Record] {
         var result: [Record] = []
         var seen: Set<String> = []
-        for path in try vault.markdownPaths().sorted() {
+        for path in try vault.textPaths().filter({ ($0 as NSString).pathExtension.lowercased() == "md" }).sorted() {
             let source = try vault.readMarkdown(relativePath: path)
             var fence: Character?
             for (index, line) in String(decoding: source.data, as: UTF8.self).components(separatedBy: "\n").enumerated() {
@@ -115,7 +127,7 @@ public final class ItemTagStore {
                 if line.contains("<!-- sm-item:"), metadata == nil { throw TodoItemMutationError.invalidCanonicalMetadata(path) }
                 let id = metadata?.id.lowercased() ?? "\(path):\(index + 1)"
                 guard seen.insert(id).inserted else { throw TodoItemMutationError.duplicateIdentity(id) }
-                result.append(Record(id: id, path: path, line: line))
+                result.append(Record(id: id, path: path, line: line, lineNumber: index + 1))
             }
         }
         return result
@@ -127,7 +139,8 @@ public final class ItemTagStore {
             for group in Dictionary(grouping: changes.filter { $0.0.path == path }, by: { $0.0.id }).values {
                 let record = group[0].0
                 let tags = group.flatMap { $0.1 }
-                guard let index = lines.firstIndex(of: record.line) else { throw TodoItemMutationError.staleCanonicalItem(record.id) }
+                let index = record.lineNumber - 1
+                guard lines.indices.contains(index), lines[index] == record.line else { throw TodoItemMutationError.staleCanonicalItem(record.id) }
                 lines[index] = ItemTags.replacing(in: lines[index], with: (additive ? ItemTags.read(lines[index]) : []) + tags)
             }
             let data = Data(lines.joined(separator: "\n").utf8)

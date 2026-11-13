@@ -37,6 +37,12 @@ final class ItemTagEditorHostedTests: XCTestCase {
         popup.selectItem(withTitle: "team"); popup.sendAction(popup.action, to: popup.target)
         try control("tag-add", NSButton.self).performClick(nil)
         XCTAssertEqual(try store.selection(itemID: item.id).tags, ["work", "team"])
+        popup.selectItem(withTitle: "work")
+        name.stringValue = "bad tag"
+        try control("tag-rename", NSButton.self).performClick(nil)
+        XCTAssertEqual(popup.titleOfSelectedItem, "work")
+        XCTAssertEqual(name.stringValue, "bad tag")
+        popup.selectItem(withTitle: "team")
         name.stringValue = "group"
         try control("tag-rename", NSButton.self).performClick(nil)
         XCTAssertEqual(Set(try store.selection(itemID: item.id).tags), ["work", "group"])
@@ -65,7 +71,7 @@ final class ItemTagEditorHostedTests: XCTestCase {
         XCTAssertNil(try? find("tag-remove-ai-gen", in: editor, NSButton.self))
         try XCTUnwrap(complete)(.success(.init(itemID: "id", tags: ["ai-gen", "need-approve"], catalog: ["work"])))
         XCTAssertTrue(try find("tag-add", in: editor, NSButton.self).isEnabled)
-        let readOnly = ItemTagEditorView(selection: selection, editable: false) { _, _ in XCTFail("Read-only mutation") }
+        let readOnly = ItemTagEditorView(selection: .init(itemID: "id", tags: selection.tags, catalog: selection.catalog, isEditable: false), editable: true) { _, _ in XCTFail("Read-only mutation") }
         XCTAssertFalse(try find("tag-create", in: readOnly, NSButton.self).isEnabled)
         XCTAssertFalse(try find("tag-remove-work", in: readOnly, NSButton.self).isEnabled)
         let empty = ItemTagEditorView(selection: .init(itemID: "id", tags: [], catalog: []), editable: true) { _, _ in XCTFail("Empty selection") }

@@ -34,10 +34,10 @@ public enum ItemTags {
         }
         return result
     }
-    static func validate(_ tags: [String], ordinaryOnly: Bool = true) throws {
+    static func validate(_ tags: [String]) throws {
         for tag in tags {
             guard tag.range(of: #"^[\p{L}\p{N}][\p{L}\p{N}_-]*$"#, options: .regularExpression) != nil,
-                  !ordinaryOnly || !reserved.contains(tag) else {
+                  !reserved.contains(tag) else {
                 throw MeetingManagementError.malformed("Use a tag name containing letters, numbers, underscores or hyphens. ai-gen and need-approve are managed by the app.")
             }
         }
@@ -86,7 +86,8 @@ public struct ItemTagSelection: Equatable {
     public let itemID: String
     public let tags: [String]
     public let catalog: [String]
-    public init(itemID: String, tags: [String], catalog: [String]) {
-        self.itemID = itemID; self.tags = tags; self.catalog = catalog
+    public let isEditable: Bool
+    public init(itemID: String, tags: [String], catalog: [String], isEditable: Bool = true) {
+        self.itemID = itemID; self.tags = tags; self.catalog = catalog; self.isEditable = isEditable
     }
 }

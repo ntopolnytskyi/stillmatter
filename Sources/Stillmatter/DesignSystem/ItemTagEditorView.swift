@@ -34,7 +34,7 @@ final class ItemTagEditorView: NSStackView {
     private var actions: [NSButton] = []
 
     init(selection: ItemTagSelection, editable: Bool, mutate: @escaping Mutation) {
-        self.selection = selection; self.editable = editable; self.mutate = mutate
+        self.selection = selection; self.editable = editable && selection.isEditable; self.mutate = mutate
         super.init(frame: .zero)
         orientation = .vertical; alignment = .leading; spacing = GraphiteFocusPresentation.Space.compact
         name.placeholderString = "Tag name, without #"; name.setAccessibilityLabel("Tag name")
@@ -113,13 +113,14 @@ final class ItemTagEditorView: NSStackView {
         let focused = window?.firstResponder
         let field = (focused as? NSTextView)?.delegate as? NSView ?? focused as? NSView
         var preferred = catalog.titleOfSelectedItem
-        if case let .rename(_, new) = mutation { preferred = new }
         busy = true; updateAvailability()
         mutate(mutation) { [weak self] result in
             guard let self else { return }
             self.busy = false
             switch result {
-            case let .success(updated): self.selection = updated; self.feedback.stringValue = "Tags saved."
+            case let .success(updated):
+                self.selection = updated; self.feedback.stringValue = "Tags saved."
+                if case let .rename(_, new) = mutation { preferred = new }
             case let .failure(error): self.feedback.stringValue = "Tags not saved. Your input is preserved. " + error.localizedDescription
             }
             self.render(preferredTag: preferred)
@@ -133,7 +134,8 @@ final class ItemTagEditorView: NSStackView {
         let editor = ItemTagEditorView(selection: selection, editable: true, mutate: mutate)
         // graphite-focus-native-exception: native alert accessory needs an explicit form measure.
         editor.frame = NSRect(x: 0, y: 0, width: 420, height: 420)
-        let alert = NSAlert(); alert.messageText = "Edit tags"; alert.informativeText = "Rename and delete apply across the workspace."
+        let alert = NSAlert(); alert.messageText = selection.isEditable ? "Edit tags" : "Tags — read-only"
+        alert.informativeText = selection.isEditable ? "Rename and delete apply across the workspace." : "Archived Meeting tags cannot be changed."
         alert.addButton(withTitle: "Done"); alert.accessoryView = editor
         let sourceID = source.accessibilityIdentifier()
         alert.beginSheetModal(for: window) { _ in

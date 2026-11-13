@@ -104,7 +104,7 @@ public final class WorkspaceVault {
         let prefix = workspaceRootURL.path + "/"
         return try enumerator.compactMap { value -> String? in
             guard let url = value as? URL, ["md", "json", "vtt", "txt"].contains(url.pathExtension.lowercased()),
-                  !url.path.hasPrefix(appSupportRootURL.path + "/"),
+                  !url.standardizedFileURL.resolvingSymlinksInPath().path.hasPrefix(appSupportRootURL.resolvingSymlinksInPath().path + "/"),
                   try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { return nil }
             return String(url.standardizedFileURL.path.dropFirst(prefix.count))
         }

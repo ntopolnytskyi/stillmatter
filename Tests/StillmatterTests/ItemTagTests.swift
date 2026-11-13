@@ -151,6 +151,8 @@ extension ItemTagTests {
         XCTAssertThrowsError(try store.mutate(.rename("missing", to: "valid")))
         _ = try MeetingNoteTodoBridge(vault: vault).saveNotes("- [ ] Archived #team", at: "Meetings/test/my-notes.md", expectedNotesVersion: nil)
         _ = try vault.writeMarkdown(Data("{\"archived\":true}".utf8), relativePath: "Meetings/test/archive.json", expectedVersion: nil)
+        let archived = try XCTUnwrap(TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems().first { $0.title.hasPrefix("Archived") })
+        XCTAssertFalse(try store.selection(itemID: archived.id).isEditable)
         XCTAssertThrowsError(try store.mutate(.delete("team")))
         let standalone = try XCTUnwrap(TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems().first { $0.title.hasPrefix("Standalone") })
         XCTAssertEqual(try store.selection(itemID: standalone.id).tags, ["team"])
@@ -223,5 +225,21 @@ extension ItemTagTests {
             XCTAssertThrowsError(try artifacts.publishGenerated(summary: Data("Invalid".utf8), extraction: invalid, extractionData: JSONEncoder().encode(invalid), base: base, meetingPath: meeting, meetingID: "test", expectedExtraction: vault.versionOfMarkdown(relativePath: extractionPath)))
             XCTAssertEqual(try vault.readMarkdown(relativePath: "Meetings/test/summary.md").data, before)
         }
+    }
+}
+
+
+extension ItemTagTests {
+    func testIdenticalStandaloneRowsEditOnlySelectedCanonicalLine() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("tags-identical-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"), appSupportRootURL: root.appendingPathComponent("support"))
+        _ = try vault.writeMarkdown(Data("# Todos\n\n## Queue\n- [ ] Same #work\n- [ ] Same #work\n".utf8), relativePath: "Todos/todo.md", expectedVersion: nil)
+        let items = try TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems()
+        XCTAssertEqual(items.count, 2)
+        try ItemTagStore(vault: vault).mutate(.set(itemID: items[1].id, expected: ["work"], tags: ["team"]))
+        let final = try TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems()
+        XCTAssertEqual(final[0].tags, ["work"])
+        XCTAssertEqual(final[1].tags, ["team"])
     }
 }
