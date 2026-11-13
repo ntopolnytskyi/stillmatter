@@ -3,7 +3,7 @@ import XCTest
 
 extension StillmatterFlowsUITests {
     func testMeetingActionApprovalOwnerEditingBatchesAndRelaunch() throws {
-        try seedMeeting(transcript: true, notes: "- [ ] Note task", myActionItem: "My generated task", otherActionItem: "Other task")
+        try seedMeeting(transcript: true, notes: "- [ ] Note task", myActionItem: "My generated task", otherActionItem: "Other task", actionCitation: true)
         openFixtureMeeting(); app.radioButtons["Action Items"].click()
         let mineBatch = app.buttons["meeting-actions-accept-mine"]
         XCTAssertTrue(mineBatch.waitForExistence(timeout: 10))
@@ -21,6 +21,13 @@ extension StillmatterFlowsUITests {
         let mine = try itemID("action-fixture")
         XCTAssertFalse(app.buttons["meeting-item-accept-" + unknown].isEnabled)
         XCTAssertFalse(app.buttons["meeting-actions-accept-others"].isEnabled)
+        let window = app.windows["Stillmatter"]
+        let original = window.frame
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -4, dy: -4))
+        corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: 880 - original.width, dy: 680 - original.height)))
+        expectation(for: NSPredicate { _, _ in abs(window.frame.width - 880) < 3 }, evaluatedWith: window)
+        waitForExpectations(timeout: 10)
+
         let owner = app.textFields["meeting-item-owner-" + unknown]
         owner.click(); owner.typeText("Alice")
         let due = app.textFields["meeting-item-due-" + unknown]
@@ -57,5 +64,9 @@ extension StillmatterFlowsUITests {
         let todo = try String(contentsOf: todoURL, encoding: .utf8)
         XCTAssertEqual(todo.components(separatedBy: "[[item:" + mine).count - 1, 1)
         XCTAssertFalse(todo.contains(unknown))
+        let source = app.buttons["meeting-outcome-source-" + mine + "-0"]
+        XCTAssertTrue(source.waitForExistence(timeout: 5)); source.click()
+        XCTAssertEqual(app.radioButtons["Transcript"].value as? Int, 1)
+        XCTAssertTrue(app.buttons["transcript-time-s0"].waitForExistence(timeout: 5))
     }
 }

@@ -21,6 +21,8 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
     private var busy = false
     private var editable = false
     private var feedback = ""
+    private var preferredFocusID: String?
+    private var reviewFocusIndex: Int?
     private var review: (([MeetingReviewItem], Bool, @escaping (Result<Void, Error>) -> Void) -> Void)?
     private var save: ((MeetingReviewItem, Draft, @escaping (Result<Void, Error>) -> Void) -> Void)?
     private var sources: ((MeetingReviewItem, NSStackView) -> Void)?
@@ -35,7 +37,7 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
                    review: @escaping ([MeetingReviewItem], Bool, @escaping (Result<Void, Error>) -> Void) -> Void,
                    save: @escaping (MeetingReviewItem, Draft, @escaping (Result<Void, Error>) -> Void) -> Void,
                    sources: @escaping (MeetingReviewItem, NSStackView) -> Void) {
-        if self.meetingID != meetingID { drafts = [:]; draftBases = [:]; feedback = ""; busy = false }
+        if self.meetingID != meetingID { drafts = [:]; draftBases = [:]; feedback = ""; busy = false; preferredFocusID = nil; reviewFocusIndex = nil }
         self.meetingID = meetingID
         self.items = items.sorted { left, right in
             func rank(_ item: MeetingReviewItem) -> String { item.owner == "me" ? "0" : item.hasOwner ? "1" + (item.owner ?? "") : "2" }
@@ -88,8 +90,9 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
         items.filter { $0.isPending && $0.hasOwner && (group == "mine" ? $0.owner == "me" : $0.owner != "me") }
     }
     private func render() {
+        preferredFocusID = focusedIdentifier() ?? preferredFocusID
         arrangedSubviews.forEach { removeArrangedSubview($0); $0.removeFromSuperview() }; fields = [:]
-        let message = NSTextField(wrappingLabelWithString: feedback.isEmpty ? "Save edits before approval. Assign unknown owners explicitly. Use Tab and Space to reach and activate actions." : feedback)
+        let message = FocusableMeetingEmptyState(wrappingLabelWithString: feedback.isEmpty ? "Save edits before approval. Assign unknown owners explicitly. Use Tab and Space to reach and activate actions." : feedback)
         message.setAccessibilityIdentifier("meeting-actions-feedback")
         addArrangedSubview(message)
         let batches = NSStackView()
@@ -111,6 +114,7 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
             for item in group { addItem(item) }
         }
         updateApprovalAvailability()
+        restoreFocus()
     }
     private func addItem(_ item: MeetingReviewItem) {
         let draft = drafts[item.id] ?? Draft(text: item.text, owner: item.owner ?? "", due: item.dueDate ?? "", status: item.status)
@@ -124,9 +128,13 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
         status.isEnabled = editable && !busy && item.review == "approved" && item.status != .done
         status.target = self; status.action = #selector(statusChanged)
         fields[item.id] = (text, owner, due, status)
-        let label = NSTextField(labelWithString: item.review + " · " + item.origin + (item.dueDate == nil ? " · No confirmed due date" : ""))
-        let stack = NSStackView(views: [label, text, NSTextField(labelWithString: "Owner"), owner,
-            NSTextField(labelWithString: "Due"), due, status])
+        text.setAccessibilityLabel("Action Item text")
+        owner.setAccessibilityLabel("Action Item owner")
+        due.setAccessibilityLabel("Action Item due date")
+        status.setAccessibilityLabel("Action Item status")
+        let label = NSTextField(wrappingLabelWithString: item.review + " · " + item.origin + (item.dueDate == nil ? " · No confirmed due date" : ""))
+        let stack = NSStackView(views: [label, NSTextField(labelWithString: "Task"), text, NSTextField(labelWithString: "Owner"), owner,
+            NSTextField(labelWithString: "Due"), due, NSTextField(labelWithString: "Status"), status])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = GraphiteFocusPresentation.Space.compact
         let actions = NSStackView()
         let saveButton = controls.actionButton("Save", identifier: "meeting-item-save-" + item.id) { [weak self] in self?.saveItem(item) }
@@ -149,11 +157,13 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
         stack.addArrangedSubview(actions); addArrangedSubview(stack)
         stack.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
         text.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        label.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
     @objc private func statusChanged() { captureDrafts(); updateApprovalAvailability() }
     private func saveItem(_ item: MeetingReviewItem) {
         guard !busy, editable else { return }; captureDrafts()
         let draft = drafts[item.id] ?? Draft(text: item.text, owner: item.owner ?? "", due: item.dueDate ?? "", status: item.status)
+        preferredFocusID = focusedIdentifier() ?? "meeting-item-save-" + item.id
         let origin = meetingID
         busy = true; render()
         save?(draftBases[item.id] ?? item, draft) { [weak self] result in
@@ -163,7 +173,10 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
     }
     private func runReview(_ selected: [MeetingReviewItem], accept: Bool) {
         guard !busy, editable, !selected.isEmpty else { return }
-        captureDrafts(); let origin = meetingID; busy = true; render()
+        captureDrafts()
+        preferredFocusID = focusedIdentifier() ?? "meeting-item-accept-" + selected[0].id
+        reviewFocusIndex = items.firstIndex { $0.id == selected[0].id }
+        let origin = meetingID; busy = true; render()
         review?(selected, accept) { [weak self] result in
             guard self?.meetingID == origin else { return }
             self?.finish(result, cleared: [])
@@ -185,6 +198,22 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
         guard let button = sender.representedObject as? NSButton, button.isEnabled else { return }
         button.performClick(nil)
     }
+    private func focusedIdentifier() -> String? {
+        let responder = window?.firstResponder
+        let view = (responder as? NSTextView)?.delegate as? NSView ?? responder as? NSView
+        guard let view, view.isDescendant(of: self) else { return nil }
+        return view.accessibilityIdentifier()
+    }
+    private func restoreFocus() {
+        guard !busy, let preferredFocusID else { return }
+        func find(_ view: NSView) -> NSView? {
+            if view.accessibilityIdentifier() == preferredFocusID { return view }
+            return view.subviews.compactMap(find).first
+        }
+        if let target = find(self), (target as? NSControl)?.isEnabled != false {
+            window?.makeFirstResponder(target)
+        }
+    }
     private func finish(_ result: Result<Void, Error>, cleared: [String]) {
         busy = false
         switch result {
@@ -192,6 +221,14 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
         case let .failure(error): feedback = "Save failed. Your edits remain available. " + error.localizedDescription
         }
         render()
-        if let button = allButtons().first(where: \.isEnabled) { window?.makeFirstResponder(button) }
+        if case .success = result, let index = reviewFocusIndex {
+            let pending = items.enumerated().filter { $0.element.isPending && $0.element.hasOwner }
+            let next = pending.first { $0.offset >= index } ?? pending.last
+            preferredFocusID = next.map { "meeting-item-accept-" + $0.element.id } ?? "meeting-actions-feedback"
+        }
+        reviewFocusIndex = nil
+        restoreFocus()
+        NSAccessibility.post(element: self, notification: .announcementRequested,
+            userInfo: [.announcement: feedback, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
     }
 }

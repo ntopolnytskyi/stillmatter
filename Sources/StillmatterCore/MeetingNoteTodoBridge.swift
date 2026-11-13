@@ -168,9 +168,12 @@ public final class MeetingNoteTodoBridge {
     }
 
     private func canonicalItem(_ id: String) throws -> TodoItem? {
-        for path in try vault.markdownPaths(relativeTo: "Meetings") where ["my-notes.md", "action-items.md"].contains((path as NSString).lastPathComponent) {
+        for path in try vault.markdownPaths(relativeTo: "Meetings") {
             let source = try vault.readMarkdown(relativePath: path)
             let text = String(decoding: source.data, as: UTF8.self)
+            guard ["my-notes.md", "action-items.md"].contains((path as NSString).lastPathComponent)
+                || text.hasPrefix("<!-- stillmatter-artifact:notes:v1 -->")
+                || text.hasPrefix("<!-- stillmatter-artifact:actions:v1 -->") else { continue }
             if let item = TodoItemParser().parse(markdown: text, relativePath: path).first(where: { $0.id == id }) {
                 return item
             }

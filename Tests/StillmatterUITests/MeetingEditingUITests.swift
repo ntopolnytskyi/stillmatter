@@ -598,7 +598,7 @@ extension StillmatterFlowsUITests {
     }
 
     func seedMeeting(transcript: Bool = false, notes: String = "Original notes.",
-                     myActionItem: String? = nil, savedActionTitle: String? = nil, otherActionItem: String? = nil, multipleSpeakers: Bool = false, mixedTimeline: Bool = false) throws {
+                     myActionItem: String? = nil, savedActionTitle: String? = nil, otherActionItem: String? = nil, actionCitation: Bool = false, multipleSpeakers: Bool = false, mixedTimeline: Bool = false) throws {
         // Prepare before launch so discovery does not depend on filesystem watcher timing.
         app.terminate()
         let directory = meetingURL.deletingLastPathComponent()
@@ -625,6 +625,13 @@ extension StillmatterFlowsUITests {
             if let otherActionItem {
                 extractionWithAction = extractionWithAction.replacingOccurrences(of: "\"other_action_items\":[]",
                     with: "\"other_action_items\":[{\"id\":\"unknown\",\"text\":\"" + otherActionItem + "\",\"citations\":[]}]")
+            }
+            if actionCitation {
+                var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(extractionWithAction.utf8)) as? [String: Any])
+                var actions = try XCTUnwrap(object["my_action_items"] as? [[String: Any]])
+                actions[0]["citations"] = [["segment_id": "s0", "start_seconds": 0, "end_seconds": 1]]
+                object["my_action_items"] = actions
+                extractionWithAction = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
             }
             if mixedTimeline {
                 var mixed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(extractionWithAction.utf8)) as? [String: Any])

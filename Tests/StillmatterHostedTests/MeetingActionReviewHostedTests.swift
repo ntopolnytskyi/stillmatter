@@ -59,9 +59,12 @@ final class MeetingActionReviewHostedTests: XCTestCase {
         owner.stringValue = "Alice"; view.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: owner))
         let due = try element("meeting-item-due-" + unknown.id, NSTextField.self)
         due.stringValue = "2026-02-30"
+        window.makeFirstResponder(due)
         try element("meeting-item-save-" + unknown.id, NSButton.self).performClick(nil)
         XCTAssertEqual(try element("meeting-item-owner-" + unknown.id, NSTextField.self).stringValue, "Alice")
         XCTAssertTrue(try element("meeting-actions-feedback", NSTextField.self).stringValue.contains("Save failed"))
+        let focusedDue = try element("meeting-item-due-" + unknown.id, NSTextField.self)
+        XCTAssertTrue((window.firstResponder as? NSTextView)?.delegate as? NSTextField === focusedDue)
         let fixedDue = try element("meeting-item-due-" + unknown.id, NSTextField.self)
         fixedDue.stringValue = "2026-12-03"
         try element("meeting-item-save-" + unknown.id, NSButton.self).performClick(nil)

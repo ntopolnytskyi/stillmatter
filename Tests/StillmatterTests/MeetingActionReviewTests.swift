@@ -154,4 +154,30 @@ final class MeetingActionReviewTests: XCTestCase {
         XCTAssertEqual(try TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems().filter { $0.id == pending.id }.count, 1)
     }
 
+    func testTodoTextEditFindsRenamedCanonicalActionArtifact() throws {
+        let pending = try XCTUnwrap(items().first { $0.isPending && $0.owner == "me" })
+        try store.reviewItems([pending], accept: true, meetingPath: meeting, meetingID: "review")
+        let renamed = "Meetings/review/renamed-actions.md"
+        try FileManager.default.moveItem(at: vault.rootURL.appendingPathComponent(pending.path), to: vault.rootURL.appendingPathComponent(renamed))
+        let todo = try XCTUnwrap(TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems().first { $0.id == pending.id })
+        XCTAssertEqual(todo.canonicalLocation?.relativePath, renamed)
+        let queue = try vault.readMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath)
+        _ = try MeetingNoteTodoBridge(vault: vault).updateText(item: todo, text: "Renamed source edit #ai-gen", expectedQueueVersion: queue.version)
+        let updated = try XCTUnwrap(items().first { $0.id == pending.id })
+        XCTAssertEqual(updated.text, "Renamed source edit #ai-gen")
+        XCTAssertEqual(updated.path, renamed)
+    }
+
+    func testReassignmentRemovesAndRestoresSamePersonalTodoReference() throws {
+        var note = try XCTUnwrap(items().first { $0.origin == "note" })
+        for owner in ["Alice", "me"] {
+            try store.editReviewItem(note, text: note.text, owner: owner, dueDate: nil, status: .open, meetingPath: meeting, meetingID: "review")
+            note = try XCTUnwrap(items().first { $0.id == note.id })
+            let personal = try TodoItemIndex(workspaceRootURL: vault.rootURL).loadAllItems().filter { $0.id == note.id }
+            XCTAssertEqual(personal.count, owner == "me" ? 1 : 0)
+        }
+        XCTAssertThrowsError(try store.editReviewItem(note, text: note.text, owner: nil, dueDate: nil, status: .open, meetingPath: meeting, meetingID: "review"))
+        XCTAssertEqual(try items().first { $0.id == note.id }?.owner, "me")
+    }
+
 }
