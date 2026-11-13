@@ -134,6 +134,8 @@ final class MeetingManagementView: NSView {
     private(set) var retryFeedback: (meetingID: String, message: String)?
     private var restoredSelectionID: String?
     private var pendingSearchSourcePath: String?
+    private var pendingReviewPath: String?
+    private var reviewDetailPath: String?
     private var restoredSearchSelectionNeedsOpen = false
     lazy var openRecordingButton = controls.button("Open Recording", identifier: "meeting-open-recording")
     let audioStatus = NSTextField(wrappingLabelWithString: "Recording Bundle unavailable")
@@ -213,6 +215,19 @@ final class MeetingManagementView: NSView {
         applySnapshot(meetingsModel.snapshot)
     }
 
+    func focusActionItems(_ meetingPath: String) {
+        pendingReviewPath = meetingPath
+        queryField.stringValue = ""
+        startDateEnabled.state = .off
+        endDateEnabled.state = .off
+        projectFilter.selectItem(at: 0)
+        processingFilter.selectItem(at: 0)
+        archiveFilter.selectItem(at: 0)
+        meetingsModel.setQueueFilter(.recorded)
+        meetingsModel.updateFilters(MeetingBrowserFilters())
+        applySnapshot(meetingsModel.snapshot)
+    }
+
     private var featureIsVisible = false
 
     private func handlePlaybackShortcut(_ event: NSEvent) -> Bool {
@@ -261,6 +276,8 @@ final class MeetingManagementView: NSView {
         isHidden = !isVisible
         browserView.isHidden = !isVisible
         guard isVisible else {
+            pendingReviewPath = nil
+            reviewDetailPath = nil
             if featureIsVisible { meetingsModel.deactivate() }
             featureIsVisible = false
             restoredSelectionID = nil
@@ -832,6 +849,19 @@ final class MeetingManagementView: NSView {
     }
 
     func applySnapshot(_ snapshot: MeetingBrowserSnapshot?) {
+        if let path = pendingReviewPath,
+           let row = snapshot?.visibleRows.first(where: { $0.meetingRelativePath == path && !$0.isArchived }) {
+            pendingReviewPath = nil
+            reviewDetailPath = path
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.featureIsVisible, self.reviewDetailPath == path,
+                      let index = self.rows.firstIndex(where: { $0.id == row.id && $0.meetingRelativePath == path }) else { return }
+                self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                self.show(row: index)
+                self.selectPage(.actionItems)
+                self.onOpenSelection()
+            }
+        }
         if let sourcePath = pendingSearchSourcePath,
            let row = snapshot?.visibleRows.first(where: {
                URL(fileURLWithPath: $0.meetingRelativePath).deletingLastPathComponent().path
@@ -1142,6 +1172,9 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderDetail(_ selected: MeetingBrowserDetail) {
+            let opensReview = reviewDetailPath == selected.row.meetingRelativePath
+            if reviewDetailPath != nil && !opensReview { return }
+            if opensReview { reviewDetailPath = nil }
             refreshModalText(from: selected)
             isApplyingFeatureState = true
             defer { isApplyingFeatureState = false }
@@ -1188,6 +1221,7 @@ final class MeetingManagementView: NSView {
                 timelineNavigation.jump = nil
                 closeTimeline()
             }
+            if opensReview { selectPage(.actionItems) }
             summaryOverviewSection?.isHidden = false
             notesOverviewSection?.isHidden = false
             diagnosticsDisclosure.isHidden = false

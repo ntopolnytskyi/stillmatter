@@ -51,6 +51,38 @@ final class MeetingArtifactStore {
         try manifest(at: sibling(meetingPath, "meeting-artifacts.json"))?.meetingID
     }
 
+    /// Today must not adopt files, replay transactions or update review state just by viewing them.
+    func pendingReviewCount(meetingPath: String, meetingID: String) throws -> Int {
+        let state = try manifest(at: sibling(meetingPath, "meeting-artifacts.json"))
+        let paths = try vault.markdownPaths(relativeTo: (meetingPath as NSString).deletingLastPathComponent)
+        let identified = try paths.filter { path in
+            guard (path as NSString).deletingLastPathComponent == (meetingPath as NSString).deletingLastPathComponent else { return false }
+            return hasArtifactMarker("actions", in: try decode(vault.readMarkdown(relativePath: path).data, path: path))
+        }
+        guard identified.count <= 1 else { throw malformed(meetingPath, "Multiple files claim the Action Items identity.") }
+        let path = identified.first ?? state?.files["actions"].map { sibling(meetingPath, ($0 as NSString).lastPathComponent) }
+            ?? sibling(meetingPath, "action-items.md")
+        if let source = try optional(path) {
+            let text = try decode(source.data, path: path)
+            _ = try validateItems(text, path: path)
+            return TodoItemParser().parse(markdown: text, relativePath: path).filter {
+                // External checkboxes without metadata will be adopted as pending on explicit Meeting open.
+                TodoItemParser.metadata(in: $0.rawText)?.review == "pending"
+                    || TodoItemParser.metadata(in: $0.rawText) == nil
+            }.count
+        }
+        guard state == nil else { throw malformed(path, "The canonical Action Items file is missing.") }
+        guard let source = try optional(sibling(meetingPath, "summary-extraction.json")) else { return 0 }
+        let extraction = try JSONDecoder().decode(MeetingSummaryExtraction.self, from: source.data)
+        guard extraction.meeting == meetingPath, extraction.schemaVersion == MeetingSummaryExtraction.currentSchemaVersion else {
+            throw malformed(meetingPath, "Summary identity or version does not match this Meeting.")
+        }
+        return try (extraction.myActionItems + extraction.otherActionItems).filter {
+            let review = try inbox?.proposalReviewState(id: "meeting-action:\(meetingID):\($0.id)")
+            return review == nil || review == .pending
+        }.count
+    }
+
     /// Compatibility while the existing recorder/producer still owns legacy files.
     /// No file adoption occurs until capture and its current processing work finish.
     func legacyLoaded(meetingPath: String, meetingID: String) throws -> Loaded {

@@ -5,6 +5,47 @@ import StillmatterCore
 
 final class TodayTasksControlsHostedTests: XCTestCase {
     @MainActor
+    func testMeetingReviewReminderKeyboardRefreshRemovalAndUnavailableFeedback() throws {
+        let fixture = try TodayTasksFixture()
+        defer { fixture.cleanup() }
+        func reminder(_ count: Int) -> InboxItem {
+            InboxItem(id: "meeting-review:one", category: .review, kind: .proposal, title: "Planning",
+                sourceRef: "Meetings/one/meeting.md", details: "\(count) awaiting approval", createdAt: "", workspaceOwner: fixture.workspace.path)
+        }
+        var rows = [reminder(3)]
+        var opened: [InboxItem] = []
+        var retries = 0
+        let today = TodayWorkbenchView(stateProvider: {
+            .loaded(.init(recordingStatus: "Not recording", jobStatus: "Jobs idle", workspaceOwner: fixture.workspace.path,
+                inbox: [.init(category: .review, items: rows)], queue: [], upcomingMeetings: []))
+        }, onRetry: { retries += 1 }, onSelectArea: { _ in }, onReviewProposals: { opened.append($0) },
+           onOpenDecision: { _ in }, onOpenMeeting: { _, _ in }, onOpenTodo: { _, _ in })
+        let window = fixture.window(today)
+        window.setContentSize(NSSize(width: 660, height: 460))
+        today.refresh(isVisible: true)
+        XCTAssertTrue(today.focusInboxItem(id: "meeting-review:one"))
+        let row: NSButton = try control("today-inbox-meeting-review:one", in: today)
+        XCTAssertTrue(window.firstResponder === row)
+        row.keyDown(with: try key(49, " "))
+        XCTAssertEqual(opened, [reminder(3)])
+        rows = [reminder(1)]
+        today.refresh(isVisible: true)
+        let updated: NSButton = try control("today-inbox-meeting-review:one", in: today)
+        XCTAssertTrue(window.firstResponder === updated)
+        updated.keyDown(with: try key(36, "\r"))
+        XCTAssertEqual(opened.last?.details, "1 awaiting approval")
+        rows = []
+        today.refresh(isVisible: true)
+        let empty: NSButton = try control("today-empty-review", in: today)
+        XCTAssertTrue(window.firstResponder === empty)
+        today.showUnavailableInboxItem(id: "meeting-review:one")
+        let unavailable: NSButton = try control("today-inbox-item-unavailable", in: today)
+        XCTAssertTrue(window.firstResponder === unavailable)
+        unavailable.keyDown(with: try key(36, "\r"))
+        XCTAssertEqual(retries, 1)
+    }
+
+    @MainActor
     func testSharedStyleNavigationFiltersAndCompletionKeepCanonicalIdentity() throws {
         let fixture = try TodayTasksFixture()
         defer { fixture.cleanup() }

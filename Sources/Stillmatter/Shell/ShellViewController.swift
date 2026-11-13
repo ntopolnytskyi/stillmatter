@@ -741,8 +741,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         case .tasks:
             reloadToday()
             reloadTodos()
-            if stateStore.state.selectedTab == .today { proposalReviewView.refresh(isVisible: true) }
         case .meetings:
+            reloadToday()
             if stateStore.state.selectedTab == .meetings && !isSearchPresented { meetingManagementView.refresh(isVisible: true) }
         case .searchIndex:
             lastSearchRequest = nil
@@ -795,7 +795,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             scroll.contentView.scroll(to: .zero)
             scroll.reflectScrolledClipView(scroll.contentView)
         }
-        proposalReviewView.refresh(isVisible: state.selectedTab == .today && !isSearching)
+        proposalReviewView.refresh(isVisible: false)
         todoLedgerView.refresh(isVisible: showsTasks)
         if showsToday { reloadToday() }
         if showsTasks { reloadTodos() }
@@ -1017,13 +1017,16 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     }
 
     private func openTodayProposal(_ item: InboxItem) {
-        guard item.kind == .proposal, currentTodayInboxItem(item) else {
+        guard currentTodayOwner(item.workspaceOwner), let owner = item.workspaceOwner,
+              let service = meetingServiceProvider(),
+              let current = try? service.reviewReminders(),
+              let resolved = TodayTargetResolution.meetingReview(item, owner: owner, current: current),
+              let path = resolved.sourceRef else {
             todayWorkbenchView.showUnavailableInboxItem(id: item.id); return
         }
-        proposalReviewView.refresh(isVisible: true)
-        guard proposalReviewView.focusProposal(id: item.id) else {
-            todayWorkbenchView.showUnavailableInboxItem(id: item.id); return
-        }
+        stateStore.state.select(.meetings)
+        render()
+        meetingManagementView.focusActionItems(path)
     }
 
     private func openTodayDecision(_ item: InboxItem) {

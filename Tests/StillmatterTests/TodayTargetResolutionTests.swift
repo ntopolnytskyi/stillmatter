@@ -2,6 +2,16 @@ import XCTest
 @testable import StillmatterCore
 
 final class TodayTargetResolutionTests: XCTestCase {
+    func testMeetingReminderResolvesCurrentCountButNeverAnotherWorkspaceOrTarget() {
+        func row(_ id: String = "one", owner: String = "A", count: String = "2") -> InboxItem {
+            InboxItem(id: "meeting-review:" + id, category: .review, kind: .proposal, title: "Planning",
+                sourceRef: "Meetings/" + id + "/meeting.md", details: count + " awaiting approval", createdAt: "", workspaceOwner: owner)
+        }
+        XCTAssertEqual(TodayTargetResolution.meetingReview(row(), owner: "A", current: [row(count: "1")]), row(count: "1"))
+        XCTAssertNil(TodayTargetResolution.meetingReview(row(), owner: "B", current: [row(owner: "B")]))
+        XCTAssertNil(TodayTargetResolution.meetingReview(row(), owner: "A", current: []))
+        XCTAssertNil(TodayTargetResolution.meetingReview(row(), owner: "A", current: [row("two")]))
+    }
     private func todo(_ line: Int, text: String = "Send report due: 2026-10-20") -> TodoItem {
         TodoItem(id: "Todos/todo.md:\(line)", title: "Send report", rawText: text,
                  status: .blocked, dueDate: "2026-10-20", sourceRef: "Meetings/a/summary.md",

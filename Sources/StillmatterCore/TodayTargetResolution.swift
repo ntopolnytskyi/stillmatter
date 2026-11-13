@@ -3,6 +3,13 @@ import Foundation
 /// Read-only identity check for a Today action. Callers must still re-read the
 /// owning store/event before showing a target. No mutation or fallback selection.
 public enum TodayTargetResolution {
+    public static func meetingReview(_ selected: InboxItem, owner: String,
+                                     current: [InboxItem]) -> InboxItem? {
+        guard selected.workspaceOwner == owner, selected.id.hasPrefix("meeting-review:") else { return nil }
+        return current.first { $0.id == selected.id && $0.sourceRef == selected.sourceRef
+            && $0.workspaceOwner == owner && $0.kind == .proposal && $0.category == .review }
+    }
+
     public static func inbox(_ selected: InboxItem, owner: String,
                              current: [InboxItem]) -> InboxItem? {
         guard selected.workspaceOwner == owner else { return nil }

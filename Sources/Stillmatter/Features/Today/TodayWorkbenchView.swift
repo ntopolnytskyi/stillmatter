@@ -575,7 +575,7 @@ final class TodayWorkbenchView: NSView {
     private func inboxMetadata(for item: InboxItem) -> String {
         let kind: String
         switch item.kind {
-        case .proposal: kind = "Action Item proposal — review before it becomes a Todo Item"
+        case .proposal: kind = "Review Meeting Action Items"
         case .failedJob: kind = "Failed Job — view failure; Retry if available"
         case .titleReview: kind = "Meeting title review"
         case .cleanupProposal: kind = "Cleanup proposal — view record"

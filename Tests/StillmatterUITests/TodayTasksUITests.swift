@@ -136,6 +136,53 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(try Data(contentsOf: queue), valid)
     }
 
+    func testTodayGroupsMeetingReviewsAndOpensActionItemsWithLiveCounts() throws {
+        try seedMeeting(transcript: true, myActionItem: "Mine pending", otherActionItem: "Unknown pending")
+        app.terminate()
+        let second = fixtureRoot.appendingPathComponent("workspace/Meetings/second")
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        try "---\ntitle: Second review\ncapture_session_id: second\n---\n".write(to: second.appendingPathComponent("meeting.md"), atomically: true, encoding: .utf8)
+        let metadata = #"{"v":1,"id":"ee935d20-e388-4ccf-b6bd-1f5dc785fd02","owner":"Alice","review":"pending","origin":"generated","citations":[]}"#
+        try ("<!-- stillmatter-artifact:actions:v1 -->\n- [ ] Other person's proposal <!-- sm-item:" + metadata + " -->\n")
+            .write(to: second.appendingPathComponent("action-items.md"), atomically: true, encoding: .utf8)
+        relaunch()
+        app.buttons["sidebar-today"].click()
+        let first = app.buttons["today-inbox-meeting-review:ui-fixture"]
+        let secondRow = app.buttons["today-inbox-meeting-review:second"]
+        XCTAssertTrue(first.waitForExistence(timeout: 15))
+        XCTAssertTrue(secondRow.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "today-inbox-meeting-review:")).count, 2)
+        XCTAssertTrue(first.label.contains("2 awaiting approval"))
+        XCTAssertTrue(secondRow.label.contains("1 awaiting approval"))
+        XCTAssertFalse(app.buttons["proposal-accept-meeting-action:ui-fixture:action-fixture"].exists)
+        let before = try Data(contentsOf: meetingURL)
+        first.click()
+        XCTAssertTrue(app.buttons["meeting-actions-accept-mine"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.radioButtons["Action Items"].value as? Int, 1)
+        XCTAssertEqual(try Data(contentsOf: meetingURL), before)
+        app.buttons["meeting-actions-accept-mine"].click()
+        app.buttons["sidebar-today"].click()
+        expectation(for: NSPredicate { _, _ in first.exists && first.label.contains("1 awaiting approval") }, evaluatedWith: first)
+        waitForExpectations(timeout: 15)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "today-todo-")).count, 1)
+        first.click()
+        let rejects = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "meeting-item-reject-"))
+        XCTAssertTrue(rejects.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(rejects.count, 1)
+        rejects.firstMatch.click()
+        app.buttons["sidebar-today"].click()
+        expectation(for: NSPredicate { _, _ in !first.exists }, evaluatedWith: first)
+        waitForExpectations(timeout: 15)
+        XCTAssertTrue(secondRow.exists)
+        // External deletion refreshes an already visible Today without a file repair.
+        try FileManager.default.removeItem(at: second)
+        expectation(for: NSPredicate { _, _ in !secondRow.exists }, evaluatedWith: secondRow)
+        waitForExpectations(timeout: 15)
+        relaunch(); app.buttons["sidebar-today"].click()
+        XCTAssertTrue(app.buttons["today-empty-review"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "today-todo-")).count, 1)
+    }
+
     private func seedPersonalQueue() throws -> URL {
         let workspace = fixtureRoot.appendingPathComponent("workspace")
         let source = workspace.appendingPathComponent("Meetings/task/my-notes.md")

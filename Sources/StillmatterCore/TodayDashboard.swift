@@ -82,8 +82,12 @@ public final class TodayDashboard {
 
     public func load() throws -> TodayDashboardSnapshot {
         let date = today()
+        let vault = WorkspaceVault(workspaceRootURL: workspaceRootURL,
+                                   appSupportRootURL: inbox.databaseURL.deletingLastPathComponent())
+        let reminders = try MeetingManagementService(vault: vault, inbox: inbox).reviewReminders()
         let sections = try InboxCategory.allDisplayCases.map {
-            TodayInboxSection(category: $0, items: try inbox.items(category: $0))
+            TodayInboxSection(category: $0, items: try inbox.items(category: $0).filter { $0.kind != .proposal }
+                + ($0 == .review ? reminders : []))
         }
         let taskViews = try TodoItemIndex(workspaceRootURL: workspaceRootURL).loadTaskViews(today: date)
         let queue = taskViews.queue

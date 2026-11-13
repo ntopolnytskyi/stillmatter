@@ -198,6 +198,18 @@ public final class MeetingManagementService {
     }
 
     public func list() throws -> [MeetingBrowserRow] { try list(filters: MeetingBrowserFilters()) }
+
+    /// Rebuildable Today rows; canonical files, never individual Inbox proposals, own the count.
+    public func reviewReminders() throws -> [InboxItem] {
+        try list().compactMap { row in
+            guard row.captureState == .stopped, row.processingState != .processing else { return nil }
+            let count = try artifactStore.pendingReviewCount(meetingPath: row.meetingRelativePath, meetingID: row.id)
+            guard count > 0 else { return nil }
+            return InboxItem(id: "meeting-review:\(row.id)", category: .review, kind: .proposal,
+                title: row.title, sourceRef: row.meetingRelativePath, details: "\(count) awaiting approval",
+                createdAt: "", workspaceOwner: vault.rootURL.standardizedFileURL.resolvingSymlinksInPath().path)
+        }
+    }
     public func list(filters: MeetingBrowserFilters) throws -> [MeetingBrowserRow] {
         try filter(allRows(), using: filters)
     }
