@@ -79,6 +79,7 @@ final class MeetingArtifactStore {
     }
 
     func load(meetingPath: String, meetingID: String) throws -> Loaded {
+        try ItemTagStore(vault: vault).recover()
         Self.lock.lock(); defer { Self.lock.unlock() }
         let transaction = MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint)
         try transaction.recover()
@@ -292,18 +293,37 @@ final class MeetingArtifactStore {
                 let old = checkboxes ? oldGenerated[value.id] : nil
                 let metadata = Item(v: 1, id: old?.id ?? UUID().uuidString.lowercased(), owner: owner,
                     review: "pending", origin: "generated", legacyID: value.id, citations: value.citations)
-                return (checkboxes ? "- [ ] " : "- ") + value.text + (checkboxes ? " #ai-gen #need-approve" : "")
+                let oldTags = currentItems.first(where: { $0.outcome.id == value.id }).map { ItemTags.read($0.outcome.text) } ?? []
+                let text = checkboxes ? ItemTags.replacing(in: value.text, with: ItemTags.read(value.text) + oldTags + ["ai-gen", "need-approve"]) : value.text
+                return (checkboxes ? "- [ ] " : "- ") + text
                     + " <!-- sm-item:" + String(decoding: try JSONEncoder().encode(metadata), as: UTF8.self) + " -->"
             }.joined(separator: "\n")
         }
         let mine = try render(extraction.myActionItems, owner: "me", checkboxes: true)
         let others = try render(extraction.otherActionItems, owner: nil, checkboxes: true)
         let summaryPath = try required(base.paths["summary"], path: meetingPath, field: "summary path")
-        let values = ["summary": try decode(summary, path: summaryPath),
+        var values = ["summary": try decode(summary, path: summaryPath),
             "actions": (retainedLines + [mine, others]).joined(separator: "\n"),
             "decisions": try render(extraction.decisions, owner: nil, checkboxes: false),
             "open": try render(extraction.openQuestions, owner: nil, checkboxes: false)]
-        var replacements: [WorkspaceMarkdownReplacement] = []
+        let additions = extraction.tagAdditions ?? []
+        let tagChanges = try ItemTagStore(vault: vault).prepareAIAdditions(additions,
+            allowedPaths: Set([actionsPath, base.paths["notes"]].compactMap { $0 }))
+        let actionIDs = Set(currentItems.map { $0.item.id })
+        let actionPatches = additions.filter { actionIDs.contains($0.itemID.lowercased()) }
+        if !actionPatches.isEmpty {
+            var matched: Set<String> = []
+            values["actions"] = values["actions"]!.components(separatedBy: "\n").map { line in
+                guard let metadata = TodoItemParser.metadata(in: line) else { return line }
+                let patches = actionPatches.filter { $0.itemID.lowercased() == metadata.id }
+                if !patches.isEmpty { matched.insert(metadata.id) }
+                return ItemTags.replacing(in: line, with: ItemTags.read(line) + patches.flatMap(\.tags))
+            }.joined(separator: "\n")
+            guard matched == Set(actionPatches.map { $0.itemID.lowercased() }) else {
+                throw malformed(actionsPath, "An AI tag target is no longer present in the generated actions. Retry with current items.")
+            }
+        }
+        var replacements = tagChanges.filter { $0.relativePath != actionsPath }
         for kind in values.keys.sorted() {
             let path = try required(base.paths[kind], path: meetingPath, field: "\(kind) path")
             let content = try required(values[kind], path: meetingPath, field: "\(kind) content")
@@ -810,7 +830,8 @@ extension MeetingArtifactStore {
         let marker: String
         switch status { case .open: marker = " "; case .blocked: marker = "B"; case .done: marker = "x"; case .canceled: marker = "C" }
         let sourceRef = TodoItemParser().parse(markdown: actual.rawLine, relativePath: actual.path)[0].sourceRef
-        let body = ([text, dueDate.map { "due: " + $0 }, sourceRef].compactMap { $0 }).joined(separator: " ")
+        let taggedText = ItemTags.replacing(in: text, with: ItemTags.read(text) + actual.tags)
+        let body = ([taggedText, dueDate.map { "due: " + $0 }, sourceRef].compactMap { $0 }).joined(separator: " ")
         let line = "- [\(marker)] " + body + " <!-- sm-item:" + String(decoding: try JSONEncoder().encode(metadata), as: UTF8.self) + " -->"
         try publishItemChanges([(actual, line)], meetingID: meetingID)
     }

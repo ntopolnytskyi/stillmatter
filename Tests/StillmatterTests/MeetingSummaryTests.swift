@@ -670,6 +670,32 @@ final class MeetingSummaryTests: XCTestCase {
         }
     }
 
+    func testAIAdditiveTagsThroughValidatedRPCPreserveConcurrentNoteEdit() throws {
+        let fixture = try MeetingSummaryFixture()
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        let service = MeetingManagementService(vault: vault, inbox: fixture.inbox)
+        let initial = try service.detail(for: fixture.transcript.meetingRelativePath)
+        let saved = try service.saveHumanNotes("- [ ] User task #work", for: initial.row.id, expectedVersion: XCTUnwrap(initial.notesVersion))
+        let note = try XCTUnwrap(saved.reviewItems.first { $0.origin == "note" })
+        let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [fixture.outcome(id: note.id, text: "User task", segment: 0)], otherActionItems: [], openQuestions: [],
+            tagAdditions: [.init(itemID: note.id, tags: ["team"])])
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        let executor = try fixture.executor(extraction: extraction, transform: { _, response in
+            _ = try service.editMeetingItem(meetingID: initial.row.id, item: note, text: "User's concurrent revision", owner: "Olena", dueDate: nil, status: .blocked)
+            return response
+        })
+        _ = try execute(executor, manifest: manifest)
+        let final = try XCTUnwrap(service.detail(for: initial.row.id).reviewItems.first { $0.id == note.id })
+        XCTAssertEqual(final.text, "User's concurrent revision #work #team")
+        XCTAssertEqual(final.owner, "Olena"); XCTAssertEqual(final.status, .blocked); XCTAssertEqual(final.review, "approved")
+        XCTAssertFalse(final.tags.contains("ai-gen")); XCTAssertFalse(final.tags.contains("need-approve"))
+        let persisted = try JSONDecoder().decode(MeetingSummaryExtraction.self, from: Data(contentsOf: fixture.workspaceURL.appendingPathComponent(fixture.extractionPath)))
+        XCTAssertTrue(persisted.myActionItems.isEmpty)
+        XCTAssertEqual(persisted.tagAdditions, extraction.tagAdditions)
+        XCTAssertFalse(try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadAllItems().contains { $0.id == note.id })
+    }
+
     private func execute(_ executor: MeetingSummaryJobExecutor, manifest: JobManifest, jobID: String = "summary-job", timeout: TimeInterval = 2) throws -> JobStageResult {
         let job = JobRecord(
             id: jobID,

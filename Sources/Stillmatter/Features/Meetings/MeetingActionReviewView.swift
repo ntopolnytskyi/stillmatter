@@ -25,6 +25,7 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
     private var reviewFocusIndex: Int?
     private var review: (([MeetingReviewItem], Bool, @escaping (Result<Void, Error>) -> Void) -> Void)?
     private var save: ((MeetingReviewItem, Draft, @escaping (Result<Void, Error>) -> Void) -> Void)?
+    private var tags: ((MeetingReviewItem, NSButton) -> Void)?
     private var sources: ((MeetingReviewItem, NSStackView) -> Void)?
 
     init() {
@@ -36,6 +37,7 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
     func configure(meetingID: String, items: [MeetingReviewItem], editable: Bool,
                    review: @escaping ([MeetingReviewItem], Bool, @escaping (Result<Void, Error>) -> Void) -> Void,
                    save: @escaping (MeetingReviewItem, Draft, @escaping (Result<Void, Error>) -> Void) -> Void,
+                   tags: ((MeetingReviewItem, NSButton) -> Void)? = nil,
                    sources: @escaping (MeetingReviewItem, NSStackView) -> Void) {
         if self.meetingID != meetingID { drafts = [:]; draftBases = [:]; feedback = ""; busy = false; preferredFocusID = nil; reviewFocusIndex = nil }
         self.meetingID = meetingID
@@ -44,7 +46,7 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
             return rank(left) < rank(right)
         }
         self.editable = editable
-        self.review = review; self.save = save; self.sources = sources
+        self.review = review; self.save = save; self.tags = tags; self.sources = sources
         render()
     }
 
@@ -55,7 +57,7 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
             let status: TodoStatus = [.open, .blocked, .done][row.3.indexOfSelectedItem]
             let draft = Draft(text: row.0.stringValue, owner: row.1.stringValue, due: row.2.stringValue, status: status)
             guard let item = items.first(where: { $0.id == id }) else { continue }
-            if draft.text == item.text && draft.owner == (item.owner ?? "") && draft.due == (item.dueDate ?? "") && draft.status == item.status {
+            if draft.text == ItemTags.removingTags(from: item.text) && draft.owner == (item.owner ?? "") && draft.due == (item.dueDate ?? "") && draft.status == item.status {
                 drafts.removeValue(forKey: id); draftBases.removeValue(forKey: id)
             } else {
                 if draftBases[id] == nil { draftBases[id] = item }
@@ -65,10 +67,13 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
     }
     private func isDirty(_ item: MeetingReviewItem) -> Bool {
         guard let draft = drafts[item.id] else { return false }
-        return draft.text != item.text || draft.owner != (item.owner ?? "") || draft.due != (item.dueDate ?? "") || draft.status != item.status
+        return draft.text != ItemTags.removingTags(from: item.text) || draft.owner != (item.owner ?? "") || draft.due != (item.dueDate ?? "") || draft.status != item.status
     }
     private func updateApprovalAvailability() {
         for button in allButtons() {
+            if let item = items.first(where: { button.accessibilityIdentifier() == "meeting-item-edit-tags-" + $0.id }) {
+                button.isEnabled = editable && !busy && !isDirty(item)
+            }
             if let id = button.identifier?.rawValue, id.hasPrefix("reload:"),
                let item = items.first(where: { "reload:" + $0.id == id }) {
                 button.isEnabled = editable && !busy && isDirty(item)
@@ -117,7 +122,7 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
         restoreFocus()
     }
     private func addItem(_ item: MeetingReviewItem) {
-        let draft = drafts[item.id] ?? Draft(text: item.text, owner: item.owner ?? "", due: item.dueDate ?? "", status: item.status)
+        let draft = drafts[item.id] ?? Draft(text: ItemTags.removingTags(from: item.text), owner: item.owner ?? "", due: item.dueDate ?? "", status: item.status)
         let text = controls.textField(identifier: "meeting-item-text-" + item.id); text.stringValue = draft.text
         let owner = controls.textField(identifier: "meeting-item-owner-" + item.id); owner.stringValue = draft.owner; owner.placeholderString = "me or a person's name"
         let due = controls.textField(identifier: "meeting-item-due-" + item.id); due.stringValue = draft.due; due.placeholderString = "YYYY-MM-DD or empty"
@@ -136,7 +141,18 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
         let stack = NSStackView(views: [label, NSTextField(labelWithString: "Task"), text, NSTextField(labelWithString: "Owner"), owner,
             NSTextField(labelWithString: "Due"), due, NSTextField(labelWithString: "Status"), status])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = GraphiteFocusPresentation.Space.compact
+        let chips = ItemTagChipsView(tags: item.tags, identifier: "meeting-item-tags-" + item.id)
+        stack.addArrangedSubview(chips)
+        chips.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let actions = NSStackView()
+        if tags != nil {
+            let button = controls.actionButton("Edit tags", identifier: "meeting-item-edit-tags-" + item.id) { [weak self] in
+                guard let self, let button = self.allButtons().first(where: { $0.accessibilityIdentifier() == "meeting-item-edit-tags-" + item.id }) else { return }
+                self.tags?(item, button)
+            }
+            button.isEnabled = editable && !busy && !isDirty(item)
+            actions.addArrangedSubview(button)
+        }
         let saveButton = controls.actionButton("Save", identifier: "meeting-item-save-" + item.id) { [weak self] in self?.saveItem(item) }
         saveButton.isEnabled = editable && !busy
         actions.addArrangedSubview(saveButton)
@@ -162,7 +178,7 @@ final class MeetingActionReviewView: NSStackView, NSTextFieldDelegate, NSMenuDel
     @objc private func statusChanged() { captureDrafts(); updateApprovalAvailability() }
     private func saveItem(_ item: MeetingReviewItem) {
         guard !busy, editable else { return }; captureDrafts()
-        let draft = drafts[item.id] ?? Draft(text: item.text, owner: item.owner ?? "", due: item.dueDate ?? "", status: item.status)
+        let draft = drafts[item.id] ?? Draft(text: ItemTags.removingTags(from: item.text), owner: item.owner ?? "", due: item.dueDate ?? "", status: item.status)
         preferredFocusID = focusedIdentifier() ?? "meeting-item-save-" + item.id
         let origin = meetingID
         busy = true; render()

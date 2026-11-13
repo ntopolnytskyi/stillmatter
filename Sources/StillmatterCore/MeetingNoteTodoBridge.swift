@@ -73,7 +73,7 @@ public final class MeetingNoteTodoBridge {
             let lineEnding = line.hasSuffix("\r") ? "\r" : ""
             let prefix = Self.checkboxPrefix(in: line)
             let preserved = [item.dueDate.map { "due: \($0)" }, item.sourceRef].compactMap { $0 }
-            let editedText = text.trimmingCharacters(in: .newlines)
+            let editedText = ItemTags.replacing(in: text.trimmingCharacters(in: .newlines), with: ItemTags.read(text) + item.tags)
             let suffix = preserved.filter { !editedText.contains($0) }
             let canonicalText = ([editedText] + suffix).filter { !$0.isEmpty }.joined(separator: " ")
             return (prefix + canonicalText + " <!-- sm-item:" + Self.encode(metadata) + " -->" + lineEnding,

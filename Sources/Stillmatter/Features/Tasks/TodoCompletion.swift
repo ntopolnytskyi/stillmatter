@@ -8,6 +8,14 @@ struct TodoCompletion {
     let appSupportRoot: URL
     let workspaceRoot: () -> URL?
 
+    func tagStore(displayedRoot: URL?) throws -> ItemTagStore {
+        guard let root = workspaceRoot(), let displayedRoot,
+              root.standardizedFileURL.resolvingSymlinksInPath() == displayedRoot.standardizedFileURL.resolvingSymlinksInPath() else {
+            throw MeetingManagementError.unavailable
+        }
+        return ItemTagStore(vault: WorkspaceVault(workspaceRootURL: root, appSupportRootURL: appSupportRoot))
+    }
+
     func complete(_ item: TodoItem, displayedRoot: URL?) throws -> TodoTaskViews {
         guard let root = workspaceRoot(), let displayedRoot,
               root.standardizedFileURL.resolvingSymlinksInPath() == displayedRoot.standardizedFileURL.resolvingSymlinksInPath() else {

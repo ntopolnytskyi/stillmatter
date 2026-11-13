@@ -85,7 +85,7 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
 
     func numberOfRows(in tableView: NSTableView) -> Int { visibleItems.count }
 
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 68 }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 68 + GraphiteFocusPresentation.Space.panel }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let item = visibleItems[row]
@@ -103,7 +103,30 @@ final class TodoLedgerView: NSView, NSTableViewDataSource, NSTableViewDelegate, 
         cell.editButton.target = self
         cell.editButton.action = #selector(editRow(_:))
         cell.editButton.tag = row
+        cell.tagsButton.isHidden = completion == nil
+        cell.tagsButton.setAccessibilityIdentifier("task-tags-" + item.id)
+        cell.tagsButton.target = self; cell.tagsButton.action = #selector(editTags(_:)); cell.tagsButton.tag = row
         return cell
+    }
+
+    @objc private func editTags(_ sender: NSButton) {
+        guard visibleItems.indices.contains(sender.tag), let completion, let window else { return }
+        let item = visibleItems[sender.tag]
+        do {
+            let store = try completion.tagStore(displayedRoot: displayedRoot)
+            ItemTagEditorView.present(selection: try store.selection(itemID: item.id), in: window, source: sender) { [weak self] mutation, completed in
+                let result = Result { () throws -> ItemTagSelection in
+                    let currentStore = try completion.tagStore(displayedRoot: self?.displayedRoot)
+                    try currentStore.mutate(mutation)
+                    return try currentStore.selection(itemID: item.id)
+                }
+                if case .success = result { self?.onChange(); self?.refresh(isVisible: true) }
+                completed(result)
+            }
+        } catch {
+            completionError.stringValue = "Could not edit tags. " + error.localizedDescription
+            completionError.isHidden = false
+        }
     }
 
     private func buildLayout() {
@@ -411,6 +434,9 @@ final class TodoLedgerTableView: NSTableView {
 final class TodoLedgerCellView: NSTableCellView {
     let completionButton: NSButton
     let editButton: NSButton
+    let tagsButton: NSButton
+    private var tagChips: ItemTagChipsView?
+    private let itemDetail = NSStackView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
     private let meaningLabel = NSTextField(labelWithString: "")
@@ -419,6 +445,7 @@ final class TodoLedgerCellView: NSTableCellView {
     init(identifier: NSUserInterfaceItemIdentifier, controls: GraphiteFocusControls = GraphiteFocusControls()) {
         completionButton = controls.checkbox("", identifier: "task-complete")
         editButton = controls.button("Edit", identifier: "task-edit")
+        tagsButton = controls.button("Tags", identifier: "task-tags")
         super.init(frame: .zero)
         self.identifier = identifier
         buildLayout()
@@ -438,7 +465,12 @@ final class TodoLedgerCellView: NSTableCellView {
         statusLabel.textColor = presentation.color
         meaningLabel.stringValue = presentation.name.uppercased()
         meaningLabel.textColor = presentation.color
-        titleLabel.stringValue = item.title
+        let title = ItemTags.removingTags(from: item.title)
+        titleLabel.stringValue = title
+        tagChips?.removeFromSuperview()
+        let chips = ItemTagChipsView(tags: item.tags, identifier: "task-tag-chips-" + item.id)
+        tagChips = chips; itemDetail.addArrangedSubview(chips)
+        chips.widthAnchor.constraint(equalTo: itemDetail.widthAnchor).isActive = true
         GraphiteFocusOverflow.configurePrimaryTitle(titleLabel, fullText: item.title)
 
         var metadata: [String] = []
@@ -468,11 +500,12 @@ final class TodoLedgerCellView: NSTableCellView {
         heading.orientation = .horizontal
         heading.alignment = .firstBaseline
         heading.spacing = GraphiteFocusPresentation.Space.compact
-        let detail = NSStackView(views: [heading, metadataLabel])
+        let detail = itemDetail
+        detail.addArrangedSubview(heading); detail.addArrangedSubview(metadataLabel)
         detail.orientation = .vertical
         detail.alignment = .leading
         detail.spacing = GraphiteFocusPresentation.Space.primitive
-        let row = NSStackView(views: [completionButton, statusLabel, detail, editButton])
+        let row = NSStackView(views: [completionButton, statusLabel, detail, editButton, tagsButton])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = GraphiteFocusPresentation.Space.panel

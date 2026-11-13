@@ -1747,6 +1747,19 @@ final class MeetingManagementView: NSView {
                 }, save: { [weak self] item, draft, completion in
                     self?.meetingsModel.detail.editMeetingItem(item, text: draft.text, owner: draft.owner,
                         dueDate: draft.due.isEmpty ? nil : draft.due, status: draft.status, completion: completion)
+                }, tags: { [weak self] item, button in
+                    guard let self, let window = self.window else { return }
+                    ItemTagEditorView.present(selection: ItemTagSelection(itemID: item.id, tags: item.tags, catalog: detail.tagCatalog),
+                        in: window, source: button) { [weak self] mutation, completion in
+                        guard let self else { completion(.failure(MeetingManagementError.unavailable)); return }
+                        self.meetingsModel.detail.mutateTags(mutation) { [weak self] result in
+                            completion(result.flatMap { _ in
+                                guard let updated = self?.meetingsModel.detail.detail,
+                                      let current = updated.reviewItems.first(where: { $0.id == item.id }) else { return .failure(MeetingManagementError.unavailable) }
+                                return .success(ItemTagSelection(itemID: current.id, tags: current.tags, catalog: updated.tagCatalog))
+                            })
+                        }
+                    }
                 }, sources: { [weak self] item, controls in
                     let citations = item.citations.map { citation in
                         MeetingCitation(segmentID: citation.segmentID, startSeconds: citation.startSeconds,

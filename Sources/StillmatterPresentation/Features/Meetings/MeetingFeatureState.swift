@@ -94,6 +94,7 @@ public enum MeetingMutationState: Equatable {
 }
 
 public enum MeetingMutation {
+    case mutateTags(meetingID: String, mutation: ItemTagMutation)
     case reviewMeetingItems(meetingID: String, items: [MeetingReviewItem], accept: Bool)
     case editMeetingItem(meetingID: String, item: MeetingReviewItem, text: String, owner: String?, dueDate: String?, status: TodoStatus)
     case saveNotes(meetingID: String, text: String, baseVersion: WorkspaceFileVersion)
@@ -359,6 +360,14 @@ public final class MeetingDetailModel: ObservableObject {
     public func reviewMeetingItems(_ items: [MeetingReviewItem], accept: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let detail else { completion(.failure(MeetingManagementError.unavailable)); return }
         perform(.reviewMeetingItems(meetingID: detail.row.id, items: items, accept: accept), progress: "Saving review…", completion: completion) { [weak self] output in
+            guard case let .detail(updated) = output else { throw MeetingManagementError.unavailable }
+            self?.apply(updated)
+        }
+    }
+
+    public func mutateTags(_ mutation: ItemTagMutation, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let detail else { completion(.failure(MeetingManagementError.unavailable)); return }
+        perform(.mutateTags(meetingID: detail.row.id, mutation: mutation), progress: "Saving tags…", completion: completion) { [weak self] output in
             guard case let .detail(updated) = output else { throw MeetingManagementError.unavailable }
             self?.apply(updated)
         }

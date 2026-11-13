@@ -112,7 +112,7 @@ public struct MeetingTranscriptSegment: Equatable, Identifiable {
     }
 }
 public struct MeetingActionDraft: Equatable { public let title: String; public let comment: String; public init(title: String, comment: String) { self.title = title; self.comment = comment } }
-public struct MeetingBrowserDetail: Equatable { public var reviewItems: [MeetingReviewItem] = []; public var speakerCorrectionReview: [MeetingSpeakerCorrectionReview] = []; public var analysisOutdated = false; public var speakerReviewRequired = false; public let actionDrafts: [String: MeetingActionDraft]; public let decisions: [MeetingCitedOutcome]; public let openQuestions: [MeetingCitedOutcome]; public let transcript: [MeetingTranscriptSegment]; public let row: MeetingBrowserRow; public let doorwayText: String; public let doorwayVersion: WorkspaceFileVersion?; public let humanNotes: String; public let notesVersion: WorkspaceFileVersion?; public let artifacts: [MeetingArtifact]; public let job: MeetingJobPresentation?; public let jobs: [MeetingJobPresentation]; public let summaryVersion: WorkspaceFileVersion?; public let summary: MeetingSummarySections?; public let extraction: MeetingSummaryExtraction?; public let myActionItems: [MeetingActionItem]; public let otherActionItems: [MeetingActionItem]; public let staleProposals: [ActionItemProposal]; public let playback: MeetingPlayback
+public struct MeetingBrowserDetail: Equatable { public var tagCatalog: [String] = []; public var reviewItems: [MeetingReviewItem] = []; public var speakerCorrectionReview: [MeetingSpeakerCorrectionReview] = []; public var analysisOutdated = false; public var speakerReviewRequired = false; public let actionDrafts: [String: MeetingActionDraft]; public let decisions: [MeetingCitedOutcome]; public let openQuestions: [MeetingCitedOutcome]; public let transcript: [MeetingTranscriptSegment]; public let row: MeetingBrowserRow; public let doorwayText: String; public let doorwayVersion: WorkspaceFileVersion?; public let humanNotes: String; public let notesVersion: WorkspaceFileVersion?; public let artifacts: [MeetingArtifact]; public let job: MeetingJobPresentation?; public let jobs: [MeetingJobPresentation]; public let summaryVersion: WorkspaceFileVersion?; public let summary: MeetingSummarySections?; public let extraction: MeetingSummaryExtraction?; public let myActionItems: [MeetingActionItem]; public let otherActionItems: [MeetingActionItem]; public let staleProposals: [ActionItemProposal]; public let playback: MeetingPlayback
     public init(row: MeetingBrowserRow, doorwayText: String, doorwayVersion: WorkspaceFileVersion? = nil, humanNotes: String = "", notesVersion: WorkspaceFileVersion? = nil, artifacts: [MeetingArtifact] = [], job: MeetingJobPresentation? = nil, jobs: [MeetingJobPresentation] = [], summaryVersion: WorkspaceFileVersion? = nil, summary: MeetingSummarySections? = nil, extraction: MeetingSummaryExtraction? = nil, myActionItems: [MeetingActionItem] = [], otherActionItems: [MeetingActionItem] = [], staleProposals: [ActionItemProposal] = [], transcript: [MeetingTranscriptSegment] = [], decisions: [MeetingCitedOutcome] = [], openQuestions: [MeetingCitedOutcome] = [], playback: MeetingPlayback = MeetingPlayback(capability: .unavailable, message: "Recording Bundle unavailable"), actionDrafts: [String: MeetingActionDraft] = [:]) { self.actionDrafts=actionDrafts; self.decisions=decisions; self.openQuestions=openQuestions; self.transcript=transcript; self.playback=playback; self.row=row; self.doorwayText=doorwayText; self.doorwayVersion=doorwayVersion; self.humanNotes=humanNotes; self.notesVersion=notesVersion ?? doorwayVersion; self.artifacts=artifacts; self.job=job; self.jobs=jobs; self.summaryVersion=summaryVersion; self.summary=summary; self.extraction=extraction; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.staleProposals=staleProposals }
 }
 public enum MeetingManagementError: Error, Equatable, LocalizedError { case unavailable; case malformed(String); case notFound(String); case retryRejected(String)
@@ -175,6 +175,16 @@ public final class MeetingManagementService {
         try artifactStore.editReviewItem(item, text: text, owner: owner, dueDate: dueDate, status: status,
             meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id)
         onMeetingChanged([detail.row.meetingRelativePath])
+        return try self.detail(for: meetingID)
+    }
+
+    public func mutateTags(meetingID: String, mutation: ItemTagMutation) throws -> MeetingBrowserDetail {
+        let detail = try editableActionMeeting(meetingID)
+        if case let .set(id, _, _) = mutation {
+            guard detail.reviewItems.contains(where: { $0.id == id }) else { throw TodoItemMutationError.itemNotFound(id) }
+        }
+        try ItemTagStore(vault: vault).mutate(mutation)
+        onMeetingChanged(try list().map(\.meetingRelativePath))
         return try self.detail(for: meetingID)
     }
 
@@ -680,6 +690,7 @@ public final class MeetingManagementService {
             decisions: (validExtraction?.decisions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) },
             openQuestions: (validExtraction?.openQuestions ?? []).map { MeetingCitedOutcome(text: $0.text, citations: citations($0.citations)) }, playback: playback, actionDrafts: actionDrafts)
         if !usesLegacyArtifacts { detail.reviewItems = try artifactStore.reviewItems(meetingPath: path, meetingID: row.id) }
+        detail.tagCatalog = try ItemTagStore(vault: vault).tags()
         detail.speakerCorrectionReview = canonical.speakerCorrectionReview
         detail.analysisOutdated = canonical.analysisOutdated
         detail.speakerReviewRequired = canonical.speakerReviewRequired

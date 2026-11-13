@@ -41,6 +41,7 @@ public struct MeetingSummaryExtraction: Codable, Equatable {
     public let myActionItems: [MeetingOutcome]
     public let otherActionItems: [MeetingOutcome]
     public let openQuestions: [MeetingOutcome]
+    public let tagAdditions: [AIItemTagAddition]?
 
     public init(
         schemaVersion: Int = MeetingSummaryExtraction.currentSchemaVersion,
@@ -49,7 +50,8 @@ public struct MeetingSummaryExtraction: Codable, Equatable {
         decisions: [MeetingOutcome],
         myActionItems: [MeetingOutcome],
         otherActionItems: [MeetingOutcome],
-        openQuestions: [MeetingOutcome]
+        openQuestions: [MeetingOutcome],
+        tagAdditions: [AIItemTagAddition]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.meeting = meeting
@@ -58,6 +60,7 @@ public struct MeetingSummaryExtraction: Codable, Equatable {
         self.myActionItems = myActionItems
         self.otherActionItems = otherActionItems
         self.openQuestions = openQuestions
+        self.tagAdditions = tagAdditions
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -68,6 +71,7 @@ public struct MeetingSummaryExtraction: Codable, Equatable {
         case myActionItems = "my_action_items"
         case otherActionItems = "other_action_items"
         case openQuestions = "open_questions"
+        case tagAdditions = "tag_additions"
     }
 }
 
@@ -120,6 +124,7 @@ public enum MeetingSummaryJob {
             The extraction JSON must have schema_version=1, meeting and transcript matching the manifest paths, and arrays named decisions, my_action_items, other_action_items, and open_questions. Every array item must contain a stable id, concise text, and citations with segment_id, start_seconds, and end_seconds.
             For a silent/empty Transcript, return no invented outcomes and say no speech was detected. Unknown owners and due dates must remain unspecified in the text; never assign an unknown owner to Me.
             Classify only commitments assigned to the user/Me as my_action_items. Commitments assigned to anyone else belong in other_action_items.
+            Optionally return tag_additions: an array of objects containing only item_id (an existing canonical sm-item UUID) and tags (ordinary tag names without #). These are additive patches, automatically applied without another approval. Never remove tags, use ai-gen/need-approve, or include text, owner, review or completion mutations. New generated Action Items may include ordinary inline tags in their text.
             Read My Notes at \(notesPath) as protected context. Never rewrite or delete its content. When a transcript commitment is already represented by one of its note-authored checkboxes, do not extract a second Action Item; reuse that checkbox's exact sm-item UUID as the outcome id so the app can enforce the identity match. Do not infer a match from title similarity alone.
             """,
             primarySources: [
@@ -269,7 +274,8 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                 decisions: extraction.decisions,
                 myActionItems: extraction.myActionItems.filter { !duplicateNoteIDs.contains($0.id.lowercased()) },
                 otherActionItems: extraction.otherActionItems.filter { !duplicateNoteIDs.contains($0.id.lowercased()) },
-                openQuestions: extraction.openQuestions
+                openQuestions: extraction.openQuestions,
+                tagAdditions: extraction.tagAdditions
             )
         }
         let sanitizedExtractionData = try JSONEncoder().encode(extraction)
@@ -285,7 +291,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         try cancellation.performIfActive {
             try worker.requireTransferApproval()
             guard try Data(contentsOf: workspaceRootURL.appendingPathComponent(transcriptPath)) == transcriptData,
-                  try vault.versionOfMarkdown(relativePath: notesPath) == notesVersion else {
+                  (try vault.versionOfMarkdown(relativePath: notesPath) == notesVersion || (canonicalBase != nil && !(extraction.tagAdditions ?? []).isEmpty)) else {
                 throw MeetingSummaryError.invalidExtraction("Transcript or My Notes changed during analysis. Retry with current sources.")
             }
             if let canonicalBase, let canonicalID {
@@ -293,6 +299,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                     base: canonicalBase, meetingPath: transcript.meetingRelativePath, meetingID: canonicalID,
                     expectedExtraction: expectedVersions[paths.extraction] ?? nil)
             } else {
+                guard (extraction.tagAdditions ?? []).isEmpty else { throw MeetingSummaryError.invalidExtraction("Tag additions require adopted canonical items. Save My Notes and retry.") }
                 try vault.replaceMarkdownTransaction(publishedArtifacts.map {
                     WorkspaceMarkdownReplacement(relativePath: $0.relativePath, data: $0.data,
                         expectedVersion: expectedVersions[$0.relativePath] ?? nil)
