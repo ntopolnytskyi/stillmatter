@@ -94,6 +94,8 @@ public enum MeetingMutationState: Equatable {
 }
 
 public enum MeetingMutation {
+    case reviewMeetingItems(meetingID: String, items: [MeetingReviewItem], accept: Bool)
+    case editMeetingItem(meetingID: String, item: MeetingReviewItem, text: String, owner: String?, dueDate: String?, status: TodoStatus)
     case saveNotes(meetingID: String, text: String, baseVersion: WorkspaceFileVersion)
     case saveSummary(meetingID: String, sections: MeetingSummarySections, baseVersion: WorkspaceFileVersion)
     case saveActionDraft(id: String, title: String, comment: String)
@@ -352,6 +354,24 @@ public final class MeetingDetailModel: ObservableObject {
                                 completion: ((Result<Void, Error>) -> Void)? = nil) {
         perform(.saveActionDraft(id: id, title: title, comment: comment),
                 progress: "Saving Action Item…", completion: completion)
+    }
+
+    public func reviewMeetingItems(_ items: [MeetingReviewItem], accept: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let detail else { completion(.failure(MeetingManagementError.unavailable)); return }
+        perform(.reviewMeetingItems(meetingID: detail.row.id, items: items, accept: accept), progress: "Saving review…", completion: completion) { [weak self] output in
+            guard case let .detail(updated) = output else { throw MeetingManagementError.unavailable }
+            self?.apply(updated)
+        }
+    }
+
+    public func editMeetingItem(_ item: MeetingReviewItem, text: String, owner: String?, dueDate: String?, status: TodoStatus,
+                                completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let detail else { completion(.failure(MeetingManagementError.unavailable)); return }
+        perform(.editMeetingItem(meetingID: detail.row.id, item: item, text: text, owner: owner, dueDate: dueDate, status: status),
+                progress: "Saving Action Item…", completion: completion) { [weak self] output in
+            guard case let .detail(updated) = output else { throw MeetingManagementError.unavailable }
+            self?.apply(updated)
+        }
     }
 
     public func reviewAction(id: String, accept: Bool,

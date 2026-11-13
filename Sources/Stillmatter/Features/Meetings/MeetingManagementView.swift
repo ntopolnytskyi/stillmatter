@@ -81,6 +81,7 @@ final class MeetingManagementView: NSView {
     private enum EditableTextField { case notes, summary }
     let overviewPage = NSStackView()
     let actionItemsPage = NSStackView()
+    let canonicalActionReview = MeetingActionReviewView()
     let openItemsPage = NSStackView()
     let notesPage = NSStackView()
     let timelinePage = NSStackView()
@@ -1738,7 +1739,27 @@ final class MeetingManagementView: NSView {
                               reviewState: reviewState, citations: citations)
         }
         var groups: [MeetingOutcomeGroup] = []
-        if !detail.myActionItems.isEmpty {
+        if !detail.reviewItems.isEmpty {
+            canonicalActionReview.configure(meetingID: detail.row.id, items: detail.reviewItems,
+                editable: !detail.row.isArchived && !meetingsModel.isDirty,
+                review: { [weak self] items, accept, completion in
+                    self?.meetingsModel.detail.reviewMeetingItems(items, accept: accept, completion: completion)
+                }, save: { [weak self] item, draft, completion in
+                    self?.meetingsModel.detail.editMeetingItem(item, text: draft.text, owner: draft.owner,
+                        dueDate: draft.due.isEmpty ? nil : draft.due, status: draft.status, completion: completion)
+                }, sources: { [weak self] item, controls in
+                    let citations = item.citations.map { citation in
+                        MeetingCitation(segmentID: citation.segmentID, startSeconds: citation.startSeconds,
+                            endSeconds: citation.endSeconds, seekSeconds: detail.transcript.first(where: { $0.id == citation.segmentID })?.seekSeconds)
+                    }
+                    self?.appendSourceControls(for: MeetingOutcomeRow(id: item.id, text: item.text, provenance: item.origin,
+                        reviewState: nil, citations: citations), groupKind: .mine, detail: detail, to: controls)
+                })
+            myActionsContainer.addArrangedSubview(canonicalActionReview)
+            canonicalActionReview.widthAnchor.constraint(equalTo: myActionsContainer.widthAnchor).isActive = true
+        }
+
+        if detail.reviewItems.isEmpty && !detail.myActionItems.isEmpty {
             groups.append(MeetingOutcomeGroup(kind: .mine, title: "My actions", note: "Generated · review before adding to Todos",
                 rows: detail.myActionItems.map { item in
                     let proposalID = "meeting-action:\(detail.row.id):\(item.id)"
@@ -1748,7 +1769,7 @@ final class MeetingManagementView: NSView {
                                    reviewState: item.reviewState, citations: item.citations)
                 }))
         }
-        if !detail.otherActionItems.isEmpty {
+        if detail.reviewItems.isEmpty && !detail.otherActionItems.isEmpty {
             groups.append(MeetingOutcomeGroup(kind: .others, title: "Others’ actions", note: "Reference only",
                 rows: detail.otherActionItems.map {
                     makeRow($0.id, $0.text, provenance: "Reference only", citations: $0.citations)
@@ -1880,7 +1901,7 @@ final class MeetingManagementView: NSView {
             (decisionsContainer, "No Decisions recorded yet."),
             (questionsContainer, "No Open Items yet.")
         ]
-        for (container, message) in emptyMessages where container.arrangedSubviews.isEmpty {
+        for (container, message) in emptyMessages where container.arrangedSubviews.isEmpty && !(container === othersContainer && !detail.reviewItems.isEmpty) {
             let empty = NSTextField(wrappingLabelWithString: message)
             empty.font = GraphiteFocusPresentation.Typography.body
             empty.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textSecondary

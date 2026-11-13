@@ -732,3 +732,126 @@ final class MeetingArtifactStore {
         try JSONEncoder().encode(record).write(to: directory.appendingPathComponent(UUID().uuidString + ".json"), options: .atomic)
     }
 }
+
+extension MeetingArtifactStore {
+    func reviewItems(meetingPath: String, meetingID: String) throws -> [MeetingReviewItem] {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        let loaded = try load(meetingPath: meetingPath, meetingID: meetingID)
+        return try ["actions", "notes"].flatMap { kind -> [MeetingReviewItem] in
+            let path = try required(loaded.paths[kind], path: meetingPath, field: kind)
+            let source = try vault.readMarkdown(relativePath: path)
+            return String(decoding: source.data, as: UTF8.self).components(separatedBy: "\n").compactMap { line in
+                guard let checkbox = TodoMarkdownCheckbox.parse(line), let metadata = TodoItemParser.metadata(in: checkbox.text) else { return nil }
+                let parsed = TodoItemParser().parse(markdown: line, relativePath: path)[0]
+                return MeetingReviewItem(id: metadata.id, text: parsed.title, owner: metadata.owner,
+                    review: metadata.review, status: checkbox.status, dueDate: parsed.dueDate,
+                    citations: metadata.citations, path: path, version: source.version, rawLine: line, origin: metadata.origin)
+            }
+        }
+    }
+
+    /// Publishes every selected review decision, its queue references and legacy review
+    /// intents in one recoverable plan. Repeating an already committed decision is a no-op.
+    func reviewItems(_ expected: [MeetingReviewItem], accept: Bool, meetingPath: String, meetingID: String) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        let current = try reviewItems(meetingPath: meetingPath, meetingID: meetingID)
+        var changes: [(MeetingReviewItem, String)] = []
+        var seen: Set<String> = []
+        let statePath = sibling(meetingPath, "meeting-artifacts.json")
+        let stateSource = try vault.readMarkdown(relativePath: statePath)
+        var state = try JSONDecoder().decode(Manifest.self, from: stateSource.data)
+        for item in expected where seen.insert(item.id).inserted {
+            guard let actual = current.first(where: { $0.id == item.id }) else { throw MeetingManagementError.notFound(item.id) }
+            let decision = accept ? "approved" : "rejected"
+            if actual.review == decision { continue }
+            guard actual.isPending, actual.rawLine == item.rawLine else { throw TodoItemMutationError.staleCanonicalItem(item.id) }
+            guard !accept || actual.hasOwner else { throw malformed(actual.path, "Assign an owner before approval.") }
+            var metadata = try required(TodoItemParser.metadata(in: actual.rawLine), path: actual.path, field: "item metadata")
+            metadata.review = decision
+            let body = actual.rawLine.replacingOccurrences(of: #"\s*<!-- sm-item:.* -->\r?$"#, with: "", options: .regularExpression)
+            let clean = accept ? body.replacingOccurrences(of: #"(?:^|\s)#need-approve\b"#, with: "", options: .regularExpression) : body
+            changes.append((actual, clean + " <!-- sm-item:" + String(decoding: try JSONEncoder().encode(metadata), as: UTF8.self) + " -->"))
+            if let legacyID = metadata.legacyID {
+                state.reviewIntents["meeting-action:\(meetingID):\(legacyID)"] = accept ? "accepted" : "dismissed"
+            }
+        }
+        guard !changes.isEmpty else { return }
+        try publishItemChanges(changes, meetingID: meetingID, additional: [
+            .init(relativePath: statePath, data: try JSONEncoder().encode(state), expectedVersion: stateSource.version)
+        ])
+        _ = try load(meetingPath: meetingPath, meetingID: meetingID)
+    }
+
+    func editReviewItem(_ expected: MeetingReviewItem, text: String, owner: String?, dueDate: String?, status: TodoStatus,
+                        meetingPath: String, meetingID: String) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let owner = owner?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !text.contains(where: \.isNewline), !text.contains("<!--"),
+              owner?.contains(where: \.isNewline) != true else { throw malformed(expected.path, "Enter task text and owner on one line.") }
+        if let dueDate {
+            let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0); formatter.dateFormat = "yyyy-MM-dd"; formatter.isLenient = false
+            guard let date = formatter.date(from: dueDate), formatter.string(from: date) == dueDate else {
+                throw malformed(expected.path, "Use a valid due date in YYYY-MM-DD format, or leave it empty.")
+            }
+        }
+        let current = try reviewItems(meetingPath: meetingPath, meetingID: meetingID)
+        guard let actual = current.first(where: { $0.id == expected.id }), actual.rawLine == expected.rawLine else {
+            throw TodoItemMutationError.staleCanonicalItem(expected.id)
+        }
+        guard actual.status != .done || status == .done else { throw malformed(actual.path, "Completed items cannot be reopened in the app.") }
+        guard actual.review != "approved" || (owner != nil && owner != "" && owner != "unknown") else {
+            throw malformed(actual.path, "Approved items require an owner.")
+        }
+        let old = try required(TodoItemParser.metadata(in: actual.rawLine), path: actual.path, field: "item metadata")
+        let metadata = Item(v: old.v, id: old.id, owner: owner == "" ? nil : owner, review: old.review,
+            origin: old.origin, legacyID: old.legacyID, citations: old.citations)
+        let marker: String
+        switch status { case .open: marker = " "; case .blocked: marker = "B"; case .done: marker = "x"; case .canceled: marker = "C" }
+        let sourceRef = TodoItemParser().parse(markdown: actual.rawLine, relativePath: actual.path)[0].sourceRef
+        let body = ([text, dueDate.map { "due: " + $0 }, sourceRef].compactMap { $0 }).joined(separator: " ")
+        let line = "- [\(marker)] " + body + " <!-- sm-item:" + String(decoding: try JSONEncoder().encode(metadata), as: UTF8.self) + " -->"
+        try publishItemChanges([(actual, line)], meetingID: meetingID)
+    }
+
+    private func publishItemChanges(_ changes: [(MeetingReviewItem, String)], meetingID: String,
+                                    additional: [WorkspaceMarkdownReplacement] = []) throws {
+        var replacements = additional
+        for path in Set(changes.map { $0.0.path }).sorted() {
+            let source = try vault.readMarkdown(relativePath: path)
+            var lines = String(decoding: source.data, as: UTF8.self).components(separatedBy: "\n")
+            for (item, line) in changes where item.path == path {
+                guard let index = lines.firstIndex(of: item.rawLine) else { throw TodoItemMutationError.staleCanonicalItem(item.id) }
+                lines[index] = line
+            }
+            replacements.append(.init(relativePath: path, data: Data(lines.joined(separator: "\n").utf8), expectedVersion: source.version))
+        }
+        let queuePath = TodoItemIndex.mainTodoRelativePath
+        let queue = try optional(queuePath)
+        var queueText = queue.map { String(decoding: $0.data, as: UTF8.self) } ?? "# Todos\n\n## Queue\n\n## Done\n"
+        var newReferences: [TodoItemDraft] = []
+        for (item, line) in changes {
+            let metadata = try required(TodoItemParser.metadata(in: line), path: item.path, field: "item metadata")
+            let personal = metadata.owner == "me" && metadata.review == "approved"
+            let reference = "[[item:" + item.id.lowercased()
+            let hasReference = queueText.components(separatedBy: "\n").contains { $0.contains(reference + "|") || $0.contains(reference + "]]") }
+            if !personal {
+                queueText = queueText.components(separatedBy: "\n").filter { !$0.contains(reference + "|") && !$0.contains(reference + "]]") }.joined(separator: "\n")
+            } else if !hasReference {
+                let title = TodoItemParser().parse(markdown: line, relativePath: item.path)[0].title.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: "]]", with: "")
+                newReferences.append(TodoItemDraft(title: reference + "|" + title + "]]"))
+            }
+        }
+        if !newReferences.isEmpty {
+            queueText = TodoItemMutator.insertingInQueue(newReferences, into: queueText)
+            for (item, _) in changes {
+                queueText = queueText.replacingOccurrences(of: "- [ ] [[item:" + item.id.lowercased(), with: "- [[item:" + item.id.lowercased())
+            }
+        }
+        if queue?.data != Data(queueText.utf8) {
+            replacements.append(.init(relativePath: queuePath, data: Data(queueText.utf8), expectedVersion: queue?.version))
+        }
+        try MeetingArtifactTransaction(vault: vault, identity: meetingID, checkpoint: checkpoint).publish(replacements)
+    }
+}

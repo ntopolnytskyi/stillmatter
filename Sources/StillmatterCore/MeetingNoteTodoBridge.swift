@@ -88,7 +88,7 @@ public final class MeetingNoteTodoBridge {
                          expectedQueueVersion: WorkspaceFileVersion) throws -> WorkspaceFileVersion {
         let normalizedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedOwner.isEmpty else { throw TodoItemMutationError.invalidOwner(owner) }
-        guard let item = try canonicalNoteItem(itemID) else { throw TodoItemMutationError.itemNotFound(itemID) }
+        guard let item = try canonicalItem(itemID) else { throw TodoItemMutationError.itemNotFound(itemID) }
         return try update(item: item, expectedQueueVersion: expectedQueueVersion) { line, metadata in
             let reassigned = MeetingItemMetadata(v: metadata.v, id: metadata.id, owner: normalizedOwner,
                 review: metadata.review, origin: metadata.origin, legacyID: metadata.legacyID, citations: metadata.citations)
@@ -133,7 +133,7 @@ public final class MeetingNoteTodoBridge {
         guard queue.version == expectedQueueVersion else {
             throw WorkspaceVaultError.conflict(relativePath: queuePath, expected: expectedQueueVersion, actual: queue.version)
         }
-        guard let current = try canonicalNoteItem(item.id),
+        guard let current = try canonicalItem(item.id),
               current.rawText == item.rawText, current.status == item.status else { throw TodoItemMutationError.staleCanonicalItem(item.id) }
         let location = current.location
         let source = try vault.readMarkdown(relativePath: location.relativePath)
@@ -167,8 +167,8 @@ public final class MeetingNoteTodoBridge {
         return (String(decoding: try vault.readMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath).data, as: UTF8.self), version)
     }
 
-    private func canonicalNoteItem(_ id: String) throws -> TodoItem? {
-        for path in try vault.markdownPaths(relativeTo: "Meetings") where (path as NSString).lastPathComponent == "my-notes.md" {
+    private func canonicalItem(_ id: String) throws -> TodoItem? {
+        for path in try vault.markdownPaths(relativeTo: "Meetings") where ["my-notes.md", "action-items.md"].contains((path as NSString).lastPathComponent) {
             let source = try vault.readMarkdown(relativePath: path)
             let text = String(decoding: source.data, as: UTF8.self)
             if let item = TodoItemParser().parse(markdown: text, relativePath: path).first(where: { $0.id == id }) {

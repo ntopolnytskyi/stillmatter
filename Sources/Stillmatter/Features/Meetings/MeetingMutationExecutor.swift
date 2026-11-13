@@ -36,6 +36,10 @@ final class MeetingMutationExecutor: MeetingMutationExecuting {
                     throw MeetingManagementError.unavailable
                 }
                 switch mutation {
+                case let .reviewMeetingItems(meetingID, items, accept):
+                    return .detail(try service.reviewMeetingItems(meetingID: meetingID, items: items, accept: accept))
+                case let .editMeetingItem(meetingID, item, text, owner, dueDate, status):
+                    return .detail(try service.editMeetingItem(meetingID: meetingID, item: item, text: text, owner: owner, dueDate: dueDate, status: status))
                 case let .saveNotes(meetingID, text, baseVersion):
                     return .detail(try service.saveHumanNotes(text, for: meetingID, expectedVersion: baseVersion))
                 case let .saveSummary(meetingID, sections, baseVersion):

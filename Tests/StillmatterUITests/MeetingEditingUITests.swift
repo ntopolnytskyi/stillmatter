@@ -117,7 +117,7 @@ extension StillmatterFlowsUITests {
         let summaryTab = app.radioButtons["Summary"]
         summaryTab.click()
         summaryTab.typeKey(.rightArrow, modifierFlags: [.command, .option])
-        let editAction = app.buttons["meeting-action-edit-meeting-action:ui-fixture:action-fixture"]
+        let editAction = app.buttons["meeting-actions-accept-mine"]
         XCTAssertTrue(editAction.waitForExistence(timeout: 5))
         summaryTab.click()
         app.buttons["meeting-open-action-items"].click()
@@ -128,7 +128,7 @@ extension StillmatterFlowsUITests {
         app.radioButtons["My Notes"].click()
         XCTAssertTrue(app.buttons["meeting-overview-edit-notes"].waitForExistence(timeout: 5))
         app.radioButtons["Transcript"].click()
-        XCTAssertTrue(app.buttons["Play Meeting audio"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Meeting audio"].waitForExistence(timeout: 5))
         app.radioButtons["Summary"].click()
         XCTAssertTrue(app.staticTexts["Decisions"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any).matching(
@@ -598,7 +598,7 @@ extension StillmatterFlowsUITests {
     }
 
     func seedMeeting(transcript: Bool = false, notes: String = "Original notes.",
-                     myActionItem: String? = nil, savedActionTitle: String? = nil, multipleSpeakers: Bool = false, mixedTimeline: Bool = false) throws {
+                     myActionItem: String? = nil, savedActionTitle: String? = nil, otherActionItem: String? = nil, multipleSpeakers: Bool = false, mixedTimeline: Bool = false) throws {
         // Prepare before launch so discovery does not depend on filesystem watcher timing.
         app.terminate()
         let directory = meetingURL.deletingLastPathComponent()
@@ -620,8 +620,12 @@ extension StillmatterFlowsUITests {
             let myActionItems = myActionItem.map {
                 #"[{"id":"action-fixture","text":"\#($0)","citations":[]}]"#
             } ?? "[]"
-            let extractionWithAction = extraction.replacingOccurrences(
+            var extractionWithAction = extraction.replacingOccurrences(
                 of: "\"my_action_items\":[]", with: "\"my_action_items\":\(myActionItems)")
+            if let otherActionItem {
+                extractionWithAction = extractionWithAction.replacingOccurrences(of: "\"other_action_items\":[]",
+                    with: "\"other_action_items\":[{\"id\":\"unknown\",\"text\":\"" + otherActionItem + "\",\"citations\":[]}]")
+            }
             if mixedTimeline {
                 var mixed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(extractionWithAction.utf8)) as? [String: Any])
                 let citation: [String: Any] = ["segment_id": "s0", "start_seconds": 0, "end_seconds": 1]
