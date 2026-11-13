@@ -364,6 +364,24 @@ public final class MeetingManagementService {
             throw error
         }
     }
+    public func saveOutcome(_ entry: MeetingOutcomeEntry, delete: Bool = false, for id: String,
+                            expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
+        let detail = try self.detail(for: id)
+        guard !detail.row.isArchived, var sections = detail.summary else { throw MeetingManagementError.unavailable }
+        let isDecision = entry.kind == .decision
+        let body = isDecision ? sections.decisions : sections.openQuestions
+        let old = try MeetingOutcomeDocument.entries(in: body, defaultKind: isDecision ? .decision : .question).first { $0.id == entry.id }
+        if let old, old.resolved && !entry.resolved { throw MeetingManagementError.retryRejected("Resolved items cannot be reopened in the app.") }
+        for citation in entry.citations where old?.citations.contains(citation) != true {
+            guard detail.transcript.contains(where: { $0.id == citation.segmentID && $0.startSeconds == citation.startSeconds && $0.endSeconds == citation.endSeconds }) else {
+                throw MeetingManagementError.retryRejected("Select an available Transcript source.")
+            }
+        }
+        let changed = try MeetingOutcomeDocument.replacing(entry, in: body, delete: delete)
+        if isDecision { sections.decisions = changed } else { sections.openQuestions = changed }
+        return try saveSummary(sections, for: id, expectedVersion: expectedVersion)
+    }
+
     public func sourceArtifacts(for id: String) throws -> [MeetingArtifact] { try detail(for:id).artifacts }
 
     private struct ArchiveMarker: Codable { let archived: Bool }

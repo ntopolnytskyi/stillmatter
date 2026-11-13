@@ -94,6 +94,7 @@ public enum MeetingMutationState: Equatable {
 }
 
 public enum MeetingMutation {
+    case saveOutcome(meetingID: String, entry: MeetingOutcomeEntry, delete: Bool, baseVersion: WorkspaceFileVersion)
     case mutateTags(meetingID: String, mutation: ItemTagMutation)
     case reviewMeetingItems(meetingID: String, items: [MeetingReviewItem], accept: Bool)
     case editMeetingItem(meetingID: String, item: MeetingReviewItem, text: String, owner: String?, dueDate: String?, status: TodoStatus)
@@ -172,6 +173,7 @@ public final class MeetingDetailModel: ObservableObject {
     @Published public private(set) var isShowingStaleDetail = false
     @Published public private(set) var page: MeetingDetailPage = .summary
     @Published public private(set) var notesDraft: MeetingTextDraft?
+    @Published public private(set) var outcomeDraft: MeetingOutcomeDraft?
     @Published public private(set) var summaryDraft: MeetingTextDraft?
     @Published public private(set) var mutationState: MeetingMutationState = .idle
     @Published public private(set) var selectedActionProposalIDs: Set<String> = []
@@ -191,7 +193,7 @@ public final class MeetingDetailModel: ObservableObject {
     public init() {}
 
     public var selectedMeetingID: String? { selectedReference?.id }
-    public var hasDirtyDrafts: Bool { notesDraft?.isDirty == true || summaryDraft?.isDirty == true }
+    public var hasDirtyDrafts: Bool { outcomeDraft != nil || notesDraft?.isDirty == true || summaryDraft?.isDirty == true }
     public var isMutationInFlight: Bool { mutationInFlight }
 
     public func bind(readModel: MeetingReadModel?, mutationExecutor: MeetingMutationExecuting?,
@@ -237,6 +239,7 @@ public final class MeetingDetailModel: ObservableObject {
             detail = nil
             notesDraft = nil
             summaryDraft = nil
+            outcomeDraft = nil
             loadState = .idle
             isShowingStaleDetail = false
             playbackTransport?.stop()
@@ -249,6 +252,7 @@ public final class MeetingDetailModel: ObservableObject {
             detail = nil
             notesDraft = nil
             summaryDraft = nil
+            outcomeDraft = nil
             selectedActionProposalIDs = []
             playbackTransport?.stop()
         }
@@ -298,6 +302,7 @@ public final class MeetingDetailModel: ObservableObject {
     }
 
     public func reloadDraftsAfterConfirmation() {
+        outcomeDraft = nil
         guard let detail else { return }
         notesDraft?.reload(originalText: detail.humanNotes, baseVersion: detail.notesVersion)
         summaryDraft?.reload(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion)
@@ -332,8 +337,28 @@ public final class MeetingDetailModel: ObservableObject {
         }
     }
 
+    public func beginOutcome(_ entry: MeetingOutcomeEntry) {
+        guard !hasDirtyDrafts, let detail, !detail.row.isArchived, let version = detail.summaryVersion else { return }
+        outcomeDraft = MeetingOutcomeDraft(entry: entry, baseVersion: version)
+    }
+
+    public func updateOutcome(_ entry: MeetingOutcomeEntry) { outcomeDraft?.entry = entry }
+    public func cancelOutcome() { outcomeDraft = nil }
+
+    public func saveOutcome(delete: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let detail, let draft = outcomeDraft else { completion(.failure(MeetingManagementError.unavailable)); return }
+        perform(.saveOutcome(meetingID: detail.row.id, entry: draft.entry, delete: delete, baseVersion: draft.baseVersion),
+                progress: "Saving item…", completion: completion) { [weak self] output in
+            guard case let .detail(saved) = output else { throw MeetingManagementError.unavailable }
+            self?.outcomeDraft = nil
+            self?.apply(saved)
+        }
+    }
+
     public func saveDirtyDrafts(completion: @escaping (Result<Void, Error>) -> Void) {
-        if notesDraft?.isDirty == true {
+        if outcomeDraft != nil {
+            saveOutcome(completion: completion)
+        } else if notesDraft?.isDirty == true {
             saveNotes { [weak self] result in
                 switch result {
                 case .failure: completion(result)

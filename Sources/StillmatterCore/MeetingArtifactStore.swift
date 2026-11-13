@@ -341,9 +341,11 @@ final class MeetingArtifactStore {
             }
             retainedLines.append(raw)
         }
+        let previousOutcomes = try outcomes(base.sections.decisions, path: base.paths["decisions"] ?? meetingPath)
+            + outcomes(base.sections.openQuestions, path: base.paths["open"] ?? meetingPath)
         func render(_ values: [MeetingOutcome], owner: String?, checkboxes: Bool) throws -> String {
             try values.filter { !checkboxes || !preservedIDs.contains($0.id) }.map { value in
-                let old = checkboxes ? oldGenerated[value.id] : nil
+                let old = checkboxes ? oldGenerated[value.id] : previousOutcomes.first { $0.outcome.id == value.id }?.item
                 let metadata = Item(v: 1, id: old?.id ?? UUID().uuidString.lowercased(), owner: owner,
                     review: "pending", origin: "generated", legacyID: value.id, citations: value.citations)
                 let oldTags = currentItems.first(where: { $0.outcome.id == value.id }).map { ItemTags.read($0.outcome.text) } ?? []

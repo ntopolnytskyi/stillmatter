@@ -93,6 +93,8 @@ final class MeetingManagementView: NSView {
     lazy var diagnosticsDisclosure = controls.checkbox("Processing & source files", identifier: "meeting-diagnostics")
     let diagnostics = NSStackView()
     let decisionsContainer = NSStackView()
+    let decisionEditor = MeetingOutcomeEditorView()
+    let openItemEditor = MeetingOutcomeEditorView()
     let othersContainer = NSStackView()
     let questionsContainer = NSStackView()
     private let summaryActionItems = NSStackView()
@@ -1868,20 +1870,6 @@ final class MeetingManagementView: NSView {
                     makeRow($0.id, $0.text, provenance: "Reference only", citations: $0.citations)
                 }))
         }
-        if !detail.decisions.isEmpty {
-            groups.append(MeetingOutcomeGroup(kind: .decisions, title: "Decisions", note: "\(detail.decisions.count) captured",
-                rows: detail.decisions.enumerated().map {
-                    makeRow("decision-\($0.offset)", $0.element.text,
-                            provenance: "Generated from meeting", citations: $0.element.citations)
-                }))
-        }
-        if !detail.openQuestions.isEmpty {
-            groups.append(MeetingOutcomeGroup(kind: .questions, title: "Open questions", note: "\(detail.openQuestions.count) captured",
-                rows: detail.openQuestions.enumerated().map {
-                    makeRow("question-\($0.offset)", $0.element.text,
-                            provenance: "Generated from meeting", citations: $0.element.citations)
-                }))
-        }
         let summaryActionItems = detail.myActionItems.map { item in
             let proposalID = "meeting-action:\(detail.row.id):\(item.id)"
             return detail.actionDrafts[proposalID]?.title ?? item.text
@@ -1987,6 +1975,20 @@ final class MeetingManagementView: NSView {
             }
             container.addArrangedSubview(section)
             section.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        }
+        for (editor, container, kind) in [(decisionEditor, decisionsContainer, MeetingOutcomeKind.decision),
+                                           (openItemEditor, questionsContainer, MeetingOutcomeKind.question)] {
+            editor.configure(detail: detail, kind: kind, model: meetingsModel.detail) { [weak self] entry, controls in
+                let citations = entry.citations.map { citation in
+                    MeetingCitation(segmentID: citation.segmentID, startSeconds: citation.startSeconds,
+                        endSeconds: citation.endSeconds, seekSeconds: detail.transcript.first { $0.id == citation.segmentID }?.seekSeconds)
+                }
+                let row = MeetingOutcomeRow(id: entry.id, text: entry.text, provenance: "", reviewState: nil, citations: citations)
+                self?.appendSourceControls(for: row, groupKind: kind == .decision ? .decisions : .questions, detail: detail, to: controls)
+                if entry.citations.isEmpty { controls.addArrangedSubview(NSTextField(labelWithString: "No source linked")) }
+            }
+            container.addArrangedSubview(editor)
+            editor.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         }
         let emptyMessages: [(NSStackView, String)] = [
             (myActionsContainer, "No personal Action Items yet."),

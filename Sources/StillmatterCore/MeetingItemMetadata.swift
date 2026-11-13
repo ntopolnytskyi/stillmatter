@@ -4,13 +4,15 @@ import Foundation
 struct MeetingItemMetadata: Codable {
         let v: Int
         let id: String
-        let owner: String?
+        var owner: String?
         var review: String
         let origin: String
         let legacyID: String?
-        let citations: [MeetingOutcomeCitation]
+        var citations: [MeetingOutcomeCitation]
+        var kind: MeetingOutcomeKind?
+        var resolved: Bool?
 
-        enum CodingKeys: String, CodingKey { case v, id, owner, review, origin, legacyID, citations }
+        enum CodingKeys: String, CodingKey { case v, id, owner, review, origin, legacyID, citations, kind, resolved }
         init(v: Int, id: String, owner: String?, review: String, origin: String, legacyID: String?, citations: [MeetingOutcomeCitation]) {
             self.v = v; self.id = id; self.owner = owner; self.review = review; self.origin = origin; self.legacyID = legacyID; self.citations = citations
         }
@@ -22,6 +24,8 @@ struct MeetingItemMetadata: Codable {
             review = try values.decode(String.self, forKey: .review)
             origin = try values.decode(String.self, forKey: .origin)
             legacyID = try values.decodeIfPresent(String.self, forKey: .legacyID)
+            kind = try values.decodeIfPresent(MeetingOutcomeKind.self, forKey: .kind)
+            resolved = try values.decodeIfPresent(Bool.self, forKey: .resolved)
             citations = try values.decodeIfPresent([MeetingOutcomeCitation].self, forKey: .citations) ?? []
         }
 }
