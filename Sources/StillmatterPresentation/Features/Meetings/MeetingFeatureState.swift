@@ -342,8 +342,26 @@ public final class MeetingDetailModel: ObservableObject {
         outcomeDraft = MeetingOutcomeDraft(entry: entry, baseVersion: version)
     }
 
-    public func updateOutcome(_ entry: MeetingOutcomeEntry) { outcomeDraft?.entry = entry }
-    public func cancelOutcome() { outcomeDraft = nil }
+    public func updateOutcome(_ entry: MeetingOutcomeEntry) {
+        guard !mutationInFlight else { return }; outcomeDraft?.entry = entry
+    }
+    public func cancelOutcome() { outcomeDraft = nil; refreshSelectedDetail() }
+
+    /// An explicit user decision replaces only this item against freshly read content.
+    public func retryOutcomeWithLatest(delete: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
+        refreshSelectedDetail { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case let .failure(error): completion(.failure(error))
+            case let .success(detail):
+                guard self.outcomeDraft != nil, let version = detail.summaryVersion else {
+                    completion(.failure(MeetingManagementError.unavailable)); return
+                }
+                self.outcomeDraft?.baseVersion = version
+                self.saveOutcome(delete: delete, completion: completion)
+            }
+        }
+    }
 
     public func saveOutcome(delete: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let detail, let draft = outcomeDraft else { completion(.failure(MeetingManagementError.unavailable)); return }

@@ -62,9 +62,9 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(app.textFields[open + "-owner"].value as? String, "Alice")
         XCTAssertFalse(app.checkBoxes[open + "-resolved"].isEnabled)
         app.buttons[open + "-cancel"].click()
-        app.buttons[open + "-delete-" + issue].click(); feedback(open, contains: "Changes saved")
+        app.buttons[open + "-delete-" + issue].click(); app.buttons["Delete"].click(); feedback(open, contains: "Changes saved")
         app.radioButtons["Summary"].click()
-        app.buttons[decision + "-delete-" + id].click(); feedback(decision, contains: "Changes saved")
+        app.buttons[decision + "-delete-" + id].click(); app.buttons["Delete"].click(); feedback(decision, contains: "Changes saved")
         XCTAssertFalse(try String(contentsOf: url, encoding: .utf8).contains(id))
         XCTAssertFalse(try String(contentsOf: directory.appendingPathComponent("open-items.md"), encoding: .utf8).contains(issue))
     }

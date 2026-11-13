@@ -1709,7 +1709,8 @@ final class MeetingManagementView: NSView {
         }
         segmentLabels = []
         for container in [myActionsContainer, decisionsContainer, othersContainer, questionsContainer] {
-            container.arrangedSubviews.forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
+            container.arrangedSubviews.filter { !preserveTranscriptReader || ($0 !== decisionEditor && $0 !== openItemEditor) }
+                .forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
         actionRows = [:]
         pendingActionIDs = []
@@ -1805,7 +1806,8 @@ final class MeetingManagementView: NSView {
 
     private func renderOutcomes(_ detail: MeetingBrowserDetail) {
         for container in [myActionsContainer, decisionsContainer, othersContainer, questionsContainer] {
-            container.arrangedSubviews.forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
+            container.arrangedSubviews.filter { $0 !== decisionEditor && $0 !== openItemEditor }
+                .forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
         for container in [summaryActionItems, summaryOtherItems] {
             container.arrangedSubviews.forEach { container.removeArrangedSubview($0); $0.removeFromSuperview() }
@@ -1987,8 +1989,10 @@ final class MeetingManagementView: NSView {
                 self?.appendSourceControls(for: row, groupKind: kind == .decision ? .decisions : .questions, detail: detail, to: controls)
                 if entry.citations.isEmpty { controls.addArrangedSubview(NSTextField(labelWithString: "No source linked")) }
             }
-            container.addArrangedSubview(editor)
-            editor.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+            if editor.superview !== container {
+                container.addArrangedSubview(editor)
+                editor.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+            }
         }
         let emptyMessages: [(NSStackView, String)] = [
             (myActionsContainer, "No personal Action Items yet."),
