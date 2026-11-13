@@ -24,6 +24,15 @@ final class MeetingWaveformCell: NSSliderCell {
         didSet { controlView?.needsDisplay = true }
     }
 
+    static func markerColor(_ symbol: String, colors: GraphiteFocusPresentation.Colors) -> NSColor {
+        switch symbol {
+        case "D": return colors.success
+        case "A": return colors.accent
+        case "Q": return colors.attention
+        default: return colors.informational
+        }
+    }
+
     override func drawBar(inside rect: NSRect, flipped: Bool) {
         guard let view = controlView else { return }
         let bounds = view.bounds.insetBy(dx: 10, dy: 5)
@@ -48,7 +57,7 @@ final class MeetingWaveformCell: NSSliderCell {
             let x = bounds.minX + CGFloat(marker.fraction) * bounds.width
             for (lane, symbol) in ["S", "D", "A", "Q"].enumerated() where marker.symbols.contains(symbol) {
                 (symbol as NSString).draw(at: NSPoint(x: x, y: bounds.maxY - 10 - CGFloat(lane) * 10),
-                    withAttributes: [.font: GraphiteFocusPresentation.Typography.metadata, .foregroundColor: colors.textPrimary])
+                    withAttributes: [.font: GraphiteFocusPresentation.Typography.metadata, .foregroundColor: Self.markerColor(symbol, colors: colors)])
             }
         }
     }

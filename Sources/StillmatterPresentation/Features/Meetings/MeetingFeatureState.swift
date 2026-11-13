@@ -94,6 +94,7 @@ public enum MeetingMutationState: Equatable {
 }
 
 public enum MeetingMutation {
+    case createTranscriptItem(meetingID: String, draft: TranscriptLinkedItem, baseVersion: WorkspaceFileVersion)
     case saveOutcome(meetingID: String, entry: MeetingOutcomeEntry, delete: Bool, baseVersion: WorkspaceFileVersion)
     case mutateTags(meetingID: String, mutation: ItemTagMutation)
     case reviewMeetingItems(meetingID: String, items: [MeetingReviewItem], accept: Bool)
@@ -334,6 +335,16 @@ public final class MeetingDetailModel: ObservableObject {
             guard case let .detail(saved) = output else { throw MeetingManagementError.unavailable }
             self?.apply(saved)
             self?.summaryDraft?.saved(text: saved.summary?.summary ?? "", baseVersion: saved.summaryVersion)
+        }
+    }
+
+    public func createTranscriptItem(_ draft: TranscriptLinkedItem, baseVersion: WorkspaceFileVersion,
+                                     completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let detail else { completion(.failure(MeetingManagementError.unavailable)); return }
+        perform(.createTranscriptItem(meetingID: detail.row.id, draft: draft, baseVersion: baseVersion),
+                progress: "Saving linked item…", completion: completion) { [weak self] output in
+            guard case let .detail(saved) = output else { throw MeetingManagementError.unavailable }
+            self?.apply(saved)
         }
     }
 

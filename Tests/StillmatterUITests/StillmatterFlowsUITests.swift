@@ -103,6 +103,12 @@ final class StillmatterFlowsUITests: XCTestCase {
                 ["id": "late", "start": 6.0, "end": 7.0, "text": "Later synthetic speech", "language": "en", "track": "system-audio", "speaker": "Guest"]]]
         let transcriptURL = directory.appendingPathComponent("transcript.json")
         try JSONSerialization.data(withJSONObject: transcript).write(to: transcriptURL)
+        // Use the public serialized extraction format, with all four marker categories.
+        let evidence: [String: Any] = ["segment_id": "early", "start_seconds": 2.0, "end_seconds": 3.0]
+        let outcome: [String: Any] = ["id": "marker", "text": "Fixture annotation", "citations": [evidence]]
+        let extraction: [String: Any] = ["schema_version": 1, "meeting": "Meetings/audio/meeting.md", "transcript": "Meetings/audio/transcript.json",
+            "decisions": [outcome], "my_action_items": [outcome], "other_action_items": [], "open_questions": [outcome]]
+        try JSONSerialization.data(withJSONObject: extraction).write(to: directory.appendingPathComponent("summary-extraction.json"))
         let transcriptBefore = try Data(contentsOf: transcriptURL)
         let newMedia = fixtureRoot.appendingPathComponent("workspace/RecordingMedia/2026")
         try FileManager.default.createDirectory(at: newMedia, withIntermediateDirectories: true)
@@ -137,6 +143,19 @@ final class StillmatterFlowsUITests: XCTestCase {
         waitForExpectations(timeout: 5)
         XCTAssertEqual(String(describing: try XCTUnwrap(slider.value)), beforeArrow)
         XCTAssertTrue(app.buttons["Play Meeting audio"].exists, "Seeking must preserve paused playback")
+        let markers = app.popUpButtons["meeting-playback-markers"]
+        XCTAssertTrue(markers.isEnabled)
+        markers.click()
+        app.typeKey("q", modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Play Meeting audio"].exists)
+        let actions = app.popUpButtons["transcript-actions-early"]
+        actions.click()
+        app.typeKey("j", modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.buttons["Play Meeting audio"].exists)
+
         app.buttons["Play Meeting audio"].click()
         slider.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5),

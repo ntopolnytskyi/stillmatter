@@ -28,6 +28,9 @@ public enum TranscriptTimelineProjection {
         for action in detail.otherActionItems {
             append(kind: .action, id: action.id, text: action.text, context: "Others’ action · reference only", citations: action.citations)
         }
+        for (index, question) in detail.openQuestions.enumerated() {
+            append(kind: .question, id: "question-\(index)", text: question.text, context: "Cited Open Item", citations: question.citations)
+        }
         return rows
     }
 }

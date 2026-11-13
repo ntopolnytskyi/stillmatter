@@ -264,6 +264,37 @@ final class TranscriptReaderHostedTests: XCTestCase {
     }
 
     @MainActor
+    func testLinkedCreationAndJumpMenusHaveKeyboardControlsAndUnavailableStates() throws {
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls())
+        let phrase = TranscriptReaderPhrase(id: "late", seconds: 7200, speaker: "Guest", text: "Send report", seekSeconds: 7202)
+        var created: [String] = []
+        var sought: TranscriptReaderPhrase?
+        reader.configureLinkedItems(enabled: true) { phrase, kind in created.append(phrase.sourceSegmentID + ":" + kind.rawValue) }
+        reader.load(meetingID: "one", phrases: [phrase], hasAudio: true, seek: { sought = $0 })
+        reader.state.reveal(id: "late"); reader.moveNextMatch()
+        let text: NSTextField = try find("transcript-text-late", in: reader)
+        XCTAssertEqual(text.menu?.items.map(\.title), ["Copy text", "Copy with timestamp", "Copy speaker", "Add Action Item…", "Add Decision…", "Add note…", "Jump to moment"])
+        let actions: NSPopUpButton = try find("transcript-actions-late", in: reader)
+        XCTAssertEqual(actions.menu?.items.dropFirst().map(\.title), text.menu?.items.map(\.title))
+        let menu = try XCTUnwrap(text.menu)
+        for item in menu.items[3...5] { reader.createLinkedItem(item) }
+        XCTAssertEqual(created, ["late:Action Item", "late:Decision", "late:note"])
+        reader.jumpToMoment(menu.items[6])
+        XCTAssertEqual(reader.state.selectedID, "late"); XCTAssertEqual(sought?.seekSeconds, 7202)
+        reader.configureLinkedItems(enabled: false) { _, _ in XCTFail("Disabled creation") }
+        let disabled: NSTextField = try find("transcript-text-late", in: reader)
+        XCTAssertTrue(disabled.menu!.items[3...5].allSatisfy { !$0.isEnabled })
+        reader.createLinkedItem(menu.items[3])
+        reader.load(meetingID: "one", phrases: [phrase], hasAudio: false, seek: { _ in XCTFail("Missing audio") })
+        let missing: NSTextField = try find("transcript-text-late", in: reader)
+        XCTAssertFalse(try XCTUnwrap(missing.menu?.items.last).isEnabled)
+        reader.jumpToMoment(menu.items[6])
+        reader.load(meetingID: "one", phrases: [], hasAudio: false, seek: { _ in XCTFail("Missing source") })
+        reader.createLinkedItem(menu.items[3])
+        reader.jumpToMoment(menu.items[6])
+    }
+
+    @MainActor
     private func find<T: NSView>(_ id: String, in view: NSView) throws -> T {
         if view.accessibilityIdentifier() == id, let result = view as? T { return result }
         for child in view.subviews { if let found: T = try? find(id, in: child) { return found } }

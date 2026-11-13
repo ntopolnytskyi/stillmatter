@@ -197,6 +197,20 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         view.waveform.doubleValue = 0.25
         view.waveform.sendAction(view.waveform.action, to: view.waveform.target)
         XCTAssertEqual(controller.state.position, 0.25)
+        XCTAssertTrue(view.markerPicker.isEnabled)
+        let markers = try XCTUnwrap(view.markerPicker.menu).items.dropFirst()
+        XCTAssertEqual(markers.count, 6)
+        for item in markers {
+            view.selectPlaybackMarker(item)
+            XCTAssertEqual(view.timelineNavigation.jump?.segmentID, item.title.hasSuffix("two") ? "two" : "one")
+            XCTAssertEqual(controller.state.position, item.title.hasSuffix("two") ? 1.25 : 0.25, accuracy: 0.001)
+            XCTAssertFalse(controller.state.isPlaying)
+        }
+        controller.play()
+        view.selectPlaybackMarker(try XCTUnwrap(markers.first))
+        XCTAssertTrue(controller.state.isPlaying)
+        controller.pause()
+        window.displayIfNeeded()
 
     }
     @MainActor

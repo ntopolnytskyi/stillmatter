@@ -3,9 +3,9 @@ import Foundation
 /// An immutable presentation of a saved phrase; its ID and time always refer to the source.
 public struct TranscriptReaderPhrase: Equatable, Identifiable {
     public enum Kind: String, CaseIterable {
-        case transcript = "Transcript", decision = "Decisions", action = "Actions"
+        case transcript = "Transcript", decision = "Decisions", action = "Actions", question = "Questions"
         public var caption: String {
-            switch self { case .transcript: return "TRANSCRIPT"; case .decision: return "DECISION"; case .action: return "ACTION" }
+            switch self { case .transcript: return "TRANSCRIPT"; case .decision: return "DECISION"; case .action: return "ACTION"; case .question: return "QUESTION" }
         }
     }
     public var metadata: String {

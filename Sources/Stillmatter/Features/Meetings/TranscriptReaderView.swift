@@ -40,6 +40,8 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
     private let saveView: (TranscriptReadingView) -> Void
     private var seek: (TranscriptReaderPhrase) -> Void = { _ in }
     private var hasAudio = false
+    private var canCreate = false
+    private var create: (TranscriptReaderPhrase, TranscriptLinkedItem.Kind) -> Void = { _, _ in }
     private var keyMonitor: Any?
     private var navigationSubscription: AnyCancellable?
     private var activeID: String?
@@ -153,7 +155,7 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
     func load(meetingID: String, phrases: [TranscriptReaderPhrase], hasAudio: Bool, duration: Double? = nil,
               seek: @escaping (TranscriptReaderPhrase) -> Void) {
         let meetingChanged = self.meetingID != meetingID
-        let unchanged = state.phrases == phrases && self.meetingID == meetingID && (duration == nil || state.duration == duration)
+        let unchanged = state.phrases == phrases && self.meetingID == meetingID && self.hasAudio == hasAudio && (duration == nil || state.duration == duration)
         self.seek = seek
         self.hasAudio = hasAudio
         if let editingPhrase {
@@ -169,6 +171,10 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         search.stringValue = state.query
         render()
         if meetingChanged { scrollSelection() }
+    }
+    func configureLinkedItems(enabled: Bool, create: @escaping (TranscriptReaderPhrase, TranscriptLinkedItem.Kind) -> Void) {
+        self.create = create
+        if canCreate != enabled { canCreate = enabled; render() }
     }
     func configureCorrection(enabled: Bool, outdated: Bool, reviewRequired: Bool, review: [MeetingSpeakerCorrectionReview] = [],
         correct: @escaping (String, String, @escaping (Result<Void, Error>) -> Void) -> Void,
@@ -410,6 +416,12 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
         phraseLabels[phrase.id] = text
         updatePhraseStatus(phrase.id)
         text.menu = contextMenu(phrase)
+        let actions = controls.popup(identifier: "transcript-actions-\(phrase.id)")
+        actions.pullsDown = true
+        actions.menu = contextMenu(phrase)
+        actions.menu?.insertItem(withTitle: "Actions", action: nil, keyEquivalent: "", at: 0)
+        actions.setAccessibilityLabel("Actions for \(phrase.speaker) at \(Self.time(phrase.seconds))")
+        body.addArrangedSubview(actions)
         body.addArrangedSubview(text)
         row.addArrangedSubview(body)
         body.widthAnchor.constraint(equalTo: row.widthAnchor, constant: -2 * GraphiteFocusPresentation.Space.dense - timeWidth).isActive = true
@@ -445,7 +457,28 @@ final class TranscriptReaderView: NSStackView, NSSearchFieldDelegate {
             let item = NSMenuItem(title: title, action: #selector(copyValue(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = value; menu.addItem(item)
         }
+        let sourceExists = state.phrases.contains { $0.kind == .transcript && $0.id == phrase.sourceSegmentID && $0.seconds == phrase.seconds && $0.seekSeconds == phrase.seekSeconds }
+        for kind in TranscriptLinkedItem.Kind.allCases {
+            let item = NSMenuItem(title: "Add " + kind.rawValue + "…", action: #selector(createLinkedItem(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = (phrase, kind)
+            item.isEnabled = canCreate && sourceExists
+            menu.addItem(item)
+        }
+        let jump = NSMenuItem(title: "Jump to moment", action: #selector(jumpToMoment(_:)), keyEquivalent: "")
+        jump.target = self; jump.representedObject = phrase
+        jump.isEnabled = sourceExists && hasAudio && phrase.seekSeconds != nil
+        menu.addItem(jump)
         return menu
+    }
+    @objc func createLinkedItem(_ sender: NSMenuItem) {
+        guard let (phrase, kind) = sender.representedObject as? (TranscriptReaderPhrase, TranscriptLinkedItem.Kind),
+              canCreate, state.phrases.contains(where: { $0.kind == .transcript && $0.id == phrase.sourceSegmentID && $0.seconds == phrase.seconds && $0.seekSeconds == phrase.seekSeconds }) else { return }
+        create(phrase, kind)
+    }
+    @objc func jumpToMoment(_ sender: NSMenuItem) {
+        guard let phrase = sender.representedObject as? TranscriptReaderPhrase, hasAudio, phrase.seekSeconds != nil,
+              state.phrases.contains(where: { $0.kind == .transcript && $0.id == phrase.sourceSegmentID && $0.seconds == phrase.seconds && $0.seekSeconds == phrase.seekSeconds }) else { return }
+        state.reveal(id: phrase.sourceSegmentID); search.stringValue = state.query; render(); scrollSelection(); seek(phrase)
     }
     @objc func copyValue(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String else { return }

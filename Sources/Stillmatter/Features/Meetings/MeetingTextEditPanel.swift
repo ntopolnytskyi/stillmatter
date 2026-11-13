@@ -102,6 +102,7 @@ final class MeetingTextEditPanel: NSObject {
         contextLabel.stringValue = meeting
         editor.setAccessibilityLabel("Edit Meeting \(field)")
         editor.string = text
+        editor.isEditable = true
         errorLabel.isHidden = true
         reloadButton.isHidden = true
         saveButton.isEnabled = true
@@ -127,6 +128,7 @@ final class MeetingTextEditPanel: NSObject {
     }
 
     func setSaving(_ saving: Bool) {
+        editor.isEditable = !saving
         saveButton.isEnabled = !saving
         cancelButton.isEnabled = !saving
         reloadButton.isEnabled = !saving

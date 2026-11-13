@@ -150,9 +150,12 @@ final class TranscriptReaderTests: XCTestCase {
                                              seekSeconds: 9)],
         decisions: [MeetingCitedOutcome(text: "Agreed", citations: [citation]),
                     MeetingCitedOutcome(text: "Unlinked", citations: [MeetingCitation(segmentID: "missing", startSeconds: 8, endSeconds: 9)])],
+        openQuestions: [MeetingCitedOutcome(text: "Who signs?", citations: [citation])],
         playback: MeetingPlayback(capability: .microphoneOnly, durationSeconds: 20, message: "Fixture"))
         let rows = TranscriptTimelineProjection.phrases(for: detail)
-        XCTAssertEqual(rows.count, 5)
+        XCTAssertEqual(rows.count, 6)
+        XCTAssertEqual(rows.first { $0.text == "Who signs?" }?.sourceSegmentID, "s")
+        XCTAssertEqual(rows.first { $0.text == "Who signs?" }?.kind, .question)
         XCTAssertEqual(rows.filter { $0.kind == .action }.map(\.sourceSegmentID), ["s", "s"])
         XCTAssertEqual(rows.first { $0.text == "Agreed" }?.seekSeconds, 9)
         XCTAssertEqual(rows.first { $0.text == "Agreed" }?.speaker, "Me")

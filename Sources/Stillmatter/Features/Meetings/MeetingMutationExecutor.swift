@@ -36,6 +36,8 @@ final class MeetingMutationExecutor: MeetingMutationExecuting {
                     throw MeetingManagementError.unavailable
                 }
                 switch mutation {
+                case let .createTranscriptItem(meetingID, draft, baseVersion):
+                    return .detail(try service.createTranscriptItem(draft, for: meetingID, expectedVersion: baseVersion))
                 case let .saveOutcome(meetingID, entry, delete, baseVersion):
                     return .detail(try service.saveOutcome(entry, delete: delete, for: meetingID, expectedVersion: baseVersion))
                 case let .mutateTags(meetingID, mutation):

@@ -148,6 +148,8 @@ final class MeetingManagementView: NSView {
     let waveform = MeetingWaveformView()
     let audioTime = NSTextField(labelWithString: "0:00 / 0:00")
     lazy var playbackSpeed = controls.popup(identifier: "meeting-playback-speed")
+    private let linkedItemPanel = MeetingTextEditPanel()
+    lazy var markerPicker = controls.popup(identifier: "meeting-playback-markers")
     private var playbackMarkers: [(citation: MeetingCitation, seconds: Double, symbol: String)] = []
     private var audioTimeWidth: NSLayoutConstraint?
     private var waveformWidth: NSLayoutConstraint?
@@ -512,7 +514,17 @@ final class MeetingManagementView: NSView {
         playbackSpeed.target = self
         playbackSpeed.action = #selector(changePlaybackSpeed)
         playbackSpeed.toolTip = "Playback speed"
-        let audioSection = NSStackView(views: [audioStatus, transport])
+        markerPicker.pullsDown = true
+        markerPicker.setAccessibilityLabel("Timeline markers: Speech, Decisions, Actions, Questions")
+        let legend = NSTextField(labelWithString: "S: Speech · D: Decisions · A: Actions · Q: Questions")
+        let legendText = NSMutableAttributedString(string: legend.stringValue)
+        for (symbol, title) in [("S", "S: Speech"), ("D", "D: Decisions"), ("A", "A: Actions"), ("Q", "Q: Questions")] {
+            legendText.addAttribute(.foregroundColor, value: MeetingWaveformCell.markerColor(symbol, colors: presentationColors), range: (legend.stringValue as NSString).range(of: title))
+        }
+        legend.attributedStringValue = legendText
+        legend.setAccessibilityIdentifier("meeting-playback-legend")
+        legend.font = GraphiteFocusPresentation.Typography.metadata
+        let audioSection = NSStackView(views: [audioStatus, transport, markerPicker, legend])
         audioSection.orientation = .vertical
         audioSection.alignment = .leading
         audioSection.spacing = GraphiteFocusPresentation.Space.compact
@@ -1701,6 +1713,7 @@ final class MeetingManagementView: NSView {
     private func clearEvidence(preserveTranscriptReader: Bool = false) {
         playbackMarkers = []
         waveform.markerLabels = []
+        markerPicker.removeAllItems(); markerPicker.isEnabled = false
         if !preserveTranscriptReader {
             timelineRows.arrangedSubviews.forEach { timelineRows.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
@@ -1802,6 +1815,26 @@ final class MeetingManagementView: NSView {
         }
         playbackMarkers.sort { $0.seconds < $1.seconds }
         waveform.markerLabels = playbackMarkers.map { ($0.seconds, $0.symbol) }
+        markerPicker.removeAllItems()
+        markerPicker.addItem(withTitle: "Timeline markers…")
+        markerPicker.menu?.autoenablesItems = false
+        for marker in playbackMarkers {
+            let names = ["S": "Speech", "D": "Decision", "A": "Action", "Q": "Question"]
+            let item = NSMenuItem(title: "\(names[marker.symbol] ?? marker.symbol) · \(timeLabel(marker.citation.startSeconds)) · \(marker.citation.segmentID)", action: #selector(selectPlaybackMarker(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = OutcomeSourceTarget(meetingID: detail.row.id, citation: marker.citation, kind: .transcript)
+            item.isEnabled = meetingsModel.detail.playbackState.isAvailable
+            markerPicker.menu?.addItem(item)
+        }
+        markerPicker.isEnabled = !playbackMarkers.isEmpty && meetingsModel.detail.playbackState.isAvailable
+    }
+
+    @objc func selectPlaybackMarker(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? OutcomeSourceTarget,
+              let detail = displayedDetail, selectedID == target.meetingID, audioSource == detail.playback,
+              meetingsModel.detail.playbackState.isAvailable, detail.transcript.contains(where: target.citation.matches),
+              let seconds = target.citation.validatedSeekSeconds(playbackDuration: meetingsModel.detail.playbackState.duration) else { return }
+        timelineNavigation.show(seconds: target.citation.startSeconds, segmentID: target.citation.segmentID, kind: .transcript)
+        meetingsModel.detail.seekPlayback(to: seconds)
     }
 
     private func renderOutcomes(_ detail: MeetingBrowserDetail) {
@@ -2054,11 +2087,11 @@ final class MeetingManagementView: NSView {
                 )
             }
             let label = timeLabel(citation.startSeconds)
-            let source = NSButton(title: valid ? "↗ source \(label)" : "Source unavailable",
+            let source = NSButton(title: valid ? "↗ source \(label)" : "Source no longer retained",
                                   target: self, action: #selector(seekOutcomeSource(_:)))
             source.identifier = NSUserInterfaceItemIdentifier(key)
             source.setAccessibilityIdentifier("meeting-outcome-source-\(key)")
-            source.setAccessibilityLabel(valid ? "Show transcript source at \(label)" : "Transcript source unavailable")
+            source.setAccessibilityLabel(valid ? "Show transcript source at \(label)" : "Source no longer retained")
             source.isEnabled = valid
             GraphiteFocusOverflow.protectTrailingControl(source)
             return (key, source)
@@ -2253,7 +2286,38 @@ final class MeetingManagementView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: dismissal)
     }
 
+    private func presentLinkedItem(_ phrase: TranscriptReaderPhrase, kind: TranscriptLinkedItem.Kind) {
+        guard let detail = displayedDetail, !detail.row.isArchived, !meetingsModel.isDirty,
+              let source = detail.transcript.first(where: { $0.id == phrase.sourceSegmentID }),
+              let version = kind == .note ? detail.notesVersion : detail.summaryVersion, let window else { return }
+        var draft = TranscriptLinkedItem(kind: kind, text: source.text, source: source)
+        let meetingID = detail.row.id
+        let context = detail.row.title + (kind == .action ? " · Assign an owner and approve in Action Items after saving." : " · User-authored, linked to Transcript.")
+        linkedItemPanel.present(over: window, field: "linked " + kind.rawValue, meeting: context, text: draft.text,
+            onChange: { draft.text = $0 }, onSave: { [weak self] text in
+                guard let self, self.selectedID == meetingID else { return }
+                draft.text = text
+                self.linkedItemPanel.setSaving(true)
+                self.meetingsModel.detail.createTranscriptItem(draft, baseVersion: version) { [weak self] result in
+                    guard let self else { return }
+                    switch result {
+                    case .success:
+                        self.linkedItemPanel.finish()
+                        self.window?.makeFirstResponder(self.transcriptReader.search)
+                    case let .failure(error):
+                        self.linkedItemPanel.showError("Save failed: " + error.localizedDescription + " Your draft is retained. Cancel and reopen to use the latest source or file.", conflict: false)
+                    }
+                }
+            }, onCancel: { [weak self] in
+                self?.linkedItemPanel.finish()
+                self?.window?.makeFirstResponder(self?.transcriptReader.search)
+            }, onReload: {})
+    }
+
     private func renderTimeline(_ detail: MeetingBrowserDetail) {
+        transcriptReader.configureLinkedItems(enabled: !detail.row.isArchived && !meetingsModel.isDirty) { [weak self] phrase, kind in
+            self?.presentLinkedItem(phrase, kind: kind)
+        }
         transcriptReader.configureCorrection(enabled: !detail.row.isArchived && !meetingsModel.isDirty,
             outdated: detail.analysisOutdated, reviewRequired: detail.speakerReviewRequired, review: detail.speakerCorrectionReview,
             correct: { [weak self] segmentID, name, completion in
