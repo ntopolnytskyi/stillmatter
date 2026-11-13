@@ -696,6 +696,48 @@ final class MeetingSummaryTests: XCTestCase {
         XCTAssertFalse(try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadAllItems().contains { $0.id == note.id })
     }
 
+    func testInitialAnalysisTagsLiveNoteBeforeArtifactMigrationAndPreservesConcurrentText() throws {
+        let fixture = try MeetingSummaryFixture()
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        let notesPath = "Meetings/2026/09/kickoff/my-notes.md"
+        _ = try MeetingNoteTodoBridge(vault: vault).saveNotes("- [ ] My live task #work", at: notesPath, expectedNotesVersion: nil)
+        let note = try XCTUnwrap(TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadAllItems().first)
+        XCTAssertNil(try MeetingArtifactStore(vault: vault, inbox: fixture.inbox).identity(at: fixture.transcript.meetingRelativePath))
+        let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [], tagAdditions: [.init(itemID: note.id, tags: ["team"])])
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        let executor = try fixture.executor(extraction: extraction, transform: { _, response in
+            let queue = try vault.readMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath)
+            _ = try MeetingNoteTodoBridge(vault: vault).updateText(item: note, text: "Concurrent live note revision", expectedQueueVersion: queue.version)
+            return response
+        })
+        _ = try execute(executor, manifest: manifest)
+        let final = try XCTUnwrap(TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadAllItems().first { $0.id == note.id })
+        XCTAssertEqual(final.title, "Concurrent live note revision #work #team")
+        XCTAssertEqual(final.status, .open)
+        XCTAssertEqual(TodoItemParser.metadata(in: final.rawText)?.review, "approved")
+        XCTAssertFalse(final.tags.contains("ai-gen")); XCTAssertFalse(final.tags.contains("need-approve"))
+    }
+
+    func testInitialAnalysisRecoversPriorNotePublicationBeforeReadingVersions() throws {
+        enum Interrupted: Error { case injected }
+        let fixture = try MeetingSummaryFixture()
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        let notesPath = "Meetings/2026/09/kickoff/my-notes.md"
+        _ = try MeetingNoteTodoBridge(vault: vault).saveNotes("- [ ] Live task #work", at: notesPath, expectedNotesVersion: nil)
+        let note = try XCTUnwrap(TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadAllItems().first)
+        let source = try vault.readMarkdown(relativePath: notesPath)
+        let recoveredText = String(decoding: source.data, as: UTF8.self).replacingOccurrences(of: "Live task #work", with: "Live task #work #recovered")
+        let interrupted = MeetingArtifactTransaction(vault: vault, identity: fixture.transcript.captureSessionID, checkpoint: { if $0 == 0 { throw Interrupted.injected } })
+        XCTAssertThrowsError(try interrupted.publish([.init(relativePath: notesPath, data: Data(recoveredText.utf8), expectedVersion: source.version)]))
+        let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [], tagAdditions: [.init(itemID: note.id, tags: ["team"])])
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        _ = try execute(fixture.executor(extraction: extraction), manifest: manifest)
+        let final = try XCTUnwrap(TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadAllItems().first { $0.id == note.id })
+        XCTAssertEqual(final.title, "Live task #work #recovered #team")
+    }
+
     private func execute(_ executor: MeetingSummaryJobExecutor, manifest: JobManifest, jobID: String = "summary-job", timeout: TimeInterval = 2) throws -> JobStageResult {
         let job = JobRecord(
             id: jobID,

@@ -242,6 +242,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         decoder.dateDecodingStrategy = .iso8601
         let transcriptData = try Data(contentsOf: workspaceRootURL.appendingPathComponent(transcriptPath))
         let transcript = try decoder.decode(TranscriptDocument.self, from: transcriptData)
+        try MeetingArtifactTransaction(vault: vault, identity: captureSessionID).recover()
         let artifacts = MeetingArtifactStore(vault: vault, inbox: inbox)
         let canonicalID = try artifacts.identity(at: transcript.meetingRelativePath)
         let canonicalBase = try canonicalID.map { try artifacts.load(meetingPath: transcript.meetingRelativePath, meetingID: $0) }
@@ -291,7 +292,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         try cancellation.performIfActive {
             try worker.requireTransferApproval()
             guard try Data(contentsOf: workspaceRootURL.appendingPathComponent(transcriptPath)) == transcriptData,
-                  (try vault.versionOfMarkdown(relativePath: notesPath) == notesVersion || (canonicalBase != nil && !(extraction.tagAdditions ?? []).isEmpty)) else {
+                  (try vault.versionOfMarkdown(relativePath: notesPath) == notesVersion || !(extraction.tagAdditions ?? []).isEmpty) else {
                 throw MeetingSummaryError.invalidExtraction("Transcript or My Notes changed during analysis. Retry with current sources.")
             }
             if let canonicalBase, let canonicalID {
@@ -299,11 +300,12 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                     base: canonicalBase, meetingPath: transcript.meetingRelativePath, meetingID: canonicalID,
                     expectedExtraction: expectedVersions[paths.extraction] ?? nil)
             } else {
-                guard (extraction.tagAdditions ?? []).isEmpty else { throw MeetingSummaryError.invalidExtraction("Tag additions require adopted canonical items. Save My Notes and retry.") }
-                try vault.replaceMarkdownTransaction(publishedArtifacts.map {
+                let tagChanges = try ItemTagStore(vault: vault).prepareAIAdditions(extraction.tagAdditions ?? [], allowedPaths: [notesPath])
+                let generated = publishedArtifacts.map {
                     WorkspaceMarkdownReplacement(relativePath: $0.relativePath, data: $0.data,
                         expectedVersion: expectedVersions[$0.relativePath] ?? nil)
-                })
+                }
+                try MeetingArtifactTransaction(vault: vault, identity: captureSessionID).publish(generated + tagChanges)
             }
             for noteID in noteItemIDs {
                 let duplicateProposalID = "meeting-action:\(captureSessionID):\(noteID)"
