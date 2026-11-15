@@ -2615,9 +2615,14 @@ final class MeetingManagementView: NSView {
         input.setAccessibilityLabel("New Meeting title")
         alert.accessoryView = input
         let response = presentConfirmationAlert(alert)
-        guard currentReadModel() === owner, displayedDetail == detail else { return }
+        guard currentReadModel() === owner, displayedDetail?.row.id == detail.row.id else { return }
         guard response == .alertFirstButtonReturn else { renameDraft = nil; return }
         renameDraft = (owner, detail.row.id, input.stringValue)
+        guard displayedDetail == detail else {
+            retryFeedback = (detail.row.id, "Meeting changed while Rename was open. Your title is preserved. Review the updated Meeting and try Rename again.")
+            status.stringValue = retryFeedback?.message ?? ""
+            return
+        }
         renameButton.isEnabled = false
         meetingsModel.rename(to: input.stringValue) { [weak self] result in
             guard let self, self.currentReadModel() === owner else { return }
@@ -2625,9 +2630,18 @@ final class MeetingManagementView: NSView {
             case let .success(renamed):
                 self.renameDraft = nil
                 self.retryFeedback = (renamed.row.id, "Meeting renamed.")
-            case let .failure(error): self.retryFeedback = (detail.row.id, "Could not rename Meeting: \(error.localizedDescription)")
+            case let .failure(error):
+                let explanation: String
+                if case WorkspaceVaultError.conflict = error {
+                    explanation = "The Meeting or destination changed. Review the current Meeting, choose an unused title, and try again."
+                } else {
+                    explanation = error.localizedDescription
+                }
+                self.retryFeedback = (detail.row.id, "Could not rename Meeting: \(explanation)")
             }
-            self.status.stringValue = self.retryFeedback?.message ?? ""
+            if self.displayedDetail?.row.id == self.retryFeedback?.meetingID {
+                self.status.stringValue = self.retryFeedback?.message ?? ""
+            }
             self.renameButton.isEnabled = true
         }
     }

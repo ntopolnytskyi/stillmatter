@@ -982,17 +982,39 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try service.detail(for: "second").playback.capability, .microphoneOnly)
     }
 
+    func testRenameRejectsStaleRecordingBundleWithoutChangingMediaOrDoorway() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let bundleURL = try makePlaybackBundle(in: fixture, id: "stale-rename")
+        let path = "Meetings/stale-rename/meeting.md"
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: bundleURL)) as? [String: Any])
+        json["meetingRelativePath"] = "Meetings/obsolete/meeting.md"
+        let stale = try JSONSerialization.data(withJSONObject: json)
+        try stale.write(to: bundleURL)
+        let service = MeetingManagementService(vault: fixture.vault)
+        let detail = try service.detail(for: "stale-rename")
+        let before = try fixture.vault.readMarkdown(relativePath: path).data
+        XCTAssertThrowsError(try service.rename(meetingID: "stale-rename", title: "New", expectedVersion: XCTUnwrap(detail.doorwayVersion)))
+        XCTAssertEqual(try Data(contentsOf: bundleURL), stale)
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: path).data, before)
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/new/meeting.md"))
+        XCTAssertEqual(try service.detail(for: "stale-rename").playback.capability, .unavailable)
+    }
+
     func testRenameIndexFailureRestoresRecordingMetadataAndCanonicalNoteTodo() throws {
         let fixture = try Fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let bundleURL = try makePlaybackBundle(in: fixture, id: "rollback-media")
+        let support = fixture.root.appendingPathExtension("support")
+        defer { try? FileManager.default.removeItem(at: support) }
+        let vault = WorkspaceVault(workspaceRootURL: fixture.root, appSupportRootURL: support)
         let old = "Meetings/rollback-media/meeting.md"
         let notes = "Meetings/rollback-media/my-notes.md"
-        let service = MeetingManagementService(vault: fixture.vault)
+        let service = MeetingManagementService(vault: vault)
         let loaded = try service.detail(for: "rollback-media")
         _ = try service.saveHumanNotes("- [ ] Keep this task", for: "rollback-media", expectedVersion: XCTUnwrap(loaded.notesVersion))
         let queue = try TodoItemIndex(workspaceRootURL: fixture.root).loadTaskViews(today: "2026-01-01").queue
-        let beforeNotes = try fixture.vault.readMarkdown(relativePath: notes).data
+        let beforeNotes = try vault.readMarkdown(relativePath: notes).data
         let beforeBundle = try Data(contentsOf: bundleURL)
         let indexURL = fixture.root.appendingPathComponent("Support/fault-index.sqlite")
         let index = try SearchIndex(databaseURL: indexURL, workspaceRootURL: fixture.root)
@@ -1001,13 +1023,13 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(sqlite3_open(indexURL.path, &db), SQLITE_OK)
         defer { sqlite3_close(db) }
         XCTAssertEqual(sqlite3_exec(db, "DROP TABLE search_chunks", nil, nil, nil), SQLITE_OK)
-        let failing = MeetingManagementService(vault: fixture.vault, searchIndex: index)
-        XCTAssertThrowsError(try failing.rename(meetingID: "rollback-media", title: "New", expectedVersion: XCTUnwrap(fixture.vault.versionOfMarkdown(relativePath: old))))
+        let failing = MeetingManagementService(vault: vault, searchIndex: index)
+        XCTAssertThrowsError(try failing.rename(meetingID: "rollback-media", title: "New", expectedVersion: XCTUnwrap(vault.versionOfMarkdown(relativePath: old))))
         XCTAssertEqual(try Data(contentsOf: bundleURL), beforeBundle)
-        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: notes).data, beforeNotes)
+        XCTAssertEqual(try vault.readMarkdown(relativePath: notes).data, beforeNotes)
         XCTAssertEqual(try TodoItemIndex(workspaceRootURL: fixture.root).loadTaskViews(today: "2026-01-01").queue.map(\.id), queue.map(\.id))
         XCTAssertEqual(try service.detail(for: "rollback-media").playback.capability, .microphoneOnly)
-        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/new/meeting.md"))
+        XCTAssertNil(try vault.versionOfMarkdown(relativePath: "Meetings/new/meeting.md"))
     }
 
     func testRenameRestoresCanonicalFilesAfterEveryDirectoryOperationFailure() throws {

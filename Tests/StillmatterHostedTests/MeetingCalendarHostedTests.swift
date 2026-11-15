@@ -13,8 +13,11 @@ final class MeetingCalendarHostedTests: XCTestCase {
         let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"), appSupportRootURL: root.appendingPathComponent("support"))
         let path = "Meetings/original/meeting.md"
         _ = try vault.writeMarkdown(Data("---\ntitle: Original\ncapture_session_id: rename-fixture\n---\n# Original\n".utf8), relativePath: path, expectedVersion: nil)
-        let service = MeetingManagementService(vault: vault)
+        _ = try vault.writeMarkdown(Data("---\ntitle: Taken\ncapture_session_id: taken\n---\n# Taken\n".utf8), relativePath: "Meetings/taken/meeting.md", expectedVersion: nil)
+        var invalidate: ([String]) -> Void = { _ in }
+        let service = MeetingManagementService(vault: vault, onMeetingChanged: { invalidate($0) })
         let read = MeetingReadModel(workspaceID: root.path, sourceFactory: { MeetingManagementReadSource(serviceProvider: { service }) })
+        invalidate = { read.invalidate(.appMutation(paths: $0)) }
         let executor = MeetingMutationExecutor(searchIndex: nil, captureSnapshot: nil, serviceFactory: { _, _ in service })
         let other = MeetingReadModel(workspaceID: "other", sourceFactory: { MeetingManagementReadSource(serviceProvider: { service }) })
         var provided = read
@@ -23,11 +26,11 @@ final class MeetingCalendarHostedTests: XCTestCase {
             let input = alert.accessoryView as! NSTextField
             attempts += 1
             if attempts == 1 {
-                input.stringValue = "///"
+                input.stringValue = "Taken"
                 return .alertFirstButtonReturn
             }
             if attempts == 2 {
-                XCTAssertEqual(input.stringValue, "///", "Failure must preserve the entered title")
+                XCTAssertEqual(input.stringValue, "Taken", "Failure must preserve the entered title")
                 return .alertSecondButtonReturn
             }
             if attempts == 3 {
@@ -46,6 +49,7 @@ final class MeetingCalendarHostedTests: XCTestCase {
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil && view.renameButton.isEnabled }, evaluatedWith: nil)], timeout: 10)
         view.confirmRename()
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.retryFeedback?.1.contains("Could not rename") == true }, evaluatedWith: nil)], timeout: 10)
+        XCTAssertTrue(view.status.stringValue.contains("choose an unused title"))
         view.confirmRename()
         XCTAssertEqual(attempts, 2)
         XCTAssertEqual(try service.detail(for: "rename-fixture").row.meetingRelativePath, path)

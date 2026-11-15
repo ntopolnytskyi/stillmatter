@@ -26,6 +26,16 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(try meetingText().contains("title: UI fixture meeting"))
         openRename()
         XCTAssertEqual(title.value as? String, "UI fixture meeting")
+        title.click(); title.typeKey("a", modifierFlags: .command); title.typeText("Conflict draft")
+        let external = try meetingText().replacingOccurrences(of: "UI fixture meeting", with: "External fixture")
+        try external.write(to: meetingURL, atomically: true, encoding: .utf8)
+        XCTAssertTrue(app.tables["Meetings"].staticTexts["External fixture"].firstMatch.waitForExistence(timeout: 10))
+        title.typeKey(.return, modifierFlags: [])
+        let conflict = app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Meeting changed while Rename was open")).firstMatch
+        XCTAssertTrue(conflict.waitForExistence(timeout: 10))
+        XCTAssertEqual(try meetingText(), external)
+        openRename()
+        XCTAssertEqual(title.value as? String, "Conflict draft")
         title.click(); title.typeKey("a", modifierFlags: .command); title.typeText("Renamed fixture")
         title.typeKey(.return, modifierFlags: [])
         let row = app.tables["Meetings"].staticTexts["Renamed fixture"].firstMatch
