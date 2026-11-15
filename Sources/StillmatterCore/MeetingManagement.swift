@@ -429,7 +429,20 @@ public final class MeetingManagementService {
     /// manual edits made while the rename warning was open.
     @discardableResult
     public func rename(meetingID: String, title: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
-        try rename(meetingID: meetingID, title: title, expectedVersion: expectedVersion, calendarContext: nil)
+        let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, !cleaned.contains("/"), !cleaned.contains("\\"),
+              !cleaned.contains("\n"), !cleaned.contains("\r") else {
+            throw MeetingManagementError.retryRejected("Enter a title without path separators or line breaks.")
+        }
+        guard cleaned.unicodeScalars.contains(where: CharacterSet.alphanumerics.contains) else {
+            throw MeetingManagementError.retryRejected("Enter a title with letters or numbers.")
+        }
+        let selected = try detail(for: meetingID)
+        var context = try MeetingCalendarContext.read(from: selected.doorwayText) ?? MeetingCalendarContext(
+            event: nil, fallbackTitle: selected.row.title, appliedTitle: cleaned, manualTitle: true, status: "No linked event")
+        context.manualTitle = true
+        context.appliedTitle = cleaned
+        return try rename(selected: selected, context: context, expectedVersion: expectedVersion)
     }
 
     @discardableResult
@@ -447,17 +460,12 @@ public final class MeetingManagementService {
         context.status = event == nil ? "Unlinked" : "Linked calendar event"
         let title = context.manualTitle ? selected.row.title : (event?.title ?? context.fallbackTitle)
         context.appliedTitle = title
-        return try rename(meetingID: meetingID, title: title, expectedVersion: expectedVersion, calendarContext: context)
+        return try rename(selected: selected, context: context, expectedVersion: expectedVersion)
     }
 
-    private func rename(meetingID: String, title: String, expectedVersion: WorkspaceFileVersion,
-                        calendarContext: MeetingCalendarContext?) throws -> MeetingBrowserDetail {
-        let cleaned = calendarContext == nil ? title.trimmingCharacters(in: .whitespacesAndNewlines) : title
-        guard calendarContext != nil || (!cleaned.isEmpty && !cleaned.contains("/") && !cleaned.contains("\\") &&
-              !cleaned.contains("\n") && !cleaned.contains("\r")) else {
-            throw MeetingManagementError.retryRejected("Enter a title without path separators or line breaks.")
-        }
-        let selected = try detail(for: meetingID)
+    private func rename(selected: MeetingBrowserDetail, context: MeetingCalendarContext,
+                        expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
+        let cleaned = context.appliedTitle
         let old = selected.row.meetingRelativePath
         guard selected.doorwayVersion == expectedVersion else {
             throw WorkspaceVaultError.conflict(relativePath: old, expected: expectedVersion, actual: selected.doorwayVersion)
@@ -470,13 +478,12 @@ public final class MeetingManagementService {
         }
         let titleSlug = cleaned.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }.prefix(8).joined(separator: "-")
-        guard !titleSlug.isEmpty || calendarContext != nil else { throw MeetingManagementError.retryRejected("Enter a title with letters or numbers.") }
         let slug = titleSlug.isEmpty ? "untitled-meeting" : titleSlug
         let directory = (old as NSString).deletingLastPathComponent
         let parent = (directory as NSString).deletingLastPathComponent
         let name = (directory as NSString).lastPathComponent
         let prefix = name.range(of: #"^\d{2}-\d{2}-"#, options: .regularExpression).map { String(name[$0]) } ?? ""
-        let target = calendarContext != nil && selected.row.title == cleaned ? old : "\(parent)/\(prefix)\(slug)/meeting.md"
+        let target = selected.row.title == cleaned ? old : "\(parent)/\(prefix)\(slug)/meeting.md"
         let newDirectory = (target as NSString).deletingLastPathComponent
         guard let titleLine = selected.doorwayText.range(of: #"(?m)^title:.*$"#, options: .regularExpression) else {
             throw MeetingManagementError.malformed("Meeting title metadata missing")
@@ -485,9 +492,6 @@ public final class MeetingManagementService {
         if let heading = doorway.range(of: #"(?m)^# .*$"#, options: .regularExpression) {
             doorway.replaceSubrange(heading, with: "# \(MeetingCalendarContext.titleLine(cleaned))")
         }
-        var context = try calendarContext ?? MeetingCalendarContext.read(from: selected.doorwayText) ?? MeetingCalendarContext(
-            event: nil, fallbackTitle: selected.row.title, appliedTitle: cleaned, manualTitle: true, status: "No linked event")
-        if calendarContext == nil { context.manualTitle = true; context.appliedTitle = cleaned }
         doorway = try context.writing(to: doorway)
         guard target != old else {
             try vault.replaceMarkdownTransaction([

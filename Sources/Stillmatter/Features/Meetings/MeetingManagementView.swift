@@ -9,7 +9,7 @@ import StillmatterPresentation
 /// Meeting detail canvas. `browserView` is hosted independently in the shell's content-list region.
 final class MeetingManagementView: NSView {
     let browserView = NSView()
-    private let calendarSnapshot: () -> CalendarMeetingSnapshot
+    private let calendarSnapshot: (Date) -> CalendarMeetingSnapshot
     private let controls: GraphiteFocusControls
 
     private let readModelProvider: () -> MeetingReadModel?
@@ -66,8 +66,9 @@ final class MeetingManagementView: NSView {
     let titleBar = NSStackView()
     let caption = NSStackView()
     let metadataBar = NSStackView()
+    let calendarEditor = MeetingCalendarEditPanel()
     let calendarStatus = NSTextField(wrappingLabelWithString: "")
-    lazy var calendarButton = controls.button("Calendar…", identifier: "meeting-calendar", target: self, action: #selector(editCalendar))
+    var canEditCalendar = false
     let eyebrow = NSTextField(labelWithString: "MEETING DETAIL")
     let meetingTitle = NSTextField(labelWithString: "")
     let overview = NSTextField(wrappingLabelWithString: "")
@@ -179,7 +180,7 @@ final class MeetingManagementView: NSView {
         controls: GraphiteFocusControls = GraphiteFocusControls(),
         presentConfirmationAlert: @escaping (NSAlert) -> NSApplication.ModalResponse = { $0.runModal() },
         presentationMetrics: MeetingPresentationMetrics? = nil,
-        calendarSnapshot: @escaping () -> CalendarMeetingSnapshot = { CalendarMeetingProvider().snapshot() },
+        calendarSnapshot: @escaping (Date) -> CalendarMeetingSnapshot = { CalendarMeetingProvider().snapshot(on: $0) },
         readTranscriptView: @escaping () -> TranscriptReadingView = { .timestamps },
         saveTranscriptView: @escaping (TranscriptReadingView) -> Void = { _ in }
     ) {
@@ -659,7 +660,6 @@ final class MeetingManagementView: NSView {
         calendarStatus.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         metadataBar.addArrangedSubview(overview)
         metadataBar.addArrangedSubview(calendarStatus)
-        metadataBar.addArrangedSubview(calendarButton)
         metadataBar.orientation = .horizontal
         metadataBar.alignment = .centerY
         overview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1071,6 +1071,7 @@ final class MeetingManagementView: NSView {
     }
 
     private func displayedDetailPlaceholder() {
+        canEditCalendar = false
         GraphiteFocusPageHeader.setTitle("Select a Meeting", on: meetingTitle)
         statusBadge.isHidden = true
         pinnedAudio.isHidden = true
@@ -1247,6 +1248,7 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderDetail(_ selected: MeetingBrowserDetail) {
+            canEditCalendar = false
             let opensReview = reviewSelectionStarted && reviewDetailPath == selected.row.meetingRelativePath
             if reviewNavigationID != nil && !opensReview { return }
             if opensReview { clearReviewNavigation() }
@@ -1323,7 +1325,7 @@ final class MeetingManagementView: NSView {
             updateReprocessAvailability(for: selected)
             reprocessFeedback.stringValue = retryFeedback?.meetingID == selected.row.id ? retryFeedback!.message : ""
             reprocessFeedback.isHidden = reprocessFeedback.stringValue.isEmpty
-            calendarButton.isEnabled = canChangeFolder && !selected.row.isArchived && !meetingsModel.isDirty
+            canEditCalendar = canChangeFolder && !selected.row.isArchived && !meetingsModel.isDirty
             let context = selected.calendarContext
             if let event = context?.event {
                 let scheduled = event.eventStart.map { DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .short) } ?? "Unknown time"
@@ -2498,6 +2500,11 @@ final class MeetingManagementView: NSView {
         rename.target = self
         rename.isEnabled = renameButton.isEnabled
         menu.addItem(rename)
+        let calendar = NSMenuItem(title: "Calendar…", action: #selector(editCalendar), keyEquivalent: "")
+        calendar.target = self
+        calendar.isEnabled = canEditCalendar
+        calendar.setAccessibilityIdentifier("meeting-calendar")
+        menu.addItem(calendar)
         let archive = NSMenuItem(title: displayedDetail?.row.isArchived == true ? "Restore" : "Archive", action: #selector(toggleArchive), keyEquivalent: "")
         archive.target = self
         archive.isEnabled = archiveButton.isEnabled
@@ -2556,37 +2563,27 @@ final class MeetingManagementView: NSView {
     }
 
     @objc func editCalendar() {
-        guard calendarButton.isEnabled, let detail = displayedDetail, !meetingsModel.isDirty,
-              let owner = currentReadModel() else { return }
-        let snapshot = calendarSnapshot()
-        let alert = NSAlert()
-        alert.messageText = "Calendar association"
-        alert.informativeText = snapshot.status + "\nManual titles are kept unless Reset title is selected. Changing a title also changes the Meeting folder and workspace links. External links may break."
-        alert.addButton(withTitle: "Link selected event")
-        alert.addButton(withTitle: "Unlink")
-        alert.addButton(withTitle: "Cancel")
-        let events = snapshot.events.filter { $0.eventIdentifier != nil && $0.calendarIdentifier != nil }
-        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 28))
-        picker.setAccessibilityIdentifier("meeting-calendar-events")
-        picker.setAccessibilityLabel("Calendar event")
-        for event in events {
-            let scheduled = event.eventStart.map { DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .short) } ?? "Unknown time"
-            // NSPopUpButton deduplicates identical titles; append the occurrence context.
-            picker.addItem(withTitle: "\(event.title) · \(scheduled) · \(picker.numberOfItems + 1)")
-        }
-        if let selected = events.firstIndex(of: detail.calendarContext?.event ?? CalendarMeeting(title: "")) { picker.selectItem(at: selected) }
-        let reset = NSButton(checkboxWithTitle: "Reset title to calendar title or fallback", target: nil, action: nil)
-        reset.setAccessibilityIdentifier("meeting-calendar-reset-title")
-        let stack = NSStackView(views: [picker, reset]); stack.orientation = .vertical
-        alert.accessoryView = stack
-        alert.buttons[0].isEnabled = !events.isEmpty
-        alert.buttons[1].isEnabled = detail.calendarContext?.event != nil
-        let response = presentConfirmationAlert(alert)
-        guard currentReadModel() === owner, displayedDetail == detail, !meetingsModel.isDirty else { return }
-        if response == .alertFirstButtonReturn, events.indices.contains(picker.indexOfSelectedItem) {
-            meetingsModel.detail.associateCalendar(event: events[picker.indexOfSelectedItem], resetTitle: reset.state == .on)
-        } else if response == .alertSecondButtonReturn, detail.calendarContext?.event != nil {
-            meetingsModel.detail.associateCalendar(event: nil, resetTitle: reset.state == .on)
+        guard canEditCalendar, let detail = displayedDetail, !meetingsModel.isDirty,
+              let owner = currentReadModel(), let window else { return }
+        let snapshot = calendarSnapshot(detail.row.startedAt ?? Date())
+        calendarEditor.present(over: window, snapshot: snapshot, context: detail.calendarContext) { [weak self] event, reset in
+            guard let self else { return }
+            guard self.currentReadModel() === owner, self.displayedDetail == detail, !self.meetingsModel.isDirty else {
+                self.status.stringValue = "Calendar change expired. Reopen Calendar for the current Meeting."
+                return
+            }
+            let context = detail.calendarContext
+            let changesTitle = (reset || context?.manualTitle == false) && (event?.title ?? context?.fallbackTitle) != detail.row.title
+            if changesTitle {
+                let alert = NSAlert()
+                alert.messageText = "Change this Meeting title?"
+                alert.informativeText = "The Meeting folder and workspace links will change. External links may break."
+                alert.addButton(withTitle: "Change title")
+                alert.addButton(withTitle: "Cancel")
+                guard self.presentConfirmationAlert(alert) == .alertFirstButtonReturn,
+                      self.currentReadModel() === owner, self.displayedDetail == detail else { return }
+            }
+            self.meetingsModel.detail.associateCalendar(event: event, resetTitle: reset)
         }
     }
 

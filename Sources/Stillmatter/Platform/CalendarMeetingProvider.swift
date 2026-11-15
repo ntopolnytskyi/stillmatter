@@ -61,7 +61,7 @@ final class CalendarMeetingProvider {
 
     func meetingsToday() -> [CalendarMeeting] { snapshot().events }
 
-    func snapshot() -> CalendarMeetingSnapshot {
+    func snapshot(on date: Date? = nil) -> CalendarMeetingSnapshot {
         if calendarSelection.mode == .none {
             return CalendarMeetingSnapshot(events: [], status: "Calendar sources disabled. Configure Calendar in Settings.")
         }
@@ -74,7 +74,7 @@ final class CalendarMeetingProvider {
             return CalendarMeetingSnapshot(events: [], status: "Calendar access unavailable. Enable read access in Settings > Privacy & Security > Calendars.")
         }
 
-        let start = calendar.startOfDay(for: now())
+        let start = calendar.startOfDay(for: date ?? now())
         guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return CalendarMeetingSnapshot(events: [], status: "Calendar access unavailable. Enable read access in Settings > Privacy & Security > Calendars.") }
         let selectedCalendars: [EKCalendar]?
         switch calendarSelection.mode {

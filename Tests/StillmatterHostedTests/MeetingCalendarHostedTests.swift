@@ -21,48 +21,63 @@ final class MeetingCalendarHostedTests: XCTestCase {
         let executor = MeetingMutationExecutor(searchIndex: nil, captureSnapshot: nil, serviceFactory: { _, _ in service })
         let event = CalendarMeeting(title: "План / 計画", eventIdentifier: "event", calendarIdentifier: "calendar", eventStart: Date(timeIntervalSince1970: 1000), eventEnd: Date(timeIntervalSince1970: 2000))
         var events = [event, event]
-        var response = NSApplication.ModalResponse.alertFirstButtonReturn
-        var resetTitle = false
-        var expire = false
+        var confirmation = NSApplication.ModalResponse.alertFirstButtonReturn
+        var requestedDate: Date?
         let view = MeetingManagementView(readModelProvider: { provided }, mutationExecutorProvider: { executor }, playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in }, presentConfirmationAlert: { alert in
-            let stack = alert.accessoryView as! NSStackView
-            let picker = stack.arrangedSubviews[0] as! NSPopUpButton
-            XCTAssertEqual(picker.numberOfItems, events.count)
-            XCTAssertEqual(alert.buttons[0].isEnabled, !events.isEmpty)
             XCTAssertTrue(alert.informativeText.contains("External links may break"))
-            (stack.arrangedSubviews[1] as! NSButton).state = resetTitle ? .on : .off
-            if expire { provided = other }
-            return response
-        }, calendarSnapshot: { CalendarMeetingSnapshot(events: events, status: "Test calendar context") })
-        defer { view.refresh(isVisible: false); read.stop(); other.stop() }
+            return confirmation
+        }, calendarSnapshot: { date in requestedDate = date; return CalendarMeetingSnapshot(events: events, status: "Test calendar context") })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 850, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        defer { view.calendarEditor.cancel(); view.refresh(isVisible: false); read.stop(); other.stop(); window.orderOut(nil) }
         view.refresh(isVisible: true)
-        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil && view.calendarButton.isEnabled }, evaluatedWith: nil)], timeout: 10)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil && view.canEditCalendar }, evaluatedWith: nil)], timeout: 10)
         func waitForEvent(_ expected: CalendarMeeting?) async {
             await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail?.calendarContext?.event == expected }, evaluatedWith: nil)], timeout: 10)
         }
+        window.makeFirstResponder(view.moreButton)
         view.editCalendar()
+        XCTAssertTrue(view.calendarEditor.isOpen)
+        XCTAssertEqual(requestedDate, ISO8601DateFormatter().date(from: "2026-11-15T10:03:00Z"))
+        XCTAssertEqual(view.calendarEditor.picker.numberOfItems, 2)
+        XCTAssertTrue(view.calendarEditor.link.isEnabled)
+        XCTAssertFalse(view.calendarEditor.unlink.isEnabled)
+        view.editCalendar() // Repeated presentation preserves the one sheet.
+        view.calendarEditor.link.performClick(nil)
         await waitForEvent(event)
         XCTAssertEqual(view.displayedDetail?.row.title, "Manual title")
-        resetTitle = true
         view.editCalendar()
+        view.calendarEditor.reset.state = .on
+        view.calendarEditor.link.performClick(nil)
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail?.row.title == event.title }, evaluatedWith: nil)], timeout: 10)
         XCTAssertTrue(view.calendarStatus.stringValue.contains("Scheduled:"))
-        XCTAssertEqual(try service.detail(for: "calendar-fixture").row.startedAt, ISO8601DateFormatter().date(from: "2026-11-15T10:03:00Z"))
+        XCTAssertEqual(try service.detail(for: "calendar-fixture").row.startedAt, requestedDate)
         let original = try service.detail(for: "calendar-fixture").doorwayText
-        response = .alertThirdButtonReturn
         view.editCalendar()
+        view.calendarEditor.cancelButton.performClick(nil)
+        XCTAssertFalse(view.calendarEditor.isOpen)
+        XCTAssertTrue(window.firstResponder === view.moreButton)
         XCTAssertEqual(try service.detail(for: "calendar-fixture").doorwayText, original)
-        expire = true; response = .alertSecondButtonReturn
-        view.editCalendar()
+        // Cancel the separate folder/title confirmation as well.
+        confirmation = .alertSecondButtonReturn
+        view.editCalendar(); view.calendarEditor.reset.state = .on
+        view.calendarEditor.unlink.performClick(nil)
         XCTAssertEqual(try service.detail(for: "calendar-fixture").doorwayText, original)
-        expire = false; provided = read; events = []
+        confirmation = .alertFirstButtonReturn
+        view.editCalendar(); provided = other
+        view.calendarEditor.unlink.performClick(nil)
+        XCTAssertEqual(try service.detail(for: "calendar-fixture").doorwayText, original)
+        provided = read; events = []
         view.editCalendar()
+        XCTAssertFalse(view.calendarEditor.link.isEnabled)
+        view.calendarEditor.reset.state = .on
+        view.calendarEditor.unlink.performClick(nil)
         await waitForEvent(nil)
         XCTAssertEqual(view.displayedDetail?.row.title, "Manual title", "Explicit reset on unlink restores original fallback")
         XCTAssertEqual(view.calendarStatus.stringValue, "Unlinked")
-        view.calendarButton.isEnabled = false
+        view.canEditCalendar = false
         view.editCalendar()
-        XCTAssertEqual(try service.detail(for: "calendar-fixture").row.title, "Manual title")
+        XCTAssertFalse(view.calendarEditor.isOpen)
     }
 
     @available(macOS 14.0, *)
@@ -72,7 +87,6 @@ final class MeetingCalendarHostedTests: XCTestCase {
         let event = EKEvent(eventStore: store)
         event.calendar = calendar; event.title = "  План / 計画  "
         event.startDate = Date(timeIntervalSince1970: 1000); event.endDate = Date(timeIntervalSince1970: 2000)
-        event.url = URL(string: "https://example.invalid/meeting")
         store.fixtureCalendars = [calendar]; store.fixtureEvents = [event]
         XCTAssertTrue(CalendarMeetingProvider(eventStore: store, calendarSelection: .none).snapshot().status.contains("disabled"))
         for denied in [EKAuthorizationStatus.denied, .restricted, .notDetermined, .writeOnly] {
@@ -87,12 +101,20 @@ final class MeetingCalendarHostedTests: XCTestCase {
         XCTAssertEqual(CalendarMeetingProvider(eventStore: store, calendarSelection: .selected(["missing"]), authorizationStatus: { .fullAccess }).snapshot().events.count, 0)
         let selected = CalendarMeetingProvider(eventStore: store, calendarSelection: .selected([calendar.calendarIdentifier]), authorizationStatus: { .fullAccess })
         XCTAssertEqual(selected.snapshot().events.count, 1)
+        let historical = Date(timeIntervalSince1970: 1000)
+        _ = selected.snapshot(on: historical)
+        XCTAssertEqual(store.queryStart, Calendar.current.startOfDay(for: historical))
     }
 }
 
 private final class FixtureEventStore: EKEventStore {
     var fixtureCalendars: [EKCalendar] = []
     var fixtureEvents: [EKEvent] = []
+    var queryStart: Date?
+    override func predicateForEvents(withStart startDate: Date, end endDate: Date, calendars: [EKCalendar]?) -> NSPredicate {
+        queryStart = startDate
+        return NSPredicate(value: true)
+    }
     override func calendars(for entityType: EKEntityType) -> [EKCalendar] { fixtureCalendars }
     override func events(matching predicate: NSPredicate) -> [EKEvent] { fixtureEvents }
 }

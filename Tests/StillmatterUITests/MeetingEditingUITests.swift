@@ -14,9 +14,13 @@ extension StillmatterFlowsUITests {
         let status = app.staticTexts["meeting-calendar-status"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertTrue((status.value as? String)?.contains("Scheduled:") == true)
-        let calendar = app.buttons["meeting-calendar"]
-        XCTAssertTrue(calendar.isEnabled)
-        calendar.click()
+        func openCalendar() {
+            app.buttons["meeting-more"].click()
+            let calendar = app.menuItems["meeting-calendar"]
+            XCTAssertTrue(calendar.isEnabled)
+            openCalendar()
+        }
+        openCalendar()
         let picker = app.popUpButtons["meeting-calendar-events"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Link selected event"].isEnabled)
@@ -24,7 +28,7 @@ extension StillmatterFlowsUITests {
         picker.typeKey(.escape, modifierFlags: [])
         XCTAssertFalse(picker.exists)
         XCTAssertEqual(try MeetingCalendarContext.read(from: meetingText())?.event, event)
-        calendar.click()
+        openCalendar()
         app.buttons["Unlink"].click()
         expectation(for: NSPredicate(format: "value == %@", "Unlinked"), evaluatedWith: status)
         waitForExpectations(timeout: 10)
@@ -32,7 +36,7 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(try meetingText().contains("title: UI fixture meeting"))
         relaunch(); openFixtureMeeting()
         XCTAssertEqual(app.staticTexts["meeting-calendar-status"].value as? String, "Unlinked")
-        app.buttons["meeting-calendar"].click()
+        openCalendar()
         XCTAssertFalse(app.buttons["Unlink"].isEnabled)
         app.buttons["Cancel"].typeKey(.escape, modifierFlags: [])
     }

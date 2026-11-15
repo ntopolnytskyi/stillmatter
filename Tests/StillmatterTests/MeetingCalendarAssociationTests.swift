@@ -13,6 +13,29 @@ final class MeetingCalendarAssociationTests: XCTestCase {
         XCTAssertThrowsError(try MeetingCalendarContext.read(from: "calendar_context: YQ=="))
     }
 
+    func testExternalTitleAndMissingEventPreserveAuthorityAndArchivedMetadataIsReadOnly() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"), appSupportRootURL: root.appendingPathComponent("support"))
+        _ = try vault.writeMarkdown(Data("---\ntitle: Untitled fallback\ncapture_session_id: external\n---\n# Untitled fallback\n".utf8), relativePath: "Meetings/fixture/meeting.md", expectedVersion: nil)
+        let service = MeetingManagementService(vault: vault)
+        var detail = try service.detail(for: "external")
+        let event = CalendarMeeting(title: "🌍", eventIdentifier: "event", calendarIdentifier: "work")
+        detail = try service.associateCalendar(meetingID: "external", event: event, expectedVersion: detail.doorwayVersion!)
+        XCTAssertEqual(detail.row.title, "🌍")
+        let externallyEdited = detail.doorwayText.replacingOccurrences(of: "title: 🌍", with: "title: External title").replacingOccurrences(of: "# 🌍", with: "# External title")
+        _ = try vault.writeMarkdown(Data(externallyEdited.utf8), relativePath: detail.row.meetingRelativePath, expectedVersion: detail.doorwayVersion!)
+        XCTAssertThrowsError(try service.associateCalendar(meetingID: "external", event: nil, expectedVersion: detail.doorwayVersion!))
+        detail = try service.detail(for: "external")
+        detail = try service.associateCalendar(meetingID: "external", event: nil, expectedVersion: detail.doorwayVersion!)
+        XCTAssertEqual(detail.row.title, "External title")
+        XCTAssertTrue(detail.calendarContext?.manualTitle == true)
+        XCTAssertNil(detail.calendarContext?.event)
+        try service.archive(meetingID: "external")
+        detail = try service.detail(for: "external")
+        XCTAssertThrowsError(try service.associateCalendar(meetingID: "external", event: event, expectedVersion: detail.doorwayVersion!))
+    }
+
     func testCaptureAssociatesRepeatedRecordingsAndDeniedAccessStillRecords() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
