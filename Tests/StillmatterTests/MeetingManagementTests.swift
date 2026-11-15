@@ -982,6 +982,67 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try service.detail(for: "second").playback.capability, .microphoneOnly)
     }
 
+    func testRenameIndexFailureRestoresRecordingMetadataAndCanonicalNoteTodo() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let bundleURL = try makePlaybackBundle(in: fixture, id: "rollback-media")
+        let old = "Meetings/rollback-media/meeting.md"
+        let notes = "Meetings/rollback-media/my-notes.md"
+        let service = MeetingManagementService(vault: fixture.vault)
+        let loaded = try service.detail(for: "rollback-media")
+        _ = try service.saveHumanNotes("- [ ] Keep this task", for: "rollback-media", expectedVersion: XCTUnwrap(loaded.notesVersion))
+        let queue = try TodoItemIndex(workspaceRootURL: fixture.root).loadTaskViews(today: "2026-01-01").queue
+        let beforeNotes = try fixture.vault.readMarkdown(relativePath: notes).data
+        let beforeBundle = try Data(contentsOf: bundleURL)
+        let indexURL = fixture.root.appendingPathComponent("Support/fault-index.sqlite")
+        let index = try SearchIndex(databaseURL: indexURL, workspaceRootURL: fixture.root)
+        try index.rebuild()
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(indexURL.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        XCTAssertEqual(sqlite3_exec(db, "DROP TABLE search_chunks", nil, nil, nil), SQLITE_OK)
+        let failing = MeetingManagementService(vault: fixture.vault, searchIndex: index)
+        XCTAssertThrowsError(try failing.rename(meetingID: "rollback-media", title: "New", expectedVersion: XCTUnwrap(fixture.vault.versionOfMarkdown(relativePath: old))))
+        XCTAssertEqual(try Data(contentsOf: bundleURL), beforeBundle)
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: notes).data, beforeNotes)
+        XCTAssertEqual(try TodoItemIndex(workspaceRootURL: fixture.root).loadTaskViews(today: "2026-01-01").queue.map(\.id), queue.map(\.id))
+        XCTAssertEqual(try service.detail(for: "rollback-media").playback.capability, .microphoneOnly)
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/new/meeting.md"))
+    }
+
+    func testRenameRestoresCanonicalFilesAfterEveryDirectoryOperationFailure() throws {
+        var injectedFailures = 0
+        for stop in 0..<32 {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("rename-fault-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let files = RenameFaultFileManager()
+            let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"),
+                appSupportRootURL: root.appendingPathComponent("support"), fileManager: files)
+            let old = "Meetings/old/meeting.md"
+            _ = try vault.writeMarkdown(Data("---\ntitle: Old\ncapture_session_id: fault\n---\n# Old\n".utf8), relativePath: old, expectedVersion: nil)
+            _ = try vault.writeMarkdown(Data("[[Meetings/old/meeting|link]]".utf8), relativePath: "Projects/link.md", expectedVersion: nil)
+            _ = try vault.writeMarkdown(Data("[[Meetings/old/meeting|inside]]".utf8), relativePath: "Meetings/old/reference.md", expectedVersion: nil)
+            let service = MeetingManagementService(vault: vault)
+            let detail = try service.detail(for: "fault")
+            let originals = try Dictionary(uniqueKeysWithValues: vault.textPaths().map { ($0, try vault.readMarkdown(relativePath: $0).data) })
+            files.failAt = stop
+            do {
+                _ = try service.rename(meetingID: "fault", title: "New", expectedVersion: XCTUnwrap(detail.doorwayVersion))
+                XCTAssertFalse(files.didFail)
+                break
+            } catch {
+                XCTAssertTrue(files.didFail, "Unexpected failure: \(error)")
+                injectedFailures += 1
+                XCTAssertNil(try vault.versionOfMarkdown(relativePath: "Meetings/new/meeting.md"))
+                for (path, original) in originals {
+                    XCTAssertEqual(try vault.readMarkdown(relativePath: path).data, original, "Changed after fault \(stop): \(path)")
+                }
+                XCTAssertEqual(try MeetingManagementService(vault: vault).detail(for: "fault").row.meetingRelativePath, old)
+            }
+        }
+        XCTAssertGreaterThanOrEqual(injectedFailures, 6, "Exercise snapshots, doorway, internal references, move and external references")
+    }
+
     func testRenameUpdatesCanonicalMeetingAndWorkspaceLinksWithoutAlias() throws {
         let fixture = try Fixture()
         let old = "Meetings/2026/01/01/09-10-old/meeting.md"
@@ -1465,5 +1526,29 @@ final class MeetingManagementTests: XCTestCase {
             let version = try vault.readMarkdown(relativePath: path).version
             _ = try vault.writeMarkdown(Data(text.utf8), relativePath: path, expectedVersion: version)
         }
+    }
+}
+
+private final class RenameFaultFileManager: FileManager, @unchecked Sendable {
+    var failAt: Int?
+    private var operation = 0
+    private(set) var didFail = false
+    private func check() throws {
+        guard let failAt else { return }
+        defer { operation += 1 }
+        if operation == failAt {
+            self.failAt = nil
+            didFail = true
+            throw NSError(domain: "Injected rename filesystem failure", code: operation)
+        }
+    }
+    override func createDirectory(at url: URL, withIntermediateDirectories createIntermediates: Bool,
+                                  attributes: [FileAttributeKey: Any]? = nil) throws {
+        try check()
+        try super.createDirectory(at: url, withIntermediateDirectories: createIntermediates, attributes: attributes)
+    }
+    override func moveItem(at srcURL: URL, to dstURL: URL) throws {
+        try check()
+        try super.moveItem(at: srcURL, to: dstURL)
     }
 }

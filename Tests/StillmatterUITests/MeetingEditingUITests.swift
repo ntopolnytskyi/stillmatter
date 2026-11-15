@@ -4,6 +4,41 @@ import XCTest
 import StillmatterCore
 
 extension StillmatterFlowsUITests {
+    func testRenameFailureRetainsTitleKeyboardCancelSuccessAndRelaunch() throws {
+        try seedMeeting()
+        openFixtureMeeting()
+        func openRename() {
+            app.buttons["meeting-more"].click()
+            app.menuItems["Rename…"].click()
+        }
+        openRename()
+        let title = app.textFields["meeting-rename-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Links copied outside Stillmatter cannot be updated")).firstMatch.exists)
+        title.click(); title.typeKey("a", modifierFlags: .command); title.typeText("///")
+        title.typeKey(.return, modifierFlags: [])
+        let status = app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Could not rename Meeting")).firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        openRename()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertEqual(title.value as? String, "///")
+        title.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(try meetingText().contains("title: UI fixture meeting"))
+        openRename()
+        XCTAssertEqual(title.value as? String, "UI fixture meeting")
+        title.click(); title.typeKey("a", modifierFlags: .command); title.typeText("Renamed fixture")
+        title.typeKey(.return, modifierFlags: [])
+        let row = app.tables["Meetings"].staticTexts["Renamed fixture"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        let canonical = fixtureRoot.appendingPathComponent("workspace/Meetings/renamed-fixture/meeting.md")
+        XCTAssertTrue(try String(contentsOf: canonical).contains("title: Renamed fixture"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: meetingURL.path))
+        relaunch()
+        app.buttons["sidebar-meetings"].click()
+        app.buttons["Recorded"].click()
+        XCTAssertTrue(app.tables["Meetings"].staticTexts["Renamed fixture"].firstMatch.waitForExistence(timeout: 10))
+    }
+
     func testCalendarFallbackKeyboardCancelUnlinkAndRelaunchPersistence() throws {
         try seedMeeting()
         app.terminate()

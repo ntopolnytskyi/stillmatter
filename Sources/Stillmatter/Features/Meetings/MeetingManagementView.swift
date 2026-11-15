@@ -2590,8 +2590,11 @@ final class MeetingManagementView: NSView {
         }
     }
 
+    private var renameDraft: (owner: MeetingReadModel, meetingID: String, title: String)?
+
     @objc func confirmRename() {
-        guard let detail = displayedDetail, selectedDoorwayVersion != nil else { return }
+        guard let detail = displayedDetail, selectedDoorwayVersion != nil,
+              let owner = currentReadModel() else { return }
         guard !meetingsModel.isDirty else {
             status.stringValue = "Save or discard this Meeting's edits before renaming it."
             return
@@ -2602,17 +2605,29 @@ final class MeetingManagementView: NSView {
         alert.addButton(withTitle: "Rename")
         alert.addButton(withTitle: "Cancel")
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        input.stringValue = detail.row.title
+        let draft = renameDraft
+        if let draft, draft.owner === owner, draft.meetingID == detail.row.id {
+            input.stringValue = draft.title
+        } else {
+            input.stringValue = detail.row.title
+        }
+        input.setAccessibilityIdentifier("meeting-rename-title")
         input.setAccessibilityLabel("New Meeting title")
         alert.accessoryView = input
-        guard presentConfirmationAlert(alert) == .alertFirstButtonReturn else { return }
+        let response = presentConfirmationAlert(alert)
+        guard currentReadModel() === owner, displayedDetail == detail else { return }
+        guard response == .alertFirstButtonReturn else { renameDraft = nil; return }
+        renameDraft = (owner, detail.row.id, input.stringValue)
         renameButton.isEnabled = false
         meetingsModel.rename(to: input.stringValue) { [weak self] result in
-            guard let self else { return }
+            guard let self, self.currentReadModel() === owner else { return }
             switch result {
-            case let .success(renamed): self.retryFeedback = (renamed.row.id, "Meeting renamed.")
+            case let .success(renamed):
+                self.renameDraft = nil
+                self.retryFeedback = (renamed.row.id, "Meeting renamed.")
             case let .failure(error): self.retryFeedback = (detail.row.id, "Could not rename Meeting: \(error.localizedDescription)")
             }
+            self.status.stringValue = self.retryFeedback?.message ?? ""
             self.renameButton.isEnabled = true
         }
     }

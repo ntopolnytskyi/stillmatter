@@ -7,6 +7,58 @@ import StillmatterPresentation
 
 final class MeetingCalendarHostedTests: XCTestCase {
     @MainActor
+    func testFailedRenameRetainsDraftForRetryAndCancelPreservesCanonicalMeeting() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rename-hosted-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"), appSupportRootURL: root.appendingPathComponent("support"))
+        let path = "Meetings/original/meeting.md"
+        _ = try vault.writeMarkdown(Data("---\ntitle: Original\ncapture_session_id: rename-fixture\n---\n# Original\n".utf8), relativePath: path, expectedVersion: nil)
+        let service = MeetingManagementService(vault: vault)
+        let read = MeetingReadModel(workspaceID: root.path, sourceFactory: { MeetingManagementReadSource(serviceProvider: { service }) })
+        let executor = MeetingMutationExecutor(searchIndex: nil, captureSnapshot: nil, serviceFactory: { _, _ in service })
+        let other = MeetingReadModel(workspaceID: "other", sourceFactory: { MeetingManagementReadSource(serviceProvider: { service }) })
+        var provided = read
+        var attempts = 0
+        let view = MeetingManagementView(readModelProvider: { provided }, mutationExecutorProvider: { executor }, playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in }, presentConfirmationAlert: { alert in
+            let input = alert.accessoryView as! NSTextField
+            attempts += 1
+            if attempts == 1 {
+                input.stringValue = "///"
+                return .alertFirstButtonReturn
+            }
+            if attempts == 2 {
+                XCTAssertEqual(input.stringValue, "///", "Failure must preserve the entered title")
+                return .alertSecondButtonReturn
+            }
+            if attempts == 3 {
+                XCTAssertEqual(input.stringValue, "Original", "Cancel discards the rejected draft")
+                input.stringValue = "Renamed"
+            } else {
+                provided = other
+                input.stringValue = "Expired selection"
+            }
+            return .alertFirstButtonReturn
+        })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 850, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        defer { view.refresh(isVisible: false); read.stop(); other.stop(); window.orderOut(nil) }
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil && view.renameButton.isEnabled }, evaluatedWith: nil)], timeout: 10)
+        view.confirmRename()
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.retryFeedback?.1.contains("Could not rename") == true }, evaluatedWith: nil)], timeout: 10)
+        view.confirmRename()
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(try service.detail(for: "rename-fixture").row.meetingRelativePath, path)
+        XCTAssertEqual(try service.detail(for: "rename-fixture").row.title, "Original")
+        view.confirmRename()
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail?.row.title == "Renamed" }, evaluatedWith: nil)], timeout: 10)
+        XCTAssertEqual(try service.detail(for: "rename-fixture").row.meetingRelativePath, "Meetings/renamed/meeting.md")
+        view.confirmRename()
+        XCTAssertEqual(attempts, 4)
+        XCTAssertEqual(try service.detail(for: "rename-fixture").row.title, "Renamed")
+    }
+
+    @MainActor
     func testRelinkResetCancelUnavailableAndExpiredWorkspaceUseRealMutationPath() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("calendar-hosted-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

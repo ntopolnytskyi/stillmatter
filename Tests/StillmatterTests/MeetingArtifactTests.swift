@@ -45,6 +45,29 @@ final class MeetingArtifactTests: XCTestCase {
         return try encoder.encode(document)
     }
 
+    func testRenamePreservesAllCanonicalItemsAndTodoIdentityAcrossRestart() throws {
+        try seed()
+        let initial = try load()
+        let beforeItems = try service.detail(for: "fixture").reviewItems
+        let queueBefore = try TodoItemIndex(workspaceRootURL: vault.rootURL).loadTaskViews(today: "2026-01-01").queue
+        let renamed = try service.rename(meetingID: "fixture", title: "Renamed", expectedVersion: XCTUnwrap(vault.versionOfMarkdown(relativePath: meeting)))
+        XCTAssertEqual(renamed.row.meetingRelativePath, "Meetings/renamed/meeting.md")
+        XCTAssertNil(try vault.versionOfMarkdown(relativePath: meeting))
+        let reopened = MeetingManagementService(vault: vault)
+        let afterItems = try reopened.detail(for: "fixture").reviewItems
+        XCTAssertEqual(afterItems.map(\.id), beforeItems.map(\.id))
+        XCTAssertTrue(afterItems.allSatisfy { $0.path.hasPrefix("Meetings/renamed/") })
+        let queue = try TodoItemIndex(workspaceRootURL: vault.rootURL).loadTaskViews(today: "2026-01-01").queue
+        XCTAssertEqual(queue.map(\.id), queueBefore.map(\.id))
+        XCTAssertFalse(queue.isEmpty)
+        XCTAssertTrue(queue.allSatisfy { $0.canonicalLocation?.relativePath == "Meetings/renamed/my-notes.md" })
+        let restored = try MeetingArtifactStore(vault: vault, inbox: nil).load(meetingPath: "Meetings/renamed/meeting.md", meetingID: "fixture")
+        XCTAssertEqual(restored.notes, initial.notes)
+        XCTAssertEqual(restored.sections, initial.sections)
+        XCTAssertTrue(restored.paths.values.allSatisfy { $0.hasPrefix("Meetings/renamed/") })
+        XCTAssertEqual(try reopened.detail(for: "fixture").extraction?.meeting, "Meetings/renamed/meeting.md")
+    }
+
     func testSummarySaveRejectsCrossFileIdentityCollisionsWithoutChangingFiles() throws {
         try seed()
         let initial = try load()
