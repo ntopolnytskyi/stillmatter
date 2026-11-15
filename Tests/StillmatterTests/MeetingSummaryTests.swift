@@ -366,6 +366,57 @@ final class MeetingSummaryTests: XCTestCase {
         XCTAssertFalse(pendingProposals.contains { $0 == "meeting-action:capture-summary:\(noteItemID)" })
     }
 
+    func testReprocessingRestartsEveryFileAndProposalPublicationBoundaryWithoutDuplicateTodo() throws {
+        enum Crash: Error { case injected }
+        for phase in 0...3 {
+            let fixture = try MeetingSummaryFixture()
+            let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+            let service = MeetingManagementService(vault: vault, inbox: fixture.inbox)
+            let initial = try service.detail(for: fixture.transcript.meetingRelativePath)
+            _ = try service.saveHumanNotes("Keep my words\n- [x] Completed note #personal", for: initial.row.id,
+                expectedVersion: XCTUnwrap(initial.notesVersion))
+            let before = try service.detail(for: initial.row.id)
+            let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+                decisions: [fixture.outcome(id: "decision", text: "Choose Friday", segment: 1)],
+                myActionItems: [fixture.outcome(id: "first", text: "Send the plan", segment: 0),
+                    fixture.outcome(id: "second", text: "Confirm capacity", segment: 1)], otherActionItems: [], openQuestions: [])
+            let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+            let recovery = MeetingReprocessingRecovery(vault: vault)
+            try recovery.retain(jobID: "summary-job", paths: [fixture.summaryPath])
+            var applied = false
+            let interrupted = try fixture.executor(extraction: extraction, onApplied: { applied = true },
+                publicationCheckpoint: { if $0 == phase { throw Crash.injected } })
+            XCTAssertThrowsError(try execute(interrupted, manifest: manifest))
+            XCTAssertFalse(applied, "Partial file/queue publication cannot claim success")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: recovery.location(jobID: "summary-job").path))
+            // Recreate the executor and operational connection as after a restart.
+            _ = try execute(fixture.executor(extraction: extraction), manifest: manifest)
+            let reopened = try MeetingManagementService(vault: vault, inbox: TasksInbox(databaseURL: fixture.rootURL.appendingPathComponent("operational.sqlite")))
+                .detail(for: initial.row.id)
+            XCTAssertEqual(reopened.humanNotes, before.humanNotes)
+            XCTAssertEqual(reopened.myActionItems.count, 2)
+            XCTAssertEqual(reopened.decisions.first?.text, "Choose Friday")
+            XCTAssertEqual(Set(try fixture.inbox.items(category: .review).map(\.id)),
+                ["meeting-action:capture-summary:first", "meeting-action:capture-summary:second"])
+            XCTAssertEqual(try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadTaskViews(today: "2026-01-01").done.count, 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: recovery.location(jobID: "summary-job").path))
+        }
+    }
+
+    func testReprocessingDeduplicatesIdenticalNewPendingProposals() throws {
+        let fixture = try MeetingSummaryFixture()
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        let service = MeetingManagementService(vault: vault, inbox: fixture.inbox)
+        let initial = try service.detail(for: fixture.transcript.meetingRelativePath)
+        let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [fixture.outcome(id: "first", text: "Send the plan", segment: 0),
+                fixture.outcome(id: "duplicate", text: "Send the plan", segment: 0)], otherActionItems: [], openQuestions: [])
+        _ = try execute(fixture.executor(extraction: extraction), manifest: MeetingSummaryJob.manifest(
+            transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath))
+        XCTAssertEqual(try service.detail(for: initial.row.id).myActionItems.count, 1)
+        XCTAssertEqual(try fixture.inbox.items(category: .review).count, 1)
+    }
+
     func testReprocessRecoverySurvivesFailedAnalysisThenIsRemovedOnlyAfterValidatedPublication() throws {
         let fixture = try MeetingSummaryFixture()
         let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
@@ -399,6 +450,9 @@ final class MeetingSummaryTests: XCTestCase {
             try fixture.inbox.queueProposal(id: proposal, title: id, sourceRef: "[[Meetings/2026/09/kickoff/summary#My action items|ref]]")
             try service.reviewAction(id: proposal, accept: accepted)
         }
+        let approvedTask = try XCTUnwrap(service.detail(for: detail.row.id).reviewItems.first { $0.review == "approved" })
+        _ = try service.editMeetingItem(meetingID: detail.row.id, item: approvedTask, text: approvedTask.text,
+            owner: "me", dueDate: "2026-12-01", status: .done)
         let notes = try service.detail(for: detail.row.id)
         _ = try service.saveHumanNotes("Keep my prose\n- [x] Send note follow-up #mine", for: detail.row.id, expectedVersion: XCTUnwrap(notes.notesVersion))
         let before = try service.detail(for: detail.row.id)
@@ -417,6 +471,8 @@ final class MeetingSummaryTests: XCTestCase {
         let ambiguous = try XCTUnwrap(reopened.myActionItems.first { $0.id == "uncertain" })
         XCTAssertEqual(ambiguous.reviewState, .pending)
         XCTAssertTrue(ambiguous.text.contains("#possible-duplicate"))
+        XCTAssertEqual(reopened.reviewItems.first { $0.id == approvedTask.id }?.status, .done)
+        XCTAssertEqual(reopened.reviewItems.first { $0.id == approvedTask.id }?.dueDate, "2026-12-01")
         XCTAssertEqual(reopened.row.processingState, .needsAttention)
         let queue = try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadTaskViews(today: "2026-01-01")
         XCTAssertEqual(queue.queue.count + queue.done.count, 2)
@@ -893,6 +949,7 @@ private final class MeetingSummaryFixture {
                   onApplied: @escaping () -> Void = {},
                   narrative: String? = nil,
                   budget: MeetingAnalysisBudget = MeetingAnalysisBudget(),
+                  publicationCheckpoint: @escaping (Int) throws -> Void = { _ in },
                   runnerOverride: PiRPCCommandRunning? = nil,
                   approval: @escaping () -> Bool = { true },
                   transform: ((String, String) throws -> String)? = nil) throws -> MeetingSummaryJobExecutor {
@@ -953,7 +1010,7 @@ private final class MeetingSummaryFixture {
                 appSupportRootURL: rootURL.appendingPathComponent("Application Support", isDirectory: true)
             ),
             inbox: inbox,
-            onApplied: onApplied, analysisBudget: budget
+            onApplied: onApplied, analysisBudget: budget, publicationCheckpoint: publicationCheckpoint
         )
     }
 

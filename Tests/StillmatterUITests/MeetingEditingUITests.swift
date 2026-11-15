@@ -29,13 +29,15 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(language.value as? String, "Auto")
         language.click(); app.menuItems["English"].click()
         app.buttons["meeting-reprocess-confirm"].typeKey(.return, modifierFlags: [])
-        let feedback = app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Could not reprocess")).firstMatch
+        let feedback = app.staticTexts["meeting-reprocess-feedback"]
         XCTAssertTrue(feedback.waitForExistence(timeout: 10))
+        XCTAssertTrue((feedback.value as? String)?.contains("Could not reprocess") == true)
         XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("my-notes.md")), notes)
         XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("summary.md")), summary)
         relaunch(); openFixtureMeeting(); app.radioButtons["Transcript"].click()
         XCTAssertTrue(app.staticTexts["meeting-analysis-outdated"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Alice"].waitForExistence(timeout: 5))
+        expectation(for: NSPredicate(format: "title CONTAINS %@", "Alice"), evaluatedWith: app.buttons["transcript-correct-s0"])
+        waitForExpectations(timeout: 5)
     }
 
     func testSpeakerCorrectionRepeatedKeyboardCancelValidationAndReopen() throws {

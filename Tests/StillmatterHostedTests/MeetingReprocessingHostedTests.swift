@@ -14,8 +14,15 @@ final class MeetingReprocessingHostedTests: XCTestCase {
         let service = MeetingManagementService(vault: vault)
         let model = MeetingReadModel(workspaceID: root.path, sourceFactory: { MeetingManagementReadSource(serviceProvider: { service }) })
         let executor = ReprocessingControlExecutor()
+        let otherVault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("other-workspace"), appSupportRootURL: root.appendingPathComponent("other-support"))
+        let otherBytes = Data("# Other workspace\n".utf8)
+        _ = try otherVault.writeMarkdown(otherBytes, relativePath: "Meetings/fixture/meeting.md", expectedVersion: nil)
+        let otherService = MeetingManagementService(vault: otherVault)
+        let otherModel = MeetingReadModel(workspaceID: "other", sourceFactory: { MeetingManagementReadSource(serviceProvider: { otherService }) })
+        var providedModel: MeetingReadModel? = model
+        var switchWorkspace = false
         var confirm = false
-        let view = MeetingManagementView(readModelProvider: { model }, mutationExecutorProvider: { executor },
+        let view = MeetingManagementView(readModelProvider: { providedModel }, mutationExecutorProvider: { executor },
             playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in }, presentConfirmationAlert: { alert in
                 XCTAssertTrue(alert.informativeText.contains("no inspectable revision history in Release 1.0"))
                 XCTAssertTrue(alert.informativeText.contains("My Notes prose and task content"))
@@ -24,15 +31,22 @@ final class MeetingReprocessingHostedTests: XCTestCase {
                 XCTAssertEqual(languages.itemTitles, ["Auto", "English", "Ukrainian"])
                 XCTAssertEqual(languages.indexOfSelectedItem, 0)
                 languages.selectItem(at: 2)
+                if switchWorkspace { providedModel = otherModel }
                 return confirm ? .alertFirstButtonReturn : .alertSecondButtonReturn
             })
         view.refresh(isVisible: true)
-        let loaded = expectation(for: NSPredicate { _, _ in view.displayedDetail != nil }, evaluatedWith: nil)
+        let loaded = expectation(for: NSPredicate { _, _ in view.displayedDetail != nil && view.reprocessButton.isEnabled }, evaluatedWith: nil)
         await fulfillment(of: [loaded], timeout: 5)
         let selected = view.selectedID
         view.confirmReprocess()
         XCTAssertTrue(executor.mutations.isEmpty)
         confirm = true
+        switchWorkspace = true
+        view.confirmReprocess()
+        XCTAssertTrue(executor.mutations.isEmpty, "A confirmation from the previous workspace must expire")
+        XCTAssertEqual(try otherVault.readMarkdown(relativePath: "Meetings/fixture/meeting.md").data, otherBytes)
+        providedModel = model
+        switchWorkspace = false
         view.confirmReprocess()
         // A second click while completion is withheld cannot dispatch a competing operation.
         view.confirmReprocess()
@@ -44,6 +58,7 @@ final class MeetingReprocessingHostedTests: XCTestCase {
         let finished = expectation(for: NSPredicate { _, _ in view.retryFeedback?.message.contains("queued") == true }, evaluatedWith: nil)
         await fulfillment(of: [finished], timeout: 5)
         XCTAssertEqual(view.selectedID, selected)
+        XCTAssertFalse(view.reprocessButton.isEnabled, "Keep disabled until the queued run is observed")
         try service.archive(meetingID: selected!)
         view.archiveFilter.selectItem(at: 1)
         view.filtersChanged(nil)
@@ -54,7 +69,7 @@ final class MeetingReprocessingHostedTests: XCTestCase {
         XCTAssertTrue(view.reprocessButton.toolTip?.contains("Archived") == true)
         view.confirmReprocess()
         XCTAssertEqual(executor.mutations.count, 1)
-        view.refresh(isVisible: false); model.stop()
+        view.refresh(isVisible: false); model.stop(); otherModel.stop()
     }
 }
 

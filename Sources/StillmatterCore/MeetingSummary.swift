@@ -184,6 +184,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
     private let queue: DispatchQueue
     private let onApplied: () -> Void
     private let analysisBudget: MeetingAnalysisBudget
+    private let publicationCheckpoint: (Int) throws -> Void
 
     public init(
         worker: PiCodexWorker,
@@ -192,7 +193,8 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         inbox: TasksInbox,
         queue: DispatchQueue = DispatchQueue(label: "Stillmatter.MeetingSummary", qos: .utility),
         onApplied: @escaping () -> Void = {},
-        analysisBudget: MeetingAnalysisBudget = MeetingAnalysisBudget()
+        analysisBudget: MeetingAnalysisBudget = MeetingAnalysisBudget(),
+        publicationCheckpoint: @escaping (Int) throws -> Void = { _ in }
     ) {
         self.worker = worker
         self.workspaceRootURL = workspaceRootURL.standardizedFileURL
@@ -201,6 +203,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         self.queue = queue
         self.onApplied = onApplied
         self.analysisBudget = analysisBudget
+        self.publicationCheckpoint = publicationCheckpoint
     }
 
     public func execute(
@@ -308,13 +311,14 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                 }
                 try MeetingArtifactTransaction(vault: vault, identity: captureSessionID).publish(generated + tagChanges)
             }
+            try publicationCheckpoint(0)
             for noteID in noteItemIDs {
                 let duplicateProposalID = "meeting-action:\(captureSessionID):\(noteID)"
                 if try inbox.proposalReviewState(id: duplicateProposalID) == .pending {
                     try inbox.setProposalReviewState(id: duplicateProposalID, state: .referenceOnly)
                 }
             }
-            for item in extraction.myActionItems {
+            for (index, item) in extraction.myActionItems.enumerated() {
                 let proposalID = "meeting-action:\(captureSessionID):\(item.id)"
                 if try inbox.queueProposal(
                     id: proposalID,
@@ -324,9 +328,11 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                 ) {
                     queued += 1
                 }
+                try publicationCheckpoint(index + 1)
             }
             try inbox.reconcileMeetingProposals(sessionID: captureSessionID, sourceRef: sourceRef,
                 currentIDs: Set(extraction.myActionItems.map { "meeting-action:\(captureSessionID):\($0.id)" }))
+            try publicationCheckpoint(extraction.myActionItems.count + 1)
             MeetingReprocessingRecovery(vault: vault).discard(jobID: job.id)
             onApplied()
         }

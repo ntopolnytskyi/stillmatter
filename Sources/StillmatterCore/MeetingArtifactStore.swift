@@ -329,16 +329,24 @@ final class MeetingArtifactStore {
         let protected = actions.filter { $0.item.origin != "generated" || $0.item.review != "pending" }
             + (try outcomes(base.notes, path: base.paths["notes"] ?? extraction.meeting))
         func normalized(_ text: String) -> String {
-            ItemTags.replacing(in: text, with: []).lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            ItemTags.replacing(in: text, with: [])
+                .replacingOccurrences(of: #"\b(?:due|done):\s*\d{4}-\d{2}-\d{2}\b"#, with: "", options: .regularExpression)
+                .lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
         }
         func reconcile(_ values: [MeetingOutcome], owner: String?) -> [MeetingOutcome] {
-            values.compactMap { value in
-                let exact = protected.filter { $0.item.owner == owner && normalized($0.outcome.text) == normalized(value.text) }
+            var seen: Set<String> = []
+            return values.compactMap { value in
+                let evidence = value.citations.map { "\($0.segmentID):\($0.startSeconds):\($0.endSeconds)" }.sorted().joined(separator: ";")
+                guard seen.insert(normalized(value.text) + "\n" + evidence).inserted else { return nil }
+                let sameText = protected.filter { $0.item.owner == owner && normalized($0.outcome.text) == normalized(value.text) }
+                let exact = sameText.filter { record in
+                    record.outcome.citations.isEmpty || value.citations.contains { record.outcome.citations.contains($0) }
+                }
                 if exact.count == 1 { return nil }
                 let sameIdentity = protected.filter { $0.outcome.id == value.id || $0.item.id == value.id.lowercased() }
                 // A stable approved identity remains protected even when the model rewrites it.
                 if sameIdentity.contains(where: { $0.item.review == "approved" }) { return nil }
-                let ambiguous = !exact.isEmpty || !sameIdentity.isEmpty || protected.contains { record in
+                let ambiguous = !sameText.isEmpty || !sameIdentity.isEmpty || protected.contains { record in
                     record.outcome.citations.contains { value.citations.contains($0) }
                 }
                 guard ambiguous else { return value }

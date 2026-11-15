@@ -129,6 +129,7 @@ final class MeetingManagementView: NSView {
     private var evidenceTargets: [String: EvidenceTarget] = [:]
     private var outcomeSourceTargets: [String: OutcomeSourceTarget] = [:]
     let status = NSTextField(wrappingLabelWithString: "")
+    private let reprocessFeedback = NSTextField(wrappingLabelWithString: "")
     let retryRows = NSStackView()
     lazy var reprocessButton = controls.button("Reprocess…", identifier: "meeting-reprocess")
     lazy var renameButton = controls.button("Rename…", identifier: "meeting-rename")
@@ -672,6 +673,10 @@ final class MeetingManagementView: NSView {
         caption.addArrangedSubview(metadataBar)
         caption.addArrangedSubview(statusBadge)
         caption.addArrangedSubview(pageSelector)
+        reprocessFeedback.setAccessibilityIdentifier("meeting-reprocess-feedback")
+        reprocessFeedback.isHidden = true
+        caption.addArrangedSubview(reprocessFeedback)
+        reprocessFeedback.widthAnchor.constraint(lessThanOrEqualTo: caption.widthAnchor).isActive = true
         caption.orientation = .vertical
         caption.alignment = .leading
         caption.spacing = GraphiteFocusPresentation.Space.compact
@@ -1305,8 +1310,9 @@ final class MeetingManagementView: NSView {
                 button.superview?.isHidden = false
             }
             let canChangeFolder = selected.row.captureState == .stopped && !selected.jobs.contains(where: { $0.status == .queued || $0.status == .running })
-            reprocessButton.isEnabled = canChangeFolder && !selected.row.isArchived && !meetingsModel.isDirty
-            reprocessButton.toolTip = selected.row.isArchived ? "Archived Meetings cannot be reprocessed." : canChangeFolder ? "Rebuild generated Meeting content…" : "Wait for this Meeting’s active work to finish."
+            updateReprocessAvailability(for: selected)
+            reprocessFeedback.stringValue = retryFeedback?.meetingID == selected.row.id ? retryFeedback!.message : ""
+            reprocessFeedback.isHidden = reprocessFeedback.stringValue.isEmpty
             renameButton.isEnabled = canChangeFolder && selected.doorwayVersion != nil && !meetingsModel.isDirty
             archiveButton.title = selected.row.isArchived ? "Restore" : "Archive"
             let archiveName = selected.row.isArchived ? "Restore meeting" : "Archive meeting"
@@ -2558,6 +2564,15 @@ final class MeetingManagementView: NSView {
         }
     }
 
+    private func updateReprocessAvailability(for selected: MeetingBrowserDetail?) {
+        guard let detail = selected else { reprocessButton.isEnabled = false; return }
+        let active = detail.row.captureState != .stopped || detail.jobs.contains { $0.status == .queued || $0.status == .running }
+        reprocessButton.isEnabled = !detail.row.isArchived && !active && !meetingsModel.isDirty
+        reprocessButton.toolTip = detail.row.isArchived ? "Archived Meetings cannot be reprocessed."
+            : active ? "Wait for this Meeting’s active work to finish."
+            : meetingsModel.isDirty ? "Save or discard your edits before reprocessing." : "Rebuild generated Meeting content…"
+    }
+
     @objc func confirmReprocess() {
         guard let detail = displayedDetail, reprocessButton.isEnabled else { return }
         guard !meetingsModel.isDirty else {
@@ -2583,11 +2598,17 @@ final class MeetingManagementView: NSView {
         meetingsModel.reprocess(language: choices[languages.indexOfSelectedItem]) { [weak self] result in
             guard let self else { return }
             switch result {
-            case .success: self.retryFeedback = (detail.row.id, "Reprocessing queued for this Meeting.")
-            case let .failure(error): self.retryFeedback = (detail.row.id, "Could not reprocess: \(error.localizedDescription)")
+            case .success:
+                self.retryFeedback = (detail.row.id, "Reprocessing queued for this Meeting.")
+                self.reprocessButton.isEnabled = false
+                self.reprocessButton.toolTip = "Wait for this Meeting’s active work to finish."
+            case let .failure(error):
+                self.retryFeedback = (detail.row.id, "Could not reprocess: \(error.localizedDescription)")
+                self.updateReprocessAvailability(for: self.displayedDetail)
             }
             self.status.stringValue = self.retryFeedback?.message ?? ""
-            self.reprocessButton.isEnabled = !detail.row.isArchived
+            self.reprocessFeedback.stringValue = self.status.stringValue
+            self.reprocessFeedback.isHidden = false
         }
     }
 
