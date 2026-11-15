@@ -59,6 +59,7 @@ final class MeetingCalendarHostedTests: XCTestCase {
         view.confirmRename()
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail?.row.title == "Renamed" }, evaluatedWith: nil)], timeout: 10)
         XCTAssertEqual(try service.detail(for: "rename-fixture").row.meetingRelativePath, "Meetings/renamed/meeting.md")
+        XCTAssertEqual(view.retryFeedback?.message, "Meeting renamed.")
         view.confirmRename()
         XCTAssertEqual(attempts, 4)
         XCTAssertEqual(try service.detail(for: "rename-fixture").row.title, "Renamed")

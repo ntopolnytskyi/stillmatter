@@ -1248,6 +1248,12 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderDetail(_ selected: MeetingBrowserDetail) {
+            if let draft = renameDraft, draft.owner === currentReadModel(), draft.meetingID == selected.row.id,
+               draft.baseVersion != selected.doorwayVersion,
+               draft.title.trimmingCharacters(in: .whitespacesAndNewlines) == selected.row.title {
+                renameDraft = nil
+                retryFeedback = (selected.row.id, "Meeting renamed.")
+            }
             canEditCalendar = false
             let opensReview = reviewSelectionStarted && reviewDetailPath == selected.row.meetingRelativePath
             if reviewNavigationID != nil && !opensReview { return }
@@ -2590,7 +2596,7 @@ final class MeetingManagementView: NSView {
         }
     }
 
-    private var renameDraft: (owner: MeetingReadModel, meetingID: String, title: String)?
+    private var renameDraft: (owner: MeetingReadModel, meetingID: String, title: String, baseVersion: WorkspaceFileVersion?)?
 
     @objc func confirmRename() {
         guard let detail = displayedDetail, selectedDoorwayVersion != nil,
@@ -2617,7 +2623,7 @@ final class MeetingManagementView: NSView {
         let response = presentConfirmationAlert(alert)
         guard currentReadModel() === owner, displayedDetail?.row.id == detail.row.id else { return }
         guard response == .alertFirstButtonReturn else { renameDraft = nil; return }
-        renameDraft = (owner, detail.row.id, input.stringValue)
+        renameDraft = (owner, detail.row.id, input.stringValue, detail.doorwayVersion)
         guard displayedDetail == detail else {
             retryFeedback = (detail.row.id, "Meeting changed while Rename was open. Your title is preserved. Review the updated Meeting and try Rename again.")
             status.stringValue = retryFeedback?.message ?? ""
@@ -2626,11 +2632,7 @@ final class MeetingManagementView: NSView {
         renameButton.isEnabled = false
         meetingsModel.rename(to: input.stringValue) { [weak self] result in
             guard let self, self.currentReadModel() === owner else { return }
-            switch result {
-            case let .success(renamed):
-                self.renameDraft = nil
-                self.retryFeedback = (renamed.row.id, "Meeting renamed.")
-            case let .failure(error):
+            if case let .failure(error) = result {
                 let explanation: String
                 if case WorkspaceVaultError.conflict = error {
                     explanation = "The Meeting or destination changed. Review the current Meeting, choose an unused title, and try again."

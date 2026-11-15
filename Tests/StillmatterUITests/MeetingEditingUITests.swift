@@ -40,6 +40,7 @@ extension StillmatterFlowsUITests {
         title.typeKey(.return, modifierFlags: [])
         let row = app.tables["Meetings"].staticTexts["Renamed fixture"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value == %@", "Meeting renamed.")).firstMatch.waitForExistence(timeout: 10))
         let canonical = fixtureRoot.appendingPathComponent("workspace/Meetings/renamed-fixture/meeting.md")
         XCTAssertTrue(try String(contentsOf: canonical).contains("title: Renamed fixture"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: meetingURL.path))
