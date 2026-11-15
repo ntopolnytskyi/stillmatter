@@ -47,6 +47,8 @@ final class MeetingCalendarHostedTests: XCTestCase {
         defer { view.refresh(isVisible: false); read.stop(); other.stop(); window.orderOut(nil) }
         view.refresh(isVisible: true)
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil && view.renameButton.isEnabled }, evaluatedWith: nil)], timeout: 10)
+        _ = view.meetingsModel.select(meetingID: "rename-fixture", selectedIDs: ["rename-fixture"])
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail?.row.id == "rename-fixture" && view.renameButton.isEnabled }, evaluatedWith: nil)], timeout: 10)
         view.confirmRename()
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.retryFeedback?.1.contains("Could not rename") == true }, evaluatedWith: nil)], timeout: 10)
         XCTAssertTrue(view.status.stringValue.contains("choose an unused title"))
