@@ -44,7 +44,7 @@ extension MeetingBrowserDetail {
     public func calendarChange(event: CalendarMeeting?, resetTitle: Bool) throws -> MeetingCalendarContext {
         var context = try MeetingCalendarContext.read(from: doorwayText) ?? MeetingCalendarContext(
             event: nil, fallbackTitle: row.title, appliedTitle: row.title,
-            manualTitle: !row.title.hasPrefix("Untitled"), status: "No linked event")
+            manualTitle: true, status: "No linked event")
         context.manualTitle = context.manualTitle || row.title != context.appliedTitle
         if resetTitle { context.manualTitle = false }
         context.event = event

@@ -82,7 +82,7 @@ final class MeetingCalendarHostedTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyFallbackRequiresFolderWarningAndCancellationPreservesFiles() async throws {
+    func testLegacyTitleIsPreservedUntilExplicitResetAndCancelledFolderWarningPreservesFiles() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("calendar-legacy-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"), appSupportRootURL: root.appendingPathComponent("support"))
@@ -103,9 +103,15 @@ final class MeetingCalendarHostedTests: XCTestCase {
         defer { view.calendarEditor.cancel(); view.refresh(isVisible: false); read.stop(); window.orderOut(nil) }
         view.refresh(isVisible: true)
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil && view.canEditCalendar }, evaluatedWith: nil)], timeout: 10)
-        let before = try vault.readMarkdown(relativePath: path).data
         view.editCalendar()
         XCTAssertEqual(view.calendarEditor.reset.state, .off)
+        view.calendarEditor.link.performClick(nil)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail?.calendarContext?.event == event }, evaluatedWith: nil)], timeout: 10)
+        XCTAssertEqual(warnings, 0)
+        XCTAssertEqual(view.displayedDetail?.row.title, "Untitled Meeting at 10:00")
+        let before = try vault.readMarkdown(relativePath: path).data
+        view.editCalendar()
+        view.calendarEditor.reset.state = .on
         view.calendarEditor.link.performClick(nil)
         XCTAssertEqual(warnings, 1)
         XCTAssertEqual(try vault.readMarkdown(relativePath: path).data, before)

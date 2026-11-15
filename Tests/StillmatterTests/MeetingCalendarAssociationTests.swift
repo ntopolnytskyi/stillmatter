@@ -21,7 +21,7 @@ final class MeetingCalendarAssociationTests: XCTestCase {
         let service = MeetingManagementService(vault: vault)
         var detail = try service.detail(for: "external")
         let event = CalendarMeeting(title: "🌍", eventIdentifier: "event", calendarIdentifier: "work")
-        detail = try service.associateCalendar(meetingID: "external", event: event, expectedVersion: detail.doorwayVersion!)
+        detail = try service.associateCalendar(meetingID: "external", event: event, resetTitle: true, expectedVersion: detail.doorwayVersion!)
         XCTAssertEqual(detail.row.title, "🌍")
         let externallyEdited = detail.doorwayText.replacingOccurrences(of: "title: 🌍", with: "title: External title").replacingOccurrences(of: "# 🌍", with: "# External title")
         _ = try vault.writeMarkdown(Data(externallyEdited.utf8), relativePath: detail.row.meetingRelativePath, expectedVersion: detail.doorwayVersion!)
