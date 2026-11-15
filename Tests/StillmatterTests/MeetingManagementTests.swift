@@ -1250,6 +1250,10 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertTrue(try store.jobs().isEmpty)
         let job = try service.reprocess(meetingID: "first", language: .ukrainian)
         XCTAssertEqual(job.manifest.metadata["language"], "uk")
+        let recovery = MeetingReprocessingRecovery(vault: fixture.vault).location(jobID: job.id)
+        let snapshot = try JSONDecoder().decode([String: Data].self, from: Data(contentsOf: recovery))
+        XCTAssertEqual(snapshot[summaryPath], canonicalSummaryBeforeReprocess)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recovery.path))
         XCTAssertEqual(job.manifest.metadata["recording_bundle_path"], bundle.path)
         XCTAssertEqual(job.manifest.metadata["transcription_audio_selection_path"], "")
         XCTAssertEqual(starts, 1)
@@ -1259,6 +1263,19 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try store.jobs().count, 1)
         // Unrelated Meetings remain independently eligible under the scheduler's limits.
         XCTAssertEqual(try service.reprocess(meetingID: "second", language: .english).manifest.metadata["language"], "en")
+    }
+
+    func testArchivedMeetingCannotReprocessOrChangeLanguage() throws {
+        let fixture = try Fixture()
+        _ = try makePlaybackBundle(in: fixture, id: "archived")
+        let jobs = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/jobs.sqlite"))
+        let service = MeetingManagementService(vault: fixture.vault, jobStore: jobs, retryUnavailableReason: { _ in nil })
+        try service.archive(meetingID: "archived")
+        XCTAssertThrowsError(try service.reprocess(meetingID: "archived", language: .ukrainian)) {
+            XCTAssertTrue($0.localizedDescription.contains("Archived"))
+        }
+        XCTAssertTrue(try jobs.jobs().isEmpty)
+        XCTAssertTrue(try service.detail(for: "archived").row.isArchived)
     }
 
     func testReprocessRejectsMissingOrMismatchedBundleWithoutEnqueue() throws {

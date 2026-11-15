@@ -366,6 +366,63 @@ final class MeetingSummaryTests: XCTestCase {
         XCTAssertFalse(pendingProposals.contains { $0 == "meeting-action:capture-summary:\(noteItemID)" })
     }
 
+    func testReprocessRecoverySurvivesFailedAnalysisThenIsRemovedOnlyAfterValidatedPublication() throws {
+        let fixture = try MeetingSummaryFixture()
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        try Data("Prior working Summary".utf8).write(to: fixture.workspaceURL.appendingPathComponent(fixture.summaryPath))
+        let recovery = MeetingReprocessingRecovery(vault: vault)
+        try recovery.retain(jobID: "summary-job", paths: [fixture.summaryPath, "missing.md"])
+        let retained = try Data(contentsOf: recovery.location(jobID: "summary-job"))
+        let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        XCTAssertThrowsError(try execute(fixture.executor(extraction: extraction, narrative: "Unsupported uncited claim"), manifest: manifest))
+        XCTAssertEqual(try Data(contentsOf: recovery.location(jobID: "summary-job")), retained)
+        XCTAssertEqual(try fixture.contents(fixture.summaryPath), "Prior working Summary")
+        _ = try execute(fixture.executor(extraction: extraction), manifest: manifest)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recovery.location(jobID: "summary-job").path))
+    }
+
+    func testReprocessingMatchesChangedIDsWithoutDuplicatingProtectedWorkAndFlagsAmbiguity() throws {
+        let fixture = try MeetingSummaryFixture()
+        let meeting = fixture.transcript.meetingRelativePath
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        let initial = MeetingSummaryExtraction(meeting: meeting, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [fixture.outcome(id: "approved", text: "Send the plan #personal", segment: 0),
+                fixture.outcome(id: "rejected", text: "Book the room", segment: 1)], otherActionItems: [], openQuestions: [])
+        _ = try execute(fixture.executor(extraction: initial), manifest: manifest)
+        let vault = WorkspaceVault(workspaceRootURL: fixture.workspaceURL, appSupportRootURL: fixture.rootURL.appendingPathComponent("Application Support"))
+        let service = MeetingManagementService(vault: vault, inbox: fixture.inbox)
+        let detail = try service.detail(for: meeting)
+        for (id, accepted) in [("approved", true), ("rejected", false)] {
+            let proposal = "meeting-action:\(detail.row.id):\(id)"
+            try fixture.inbox.queueProposal(id: proposal, title: id, sourceRef: "[[Meetings/2026/09/kickoff/summary#My action items|ref]]")
+            try service.reviewAction(id: proposal, accept: accepted)
+        }
+        let notes = try service.detail(for: detail.row.id)
+        _ = try service.saveHumanNotes("Keep my prose\n- [x] Send note follow-up #mine", for: detail.row.id, expectedVersion: XCTUnwrap(notes.notesVersion))
+        let before = try service.detail(for: detail.row.id)
+        let next = MeetingSummaryExtraction(meeting: meeting, transcript: fixture.transcriptPath,
+            decisions: [fixture.outcome(id: "new-decision", text: "Choose Friday", segment: 1)],
+            myActionItems: [fixture.outcome(id: "changed-approved", text: "Send the plan", segment: 0),
+                fixture.outcome(id: "changed-rejected", text: "Book the room", segment: 1),
+                fixture.outcome(id: "changed-note", text: "Send note follow-up", segment: 0),
+                fixture.outcome(id: "uncertain", text: "Send a revised plan", segment: 0)], otherActionItems: [], openQuestions: [])
+        _ = try execute(fixture.executor(extraction: next), manifest: manifest)
+        let reopened = try MeetingManagementService(vault: vault, inbox: fixture.inbox).detail(for: detail.row.id)
+        XCTAssertEqual(reopened.humanNotes, before.humanNotes)
+        XCTAssertFalse(reopened.myActionItems.contains { ["changed-approved", "changed-rejected", "changed-note"].contains($0.id) })
+        XCTAssertEqual(reopened.myActionItems.first { $0.id == "approved" }?.text, before.myActionItems.first { $0.id == "approved" }?.text)
+        XCTAssertEqual(reopened.myActionItems.first { $0.id == "rejected" }?.reviewState, .dismissed)
+        let ambiguous = try XCTUnwrap(reopened.myActionItems.first { $0.id == "uncertain" })
+        XCTAssertEqual(ambiguous.reviewState, .pending)
+        XCTAssertTrue(ambiguous.text.contains("#possible-duplicate"))
+        XCTAssertEqual(reopened.row.processingState, .needsAttention)
+        let queue = try TodoItemIndex(workspaceRootURL: fixture.workspaceURL).loadTaskViews(today: "2026-01-01")
+        XCTAssertEqual(queue.queue.count + queue.done.count, 2)
+        XCTAssertEqual(reopened.decisions.first?.text, "Choose Friday")
+    }
+
     func testRejectsNonEnglishNarrativeAndOutcomesWithoutPublishing() throws {
         let fixture = try MeetingSummaryFixture()
         let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)

@@ -596,6 +596,7 @@ public final class MeetingManagementService {
     public func reprocess(meetingID: String, language: TranscriptLanguage) throws -> JobRecord {
         guard let store = jobs else { throw MeetingManagementError.retryRejected("Job store is unavailable.") }
         let selected = try detail(for: meetingID)
+        guard !selected.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meetings cannot be reprocessed.") }
         guard selected.row.captureState == .stopped else { throw MeetingManagementError.retryRejected("Recording has not stopped.") }
         let path = selected.row.meetingRelativePath
         let session = Self.fields(selected.doorwayText).sessionID
@@ -612,8 +613,21 @@ public final class MeetingManagementService {
             throw MeetingManagementError.retryRejected("Recording Bundle does not match this Meeting.")
         }
         try RecordingBundleFinalizer().validate(bundle)
-        let job = try store.enqueueUnlessActive(manifest: try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(title: selected.row.title, bundle: bundle, selection: nil, language: language)).owned(by: vault.rootURL)) {
-            Self.owns($0, session: session, path: path)
+        let id = UUID().uuidString
+        let recovery = MeetingReprocessingRecovery(vault: vault)
+        let artifacts = try MeetingArtifactStore(vault: vault, inbox: inbox).load(meetingPath: path, meetingID: selected.row.id)
+        let transcript = TranscriptionPipeline.artifactPaths(meetingRelativePath: path)
+        try recovery.retain(jobID: id, paths: Set(artifacts.paths.values).union([
+            transcript.markdown, transcript.json, transcript.vtt, Self.sibling(path, "transcript.txt"),
+            Self.sibling(path, "summary-extraction.json"), Self.sibling(path, "meeting-artifacts.json")]))
+        let job: JobRecord
+        do {
+            job = try store.enqueueUnlessActive(id: id, manifest: try MeetingWorkflowJob.manifest(transcription: TranscriptionJob.manifest(title: selected.row.title, bundle: bundle, selection: nil, language: language)).owned(by: vault.rootURL)) {
+                Self.owns($0, session: session, path: path)
+            }
+        } catch {
+            recovery.discard(jobID: id)
+            throw error
         }
         onReprocessQueued()
         return job

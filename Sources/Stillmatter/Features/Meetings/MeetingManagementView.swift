@@ -1305,7 +1305,8 @@ final class MeetingManagementView: NSView {
                 button.superview?.isHidden = false
             }
             let canChangeFolder = selected.row.captureState == .stopped && !selected.jobs.contains(where: { $0.status == .queued || $0.status == .running })
-            reprocessButton.isEnabled = canChangeFolder && !meetingsModel.isDirty
+            reprocessButton.isEnabled = canChangeFolder && !selected.row.isArchived && !meetingsModel.isDirty
+            reprocessButton.toolTip = selected.row.isArchived ? "Archived Meetings cannot be reprocessed." : canChangeFolder ? "Rebuild generated Meeting content…" : "Wait for this Meeting’s active work to finish."
             renameButton.isEnabled = canChangeFolder && selected.doorwayVersion != nil && !meetingsModel.isDirty
             archiveButton.title = selected.row.isArchived ? "Restore" : "Archive"
             let archiveName = selected.row.isArchived ? "Restore meeting" : "Archive meeting"
@@ -2558,29 +2559,35 @@ final class MeetingManagementView: NSView {
     }
 
     @objc func confirmReprocess() {
-        guard let detail = displayedDetail else { return }
+        guard let detail = displayedDetail, reprocessButton.isEnabled else { return }
         guard !meetingsModel.isDirty else {
             status.stringValue = "Save or discard this Meeting's edits before reprocessing it."
             return
         }
+        let origin = readModelProvider()
         let alert = NSAlert()
         alert.messageText = "Reprocess this Meeting?"
-        alert.informativeText = "The current Transcript and Summary, including manual Summary edits, will be replaced after new results are validated. Inbox review decisions and accepted Todo Items will remain."
-        alert.addButton(withTitle: "Reprocess")
-        alert.addButton(withTitle: "Cancel")
+        alert.informativeText = "The Transcript, Summary, Decisions, Open Items and pending AI proposals, including manual Summary edits and other generated edits, will be rebuilt. Replaced generated edits have no inspectable revision history in Release 1.0. My Notes prose and task content, note-authored items, approved item identity/content/completion state, user-owned tags and confident rejection matches are preserved. Automatic additive tags may still be added to tasks, including My Notes tasks. Possible duplicates remain pending for your review."
+        alert.addButton(withTitle: "Reprocess").setAccessibilityIdentifier("meeting-reprocess-confirm")
+        alert.addButton(withTitle: "Cancel").setAccessibilityIdentifier("meeting-reprocess-cancel")
         let languages = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 28), pullsDown: false)
-        languages.addItems(withTitles: ["English", "Ukrainian"])
+        let choices = TranscriptLanguage.allCases
+        languages.addItems(withTitles: choices.map(\.displayName))
+        languages.setAccessibilityIdentifier("meeting-reprocess-language")
         languages.setAccessibilityLabel("Reprocessing language")
         alert.accessoryView = languages
-        guard presentConfirmationAlert(alert) == .alertFirstButtonReturn else { return }
+        guard presentConfirmationAlert(alert) == .alertFirstButtonReturn,
+              readModelProvider() === origin, displayedDetail?.row.id == detail.row.id,
+              reprocessButton.isEnabled else { return }
         reprocessButton.isEnabled = false
-        meetingsModel.reprocess(language: languages.indexOfSelectedItem == 1 ? .ukrainian : .english) { [weak self] result in
+        meetingsModel.reprocess(language: choices[languages.indexOfSelectedItem]) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success: self.retryFeedback = (detail.row.id, "Reprocessing queued for this Meeting.")
             case let .failure(error): self.retryFeedback = (detail.row.id, "Could not reprocess: \(error.localizedDescription)")
             }
-            self.reprocessButton.isEnabled = true
+            self.status.stringValue = self.retryFeedback?.message ?? ""
+            self.reprocessButton.isEnabled = !detail.row.isArchived
         }
     }
 

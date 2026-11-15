@@ -323,6 +323,36 @@ final class MeetingArtifactStore {
 
     /// Existing analysis producers publish into the current canonical files rather
     /// than creating a second set of outcomes after a Meeting has been migrated.
+    /// Exact text/owner matches are safe to suppress; shared evidence alone needs user review.
+    func reconcileGeneratedActions(_ extraction: MeetingSummaryExtraction, base: Loaded) throws -> MeetingSummaryExtraction {
+        let actions = try outcomes(base.sections.myActionItems, path: base.paths["actions"] ?? extraction.meeting)
+        let protected = actions.filter { $0.item.origin != "generated" || $0.item.review != "pending" }
+            + (try outcomes(base.notes, path: base.paths["notes"] ?? extraction.meeting))
+        func normalized(_ text: String) -> String {
+            ItemTags.replacing(in: text, with: []).lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        }
+        func reconcile(_ values: [MeetingOutcome], owner: String?) -> [MeetingOutcome] {
+            values.compactMap { value in
+                let exact = protected.filter { $0.item.owner == owner && normalized($0.outcome.text) == normalized(value.text) }
+                if exact.count == 1 { return nil }
+                let sameIdentity = protected.filter { $0.outcome.id == value.id || $0.item.id == value.id.lowercased() }
+                // A stable approved identity remains protected even when the model rewrites it.
+                if sameIdentity.contains(where: { $0.item.review == "approved" }) { return nil }
+                let ambiguous = !exact.isEmpty || !sameIdentity.isEmpty || protected.contains { record in
+                    record.outcome.citations.contains { value.citations.contains($0) }
+                }
+                guard ambiguous else { return value }
+                let id = sameIdentity.isEmpty ? value.id : "reprocess-" + SHA256Hex.digest(Data((value.id + value.text + (owner ?? "")).utf8))
+                return MeetingOutcome(id: id, text: ItemTags.replacing(in: value.text,
+                    with: ItemTags.read(value.text) + ["possible-duplicate"]), citations: value.citations)
+            }
+        }
+        return MeetingSummaryExtraction(schemaVersion: extraction.schemaVersion, meeting: extraction.meeting, transcript: extraction.transcript,
+            decisions: extraction.decisions, myActionItems: reconcile(extraction.myActionItems, owner: "me"),
+            otherActionItems: reconcile(extraction.otherActionItems, owner: nil), openQuestions: extraction.openQuestions,
+            tagAdditions: extraction.tagAdditions)
+    }
+
     func publishGenerated(summary: Data, extraction: MeetingSummaryExtraction, extractionData: Data,
                           base: Loaded, meetingPath: String, meetingID: String,
                           expectedExtraction: WorkspaceFileVersion?) throws {

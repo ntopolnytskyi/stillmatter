@@ -35,7 +35,7 @@
     },
     "Sources/Stillmatter/App/Validation/MeetingProviderFixtureAssertions.swift": {
       "reason": "Validation-only executable declarations are guarded by DEBUG or STILLMATTER_NATIVE_PROBES, neither defined by shipping release configuration.",
-      "sha256": "c454ba77bb75e557710d1c2dfa146e1c4b2871bfdcf9b124297e5a5da5deee8e"
+      "sha256": "ab8d1ab44267dfb5ed00509cb91bf13097769a25bcd2edf78955a06bd115b38f"
     },
     "Sources/Stillmatter/App/Validation/MeetingRetryFixtureExecutor.swift": {
       "reason": "Validation-only executable declarations are guarded by DEBUG or STILLMATTER_NATIVE_PROBES, neither defined by shipping release configuration.",

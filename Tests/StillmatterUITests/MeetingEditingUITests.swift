@@ -4,6 +4,40 @@ import XCTest
 import StillmatterCore
 
 extension StillmatterFlowsUITests {
+    func testReprocessWarningLanguageKeyboardCancellationAndFailurePreserveMeeting() throws {
+        try seedMeeting(transcript: true, myActionItem: "Keep task")
+        openFixtureMeeting(); app.radioButtons["Transcript"].click()
+        // Speaker correction exposes the ordinary Reprocess entry point.
+        app.buttons["transcript-correct-s0"].click()
+        let name = app.textFields["meeting-speaker-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.typeKey("a", modifierFlags: .command); name.typeText("Alice"); name.typeKey(.return, modifierFlags: [])
+        let reprocess = app.buttons["meeting-speaker-reprocess"]
+        XCTAssertTrue(reprocess.waitForExistence(timeout: 10)); reprocess.click()
+        let language = app.popUpButtons["meeting-reprocess-language"]
+        XCTAssertTrue(language.waitForExistence(timeout: 5))
+        XCTAssertEqual(language.value as? String, "Auto")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "no inspectable revision history")).firstMatch.exists)
+        language.click(); app.menuItems["Ukrainian"].click()
+        language.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(language.exists)
+        let directory = meetingURL.deletingLastPathComponent()
+        let notes = try Data(contentsOf: directory.appendingPathComponent("my-notes.md"))
+        let summary = try Data(contentsOf: directory.appendingPathComponent("summary.md"))
+        reprocess.click()
+        XCTAssertTrue(language.waitForExistence(timeout: 5))
+        XCTAssertEqual(language.value as? String, "Auto")
+        language.click(); app.menuItems["English"].click()
+        app.buttons["meeting-reprocess-confirm"].typeKey(.return, modifierFlags: [])
+        let feedback = app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Could not reprocess")).firstMatch
+        XCTAssertTrue(feedback.waitForExistence(timeout: 10))
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("my-notes.md")), notes)
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("summary.md")), summary)
+        relaunch(); openFixtureMeeting(); app.radioButtons["Transcript"].click()
+        XCTAssertTrue(app.staticTexts["meeting-analysis-outdated"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Alice"].waitForExistence(timeout: 5))
+    }
+
     func testSpeakerCorrectionRepeatedKeyboardCancelValidationAndReopen() throws {
         try seedMeeting(transcript: true, myActionItem: "Keep task")
         openFixtureMeeting()

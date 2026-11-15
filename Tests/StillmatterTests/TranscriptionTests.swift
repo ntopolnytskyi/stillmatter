@@ -503,6 +503,21 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertTrue(try index.search("completely").isEmpty)
     }
 
+    func testObsoleteTranscriptionCannotOverwriteFilesEditedDuringInference() throws {
+        let fixture = try TranscriptionFixture()
+        let paths = TranscriptionPipeline.artifactPaths(meetingRelativePath: fixture.bundle.meetingRelativePath)
+        let json = fixture.workspaceRootURL.appendingPathComponent(paths.json)
+        try FileManager.default.createDirectory(at: json.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("Original saved transcript".utf8).write(to: json)
+        let engine = StubTranscriptionEngine(textByTrack: [.microphone: "Obsolete generated phrase"])
+        engine.onTranscribe = { try Data("Newer authoritative transcript".utf8).write(to: json, options: .atomic) }
+        let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
+            bundleValidator: AcceptingBundleValidator(), engine: engine)
+        XCTAssertThrowsError(try pipeline.generate(from: fixture.makeBundle(system: nil), selection: nil, language: .english))
+        XCTAssertEqual(try String(contentsOf: json), "Newer authoritative transcript")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceRootURL.appendingPathComponent(paths.vtt).path))
+    }
+
     func testFailedFirstPublishDoesNotLeavePartialTranscript() throws {
         let fixture = try TranscriptionFixture()
         let pipeline = TranscriptionPipeline(workspaceRootURL: fixture.workspaceRootURL,
@@ -787,6 +802,7 @@ private final class StubTranscriptionEngine: TranscriptionEngine {
     let engineIdentifier = "test-whisper"
     let modelIdentifier = "test-model"
     var textByTrack: [TranscriptTrack: String]
+    var onTranscribe: (() throws -> Void)?
     let failingTracks: Set<TranscriptTrack>
     private(set) var audioPaths: [String] = []
     private(set) var languages: [TranscriptLanguage] = []
@@ -797,6 +813,7 @@ private final class StubTranscriptionEngine: TranscriptionEngine {
     }
 
     func transcribe(audioURL: URL, language: TranscriptLanguage, track: TranscriptTrack) throws -> TranscriptionEngineResult {
+        try onTranscribe?()
         audioPaths.append(audioURL.path)
         languages.append(language)
         if failingTracks.contains(track) { throw TranscriptionError.engineFailed("fixture failure for \(track.rawValue)") }

@@ -213,7 +213,7 @@ extension MeetingManagementView {
                 } else {
                     precondition(alert.informativeText.contains("manual Summary edits"),
                                  "Reprocess must warn about replacement")
-                    precondition((alert.accessoryView as? NSPopUpButton)?.itemTitles == ["English", "Ukrainian"],
+                    precondition((alert.accessoryView as? NSPopUpButton)?.itemTitles == ["Auto", "English", "Ukrainian"],
                                  "Reprocess must offer both supported languages")
                 }
                 return .alertSecondButtonReturn

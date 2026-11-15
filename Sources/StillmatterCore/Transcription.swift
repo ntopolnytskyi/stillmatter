@@ -382,6 +382,13 @@ public final class TranscriptionPipeline {
     ) throws -> TranscriptionArtifacts {
         if cancellation?.isCancelled == true { throw JobsError.executionCancelled }
         try bundleValidator.validate(bundle)
+        let vault = WorkspaceVault(workspaceRootURL: workspaceRootURL,
+            appSupportRootURL: fileManager.temporaryDirectory.appendingPathComponent("Stillmatter-TranscriptionSnapshots"),
+            fileManager: fileManager)
+        let paths = Self.artifactPaths(meetingRelativePath: bundle.meetingRelativePath)
+        let expectedVersions = try Dictionary(uniqueKeysWithValues: [paths.markdown, paths.json, paths.vtt].map {
+            ($0, try vault.versionOfMarkdown(relativePath: $0))
+        })
         let microphone = try microphoneSource(bundle: bundle, selection: selection)
         var sources = [microphone]
         if let system = bundle.system, fileManager.fileExists(atPath: system.preferredAudioFilePath) {
@@ -542,7 +549,6 @@ public final class TranscriptionPipeline {
                 return $0.startSeconds < $1.startSeconds
             }
         )
-        let paths = Self.artifactPaths(meetingRelativePath: bundle.meetingRelativePath)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -571,12 +577,9 @@ public final class TranscriptionPipeline {
             default: throw JobsError.unknownValidator(expectation.validatorID)
             }
         }
-        let vault = WorkspaceVault(workspaceRootURL: workspaceRootURL,
-            appSupportRootURL: fileManager.temporaryDirectory.appendingPathComponent("Stillmatter-TranscriptionSnapshots"),
-            fileManager: fileManager)
         let replacements = try artifacts.generatedArtifacts.map { artifact in
             WorkspaceMarkdownReplacement(relativePath: artifact.relativePath, data: artifact.data,
-                expectedVersion: try vault.versionOfMarkdown(relativePath: artifact.relativePath))
+                expectedVersion: expectedVersions[artifact.relativePath] ?? nil)
         }
         do {
             let publish = {

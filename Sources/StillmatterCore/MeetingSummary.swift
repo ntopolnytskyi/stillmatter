@@ -279,6 +279,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
                 tagAdditions: extraction.tagAdditions
             )
         }
+        if let canonicalBase { extraction = try artifacts.reconcileGeneratedActions(extraction, base: canonicalBase) }
         let sanitizedExtractionData = try JSONEncoder().encode(extraction)
         let renderedSummary = GeneratedArtifact(relativePath: paths.summary, data: Data(MeetingSummaryEvidence.render(
             narrative: MeetingSummaryEvidence.narrative(in: String(decoding: summary.data, as: UTF8.self)), extraction: extraction).utf8))
@@ -326,6 +327,7 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
             }
             try inbox.reconcileMeetingProposals(sessionID: captureSessionID, sourceRef: sourceRef,
                 currentIDs: Set(extraction.myActionItems.map { "meeting-action:\(captureSessionID):\($0.id)" }))
+            MeetingReprocessingRecovery(vault: vault).discard(jobID: job.id)
             onApplied()
         }
         return JobStageResult(

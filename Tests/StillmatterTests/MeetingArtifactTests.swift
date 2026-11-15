@@ -482,6 +482,34 @@ final class MeetingArtifactTests: XCTestCase {
         }
     }
 
+    func testReprocessingPublicationRecoversAtEveryCheckpointWithoutLosingUserWork() throws {
+        enum Crash: Error { case injected }
+        for stop in 0...6 {
+            let isolated = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("regenerate-\(stop)"),
+                appSupportRootURL: support.appendingPathComponent("regenerate-\(stop)"))
+            _ = try isolated.writeMarkdown(Data("# Fixture\n## Notes\nMy prose\n- [x] Keep completed note #mine\n".utf8), relativePath: meeting, expectedVersion: nil)
+            let stable = MeetingArtifactStore(vault: isolated, inbox: nil)
+            let base = try stable.load(meetingPath: meeting, meetingID: "fixture")
+            let extraction = MeetingSummaryExtraction(meeting: meeting, transcript: path("transcript.json"),
+                decisions: [.init(id: "decision", text: "New decision", citations: [])],
+                myActionItems: [.init(id: "new", text: "New proposal", citations: [])], otherActionItems: [],
+                openQuestions: [.init(id: "question", text: "New question", citations: [])])
+            let encoded = try JSONEncoder().encode(extraction)
+            let failing = MeetingArtifactStore(vault: isolated, inbox: nil, checkpoint: { if $0 == stop { throw Crash.injected } })
+            XCTAssertThrowsError(try failing.publishGenerated(summary: Data("New Summary".utf8), extraction: extraction, extractionData: encoded,
+                base: base, meetingPath: meeting, meetingID: "fixture", expectedExtraction: nil))
+            // A new service must recover the complete saved plan, including the final checkpoint.
+            let reopened = try MeetingManagementService(vault: isolated).detail(for: "fixture")
+            XCTAssertTrue(reopened.summary?.summary.contains("New Summary") == true)
+            XCTAssertEqual(reopened.decisions.first?.text, "New decision")
+            XCTAssertEqual(reopened.openQuestions.first?.text, "New question")
+            XCTAssertEqual(reopened.humanNotes, base.notes)
+            let queue = try TodoItemIndex(workspaceRootURL: isolated.rootURL).loadTaskViews(today: "2026-01-01")
+            XCTAssertEqual(queue.done.count, 1)
+            XCTAssertEqual(reopened.myActionItems.filter { $0.reviewState == .pending }.count, 1)
+        }
+    }
+
     func testTranscriptPairEveryWriteCheckpointRecoversConsistentSourceTimingAndText() throws {
         enum Crash: Error { case injected }
         for stop in 0...2 {
