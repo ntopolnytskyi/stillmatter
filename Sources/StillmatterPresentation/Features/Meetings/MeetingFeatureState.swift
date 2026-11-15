@@ -476,7 +476,7 @@ public final class MeetingDetailModel: ObservableObject {
             completion?(.failure(MeetingManagementError.unavailable)); return
         }
         performOutput(.rename(meetingID: detail.row.id, title: title, baseVersion: version),
-                      progress: "Renaming Meeting…", completion: { result in
+                      progress: "Renaming Meeting…", followsCanonicalRename: true, completion: { result in
             switch result {
             case let .success(.detail(renamed)): completion?(.success(renamed))
             case .success: completion?(.failure(MeetingManagementError.unavailable))
@@ -592,6 +592,7 @@ public final class MeetingDetailModel: ObservableObject {
     }
 
     private func performOutput(_ mutation: MeetingMutation, progress: String,
+                               followsCanonicalRename: Bool = false,
                                completion: ((Result<MeetingMutationOutput, Error>) -> Void)? = nil,
                                apply: ((MeetingMutationOutput) throws -> Void)? = nil) {
         guard !mutationInFlight, let mutationExecutor else {
@@ -607,8 +608,17 @@ public final class MeetingDetailModel: ObservableObject {
             Task { @MainActor in
                 // The executor completes its durable write against its captured vault, and
                 // the service invalidates that origin. Only publication is generation-bound.
-                guard let self, self.mutationGeneration == generation,
-                      self.readModel === origin, self.selectedReference == reference else { return }
+                guard let self, self.readModel === origin else { return }
+                guard self.mutationGeneration == generation, self.selectedReference == reference else {
+                    // A successful rename can refresh selection to its new canonical path
+                    // before completion arrives. Publish its result only to that exact selection;
+                    // never apply stale content or treat an external title edit as success.
+                    if followsCanonicalRename, case let .success(.detail(renamed)) = result,
+                       self.selectedReference == MeetingReference(row: renamed.row) {
+                        completion?(.success(.detail(renamed)))
+                    }
+                    return
+                }
                 self.mutationInFlight = false
                 switch result {
                 case let .success(output):
