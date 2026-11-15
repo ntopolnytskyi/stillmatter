@@ -18,7 +18,7 @@ extension StillmatterFlowsUITests {
             app.buttons["meeting-more"].click()
             let calendar = app.menuItems["meeting-calendar"]
             XCTAssertTrue(calendar.isEnabled)
-            openCalendar()
+            calendar.click()
         }
         openCalendar()
         let picker = app.popUpButtons["meeting-calendar-events"]

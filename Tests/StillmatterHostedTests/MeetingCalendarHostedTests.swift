@@ -53,10 +53,11 @@ final class MeetingCalendarHostedTests: XCTestCase {
         XCTAssertTrue(view.calendarStatus.stringValue.contains("Scheduled:"))
         XCTAssertEqual(try service.detail(for: "calendar-fixture").row.startedAt, requestedDate)
         let original = try service.detail(for: "calendar-fixture").doorwayText
+        let previousResponder = window.firstResponder
         view.editCalendar()
         view.calendarEditor.cancelButton.performClick(nil)
         XCTAssertFalse(view.calendarEditor.isOpen)
-        XCTAssertTrue(window.firstResponder === view.moreButton)
+        XCTAssertTrue(window.firstResponder === previousResponder)
         XCTAssertEqual(try service.detail(for: "calendar-fixture").doorwayText, original)
         // Cancel the separate folder/title confirmation as well.
         confirmation = .alertSecondButtonReturn
@@ -78,6 +79,36 @@ final class MeetingCalendarHostedTests: XCTestCase {
         view.canEditCalendar = false
         view.editCalendar()
         XCTAssertFalse(view.calendarEditor.isOpen)
+    }
+
+    @MainActor
+    func testLegacyFallbackRequiresFolderWarningAndCancellationPreservesFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("calendar-legacy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"), appSupportRootURL: root.appendingPathComponent("support"))
+        let path = "Meetings/legacy/meeting.md"
+        _ = try vault.writeMarkdown(Data("---\ntitle: Untitled Meeting at 10:00\ncapture_session_id: legacy\n---\n# Untitled Meeting at 10:00\n".utf8), relativePath: path, expectedVersion: nil)
+        let service = MeetingManagementService(vault: vault)
+        let read = MeetingReadModel(workspaceID: root.path, sourceFactory: { MeetingManagementReadSource(serviceProvider: { service }) })
+        let executor = MeetingMutationExecutor(searchIndex: nil, captureSnapshot: nil, serviceFactory: { _, _ in service })
+        let event = CalendarMeeting(title: "Calendar title", eventIdentifier: "event", calendarIdentifier: "calendar")
+        var warnings = 0
+        let view = MeetingManagementView(readModelProvider: { read }, mutationExecutorProvider: { executor }, playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in }, presentConfirmationAlert: { alert in
+            warnings += 1
+            XCTAssertTrue(alert.informativeText.contains("External links may break"))
+            return .alertSecondButtonReturn
+        }, calendarSnapshot: { _ in CalendarMeetingSnapshot(events: [event], status: "Available") })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 850, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        defer { view.calendarEditor.cancel(); view.refresh(isVisible: false); read.stop(); window.orderOut(nil) }
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil && view.canEditCalendar }, evaluatedWith: nil)], timeout: 10)
+        let before = try vault.readMarkdown(relativePath: path).data
+        view.editCalendar()
+        XCTAssertEqual(view.calendarEditor.reset.state, .off)
+        view.calendarEditor.link.performClick(nil)
+        XCTAssertEqual(warnings, 1)
+        XCTAssertEqual(try vault.readMarkdown(relativePath: path).data, before)
     }
 
     @available(macOS 14.0, *)

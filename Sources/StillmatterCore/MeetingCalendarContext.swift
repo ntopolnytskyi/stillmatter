@@ -40,5 +40,18 @@ public struct MeetingCalendarContext: Codable, Equatable {
 }
 
 extension MeetingBrowserDetail {
+    /// Shared preview/commit policy keeps rename warnings aligned with the canonical mutation.
+    public func calendarChange(event: CalendarMeeting?, resetTitle: Bool) throws -> MeetingCalendarContext {
+        var context = try MeetingCalendarContext.read(from: doorwayText) ?? MeetingCalendarContext(
+            event: nil, fallbackTitle: row.title, appliedTitle: row.title,
+            manualTitle: !row.title.hasPrefix("Untitled"), status: "No linked event")
+        context.manualTitle = context.manualTitle || row.title != context.appliedTitle
+        if resetTitle { context.manualTitle = false }
+        context.event = event
+        context.status = event == nil ? "Unlinked" : "Linked calendar event"
+        context.appliedTitle = context.manualTitle ? row.title : (event?.title ?? context.fallbackTitle)
+        return context
+    }
+
     public var calendarContext: MeetingCalendarContext? { try? MeetingCalendarContext.read(from: doorwayText) }
 }

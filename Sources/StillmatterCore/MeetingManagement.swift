@@ -450,16 +450,7 @@ public final class MeetingManagementService {
                                   expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
         let selected = try detail(for: meetingID)
         guard !selected.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting metadata is read-only.") }
-        var context = try MeetingCalendarContext.read(from: selected.doorwayText) ?? MeetingCalendarContext(
-            event: nil, fallbackTitle: selected.row.title, appliedTitle: selected.row.title,
-            manualTitle: !selected.row.title.hasPrefix("Untitled"), status: "No linked event")
-        // A valid external title edit is authoritative too.
-        context.manualTitle = context.manualTitle || selected.row.title != context.appliedTitle
-        if resetTitle { context.manualTitle = false }
-        context.event = event
-        context.status = event == nil ? "Unlinked" : "Linked calendar event"
-        let title = context.manualTitle ? selected.row.title : (event?.title ?? context.fallbackTitle)
-        context.appliedTitle = title
+        let context = try selected.calendarChange(event: event, resetTitle: resetTitle)
         return try rename(selected: selected, context: context, expectedVersion: expectedVersion)
     }
 

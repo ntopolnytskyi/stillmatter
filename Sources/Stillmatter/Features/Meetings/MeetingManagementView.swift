@@ -2572,8 +2572,11 @@ final class MeetingManagementView: NSView {
                 self.status.stringValue = "Calendar change expired. Reopen Calendar for the current Meeting."
                 return
             }
-            let context = detail.calendarContext
-            let changesTitle = (reset || context?.manualTitle == false) && (event?.title ?? context?.fallbackTitle) != detail.row.title
+            guard let proposed = try? detail.calendarChange(event: event, resetTitle: reset) else {
+                self.status.stringValue = "Invalid calendar metadata. Restore the Meeting file and reload."
+                return
+            }
+            let changesTitle = proposed.appliedTitle != detail.row.title
             if changesTitle {
                 let alert = NSAlert()
                 alert.messageText = "Change this Meeting title?"
