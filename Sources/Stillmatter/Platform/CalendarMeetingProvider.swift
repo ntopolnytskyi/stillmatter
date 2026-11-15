@@ -9,14 +9,17 @@ final class CalendarMeetingProvider {
     private let calendar: Calendar
     private let timeFormatter: DateFormatter
     private let now: () -> Date
+    private let authorizationStatus: () -> EKAuthorizationStatus
     private let calendarSelection: CalendarSourceSelection
 
     init(
         eventStore: EKEventStore = EKEventStore(),
         calendar: Calendar = .current,
         calendarSelection: CalendarSourceSelection = .all,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        authorizationStatus: @escaping () -> EKAuthorizationStatus = { EKEventStore.authorizationStatus(for: .event) }
     ) {
+        self.authorizationStatus = authorizationStatus
         self.eventStore = eventStore
         self.calendar = calendar
         self.now = now
@@ -35,7 +38,7 @@ final class CalendarMeetingProvider {
               calendarSelection.selectedCalendarIdentifiers.count == 1 else {
             return "Select exactly one test calendar before running this check."
         }
-        switch EKEventStore.authorizationStatus(for: .event) {
+        switch authorizationStatus() {
         case .authorized, .fullAccess: break
         case .writeOnly, .denied, .restricted, .notDetermined:
             return "Readable Calendar permission is unavailable."
@@ -56,18 +59,23 @@ final class CalendarMeetingProvider {
         return "Selected calendar matches: 1; events today: \(count)."
     }
 
-    func meetingsToday() -> [CalendarMeeting] {
-        switch EKEventStore.authorizationStatus(for: .event) {
+    func meetingsToday() -> [CalendarMeeting] { snapshot().events }
+
+    func snapshot() -> CalendarMeetingSnapshot {
+        if calendarSelection.mode == .none {
+            return CalendarMeetingSnapshot(events: [], status: "Calendar sources disabled. Configure Calendar in Settings.")
+        }
+        switch authorizationStatus() {
         case .authorized, .fullAccess:
             break
         case .writeOnly, .denied, .restricted, .notDetermined:
-            return []
+            return CalendarMeetingSnapshot(events: [], status: "Calendar access unavailable. Enable read access in Settings > Privacy & Security > Calendars.")
         @unknown default:
-            return []
+            return CalendarMeetingSnapshot(events: [], status: "Calendar access unavailable. Enable read access in Settings > Privacy & Security > Calendars.")
         }
 
         let start = calendar.startOfDay(for: now())
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
+        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return CalendarMeetingSnapshot(events: [], status: "Calendar access unavailable. Enable read access in Settings > Privacy & Security > Calendars.") }
         let selectedCalendars: [EKCalendar]?
         switch calendarSelection.mode {
         case .all:
@@ -76,10 +84,10 @@ final class CalendarMeetingProvider {
             let matches = eventStore.calendars(for: .event).filter {
                 calendarSelection.includes(calendarIdentifier: $0.calendarIdentifier)
             }
-            guard !matches.isEmpty else { return [] }
+            guard !matches.isEmpty else { return CalendarMeetingSnapshot(events: [], status: "Calendar access unavailable. Enable read access in Settings > Privacy & Security > Calendars.") }
             selectedCalendars = matches
         case .none:
-            return []
+            return CalendarMeetingSnapshot(events: [], status: "Calendar access unavailable. Enable read access in Settings > Privacy & Security > Calendars.")
         }
         let predicate = eventStore.predicateForEvents(
             withStart: start,
@@ -87,15 +95,15 @@ final class CalendarMeetingProvider {
             calendars: selectedCalendars
         )
         let events = eventStore.events(matching: predicate).map { event in
-            let title = event.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let title = event.title ?? ""
             return CalendarMeetingEvent(
                 calendarIdentifier: event.calendar.calendarIdentifier,
-                title: title.isEmpty ? "Untitled meeting" : title,
+                title: title,
                 time: event.isAllDay ? nil : timeFormatter.string(from: event.startDate),
                 eventIdentifier: event.eventIdentifier,
-                eventStart: event.startDate
+                eventStart: event.startDate, eventEnd: event.endDate, meetingLink: event.url?.absoluteString
             )
         }
-        return CalendarMeetingSelector(selection: calendarSelection).meetings(from: events)
+        return CalendarMeetingSnapshot(events: CalendarMeetingSelector(selection: calendarSelection).meetings(from: events), status: "No overlapping calendar event. You can link an event later.")
     }
 }

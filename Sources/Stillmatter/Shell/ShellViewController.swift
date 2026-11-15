@@ -70,6 +70,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             openRecording: { [weak self] in self?.stateStore.state.select(.recording) },
             openWorkspaceFile: { [weak self] path in self?.openWorkspaceFile(path) },
             presentationMetrics: meetingPresentationMetrics,
+            calendarSnapshot: { [weak self] in CalendarMeetingProvider(calendarSelection: self?.settingsStore.settings.calendarSourceSelection ?? .none).snapshot() },
             readTranscriptView: { [weak self] in self?.settingsStore.settings.transcriptReadingView ?? .timestamps },
             saveTranscriptView: { [weak self] view in
                 guard let self else { return }

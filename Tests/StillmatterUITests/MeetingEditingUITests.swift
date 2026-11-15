@@ -4,6 +4,39 @@ import XCTest
 import StillmatterCore
 
 extension StillmatterFlowsUITests {
+    func testCalendarFallbackKeyboardCancelUnlinkAndRelaunchPersistence() throws {
+        try seedMeeting()
+        app.terminate()
+        let event = CalendarMeeting(title: "План / 計画", eventIdentifier: "isolated-event", calendarIdentifier: "isolated-calendar", eventStart: Date(timeIntervalSince1970: 1000), eventEnd: Date(timeIntervalSince1970: 2000))
+        let context = MeetingCalendarContext(event: event, fallbackTitle: "UI fixture meeting", appliedTitle: "UI fixture meeting", manualTitle: true, status: "Linked calendar event")
+        try context.writing(to: meetingText()).write(to: meetingURL, atomically: true, encoding: .utf8)
+        relaunch(); openFixtureMeeting()
+        let status = app.staticTexts["meeting-calendar-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue((status.value as? String)?.contains("Scheduled:") == true)
+        let calendar = app.buttons["meeting-calendar"]
+        XCTAssertTrue(calendar.isEnabled)
+        calendar.click()
+        let picker = app.popUpButtons["meeting-calendar-events"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Link selected event"].isEnabled)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Calendar sources disabled")).firstMatch.exists)
+        picker.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(picker.exists)
+        XCTAssertEqual(try MeetingCalendarContext.read(from: meetingText())?.event, event)
+        calendar.click()
+        app.buttons["Unlink"].click()
+        expectation(for: NSPredicate(format: "value == %@", "Unlinked"), evaluatedWith: status)
+        waitForExpectations(timeout: 10)
+        XCTAssertNil(try MeetingCalendarContext.read(from: meetingText())?.event)
+        XCTAssertTrue(try meetingText().contains("title: UI fixture meeting"))
+        relaunch(); openFixtureMeeting()
+        XCTAssertEqual(app.staticTexts["meeting-calendar-status"].value as? String, "Unlinked")
+        app.buttons["meeting-calendar"].click()
+        XCTAssertFalse(app.buttons["Unlink"].isEnabled)
+        app.buttons["Cancel"].typeKey(.escape, modifierFlags: [])
+    }
+
     func testReprocessWarningLanguageKeyboardCancellationAndFailurePreserveMeeting() throws {
         try seedMeeting(transcript: true, myActionItem: "Keep task")
         openFixtureMeeting(); app.radioButtons["Transcript"].click()

@@ -59,7 +59,8 @@ enum CaptureSessionAssembly {
             micRecorder: micRecorder, systemAudioRecorder: systemAudioRecorder,
             bundleFinalizer: bundleFinalizer, transcriptionSidecarGenerator: transcriptionSidecarGenerator,
             preflight: preflightChecker.check,
-            transcriptionLanguage: settings.transcriptionLanguage
+            transcriptionLanguage: settings.transcriptionLanguage,
+            calendarSnapshot: { CalendarMeetingProvider(calendarSelection: settingsStore.settings.calendarSourceSelection).snapshot() }
         )
     }
 

@@ -190,6 +190,7 @@ public final class MeetingCaptureService {
     private let bundleFinalizer: RecordingBundleFinalizing?
     private let transcriptionSidecarGenerator: TranscriptionSidecarGenerating?
     private let preflight: () -> AudioCapturePreflightReport
+    private let calendarSnapshot: () -> CalendarMeetingSnapshot
     private let now: () -> Date
     private let timeZone: TimeZone
     private let makeID: () -> String
@@ -218,6 +219,7 @@ public final class MeetingCaptureService {
         transcriptionSidecarGenerator: TranscriptionSidecarGenerating? = nil,
         preflight: @escaping () -> AudioCapturePreflightReport,
         transcriptionLanguage: TranscriptLanguage = .automatic,
+        calendarSnapshot: @escaping () -> CalendarMeetingSnapshot = { CalendarMeetingSnapshot(events: [], status: "Calendar context unavailable. Configure Calendar in Settings.") },
         now: @escaping () -> Date = Date.init,
         timeZone: TimeZone = .current,
         makeID: @escaping () -> String = { UUID().uuidString }
@@ -229,6 +231,7 @@ public final class MeetingCaptureService {
         self.systemAudioRecorder = systemAudioRecorder
         self.bundleFinalizer = bundleFinalizer
         self.transcriptionSidecarGenerator = transcriptionSidecarGenerator
+        self.calendarSnapshot = calendarSnapshot
         self.preflight = preflight
         self.transcriptionLanguage = transcriptionLanguage
         self.now = now
@@ -298,7 +301,13 @@ public final class MeetingCaptureService {
         systemAudioRecording = nil
         recordingBundle = nil
         transcriptionAudio = nil
-        let title = normalizedTitle(titleHint, at: startedAt)
+        let calendar = calendarSnapshot()
+        let event = CalendarMeetingMatcher.match(calendar.events, at: startedAt)
+        let fallback = normalizedTitle(titleHint, at: startedAt)
+        let isManual = titleHint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let title = isManual ? fallback : (event?.title ?? fallback)
+        let calendarContext = MeetingCalendarContext(event: event, fallbackTitle: fallback, appliedTitle: title,
+            manualTitle: isManual, status: event == nil ? calendar.status : "Linked calendar event")
         do {
             let relativePath = try availableMeetingPath(title: title, at: startedAt)
             let newSession = MeetingCaptureSession(
@@ -311,7 +320,7 @@ public final class MeetingCaptureService {
             let directory = (relativePath as NSString).deletingLastPathComponent
             try vault.createDirectory(relativePath: directory)
             _ = try vault.writeMarkdown(
-                Data(doorwayMarkdown(for: newSession).utf8),
+                Data(try calendarContext.writing(to: doorwayMarkdown(for: newSession)).utf8),
                 relativePath: relativePath,
                 expectedVersion: nil
             )
@@ -844,14 +853,14 @@ public final class MeetingCaptureService {
         ---
         schema_version: 1
         type: meeting
-        title: \(session.title)
+        title: \(MeetingCalendarContext.titleLine(session.title))
         started_at: \(timestamp)
         capture_session_id: \(session.id)
         meeting_source: \(session.source.rawValue)
         audio_scope: \(session.source.scope.rawValue)
         capture: placeholder
         ---
-        # \(session.title)
+        # \(MeetingCalendarContext.titleLine(session.title))
 
         ## Processing
 

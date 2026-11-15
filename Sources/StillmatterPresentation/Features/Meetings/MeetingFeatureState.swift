@@ -106,6 +106,7 @@ public enum MeetingMutation {
     case reassignNoteTask(meetingID: String, itemID: String, owner: String)
     case archive(meetingID: String)
     case restore(meetingID: String)
+    case associateCalendar(meetingID: String, event: CalendarMeeting?, resetTitle: Bool, baseVersion: WorkspaceFileVersion)
     case rename(meetingID: String, title: String, baseVersion: WorkspaceFileVersion)
     case remove(meetingID: String)
     case retry(meetingID: String, jobID: String)
@@ -458,6 +459,15 @@ public final class MeetingDetailModel: ObservableObject {
     public func restore(completion: ((Result<Void, Error>) -> Void)? = nil) {
         guard let detail else { completion?(.failure(MeetingManagementError.unavailable)); return }
         perform(.restore(meetingID: detail.row.id), progress: "Restoring Meeting…", completion: completion)
+    }
+
+    public func associateCalendar(event: CalendarMeeting?, resetTitle: Bool) {
+        guard !hasDirtyDrafts, let detail, let version = detail.doorwayVersion else { return }
+        perform(.associateCalendar(meetingID: detail.row.id, event: event, resetTitle: resetTitle, baseVersion: version),
+                progress: "Updating calendar association…", apply: { [weak self] output in
+            guard case let .detail(updated) = output else { throw MeetingManagementError.unavailable }
+            self?.apply(updated)
+        })
     }
 
     public func rename(to title: String, completion: ((Result<MeetingBrowserDetail, Error>) -> Void)? = nil) {

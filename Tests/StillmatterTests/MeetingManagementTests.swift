@@ -1235,7 +1235,7 @@ final class MeetingManagementTests: XCTestCase {
         let fixture = try Fixture()
         let bundle = try makePlaybackBundle(in: fixture, id: "first")
         _ = try makePlaybackBundle(in: fixture, id: "second")
-        let summaryPath = "Meetings/first/summary.md"
+        var summaryPath = "Meetings/first/summary.md"
         try fixture.write(summaryPath, "## Summary\nManually corrected\n")
         let inbox = try TasksInbox(databaseURL: fixture.root.appendingPathComponent("Support/inbox.sqlite"))
         try inbox.queueProposal(id: "meeting-action:first:old", title: "Previous proposal", sourceRef: "[[Meetings/first/summary#My action items|ref]]")
@@ -1244,11 +1244,23 @@ final class MeetingManagementTests: XCTestCase {
         var starts = 0
         let service = MeetingManagementService(vault: fixture.vault, jobStore: store, inbox: inbox,
             retryUnavailableReason: { _ in nil }, onReprocessQueued: { starts += 1 })
+        var titled = try service.detail(for: "first")
+        let event = CalendarMeeting(title: "Exact calendar title", eventIdentifier: "calendar-event", calendarIdentifier: "work")
+        titled = try service.associateCalendar(meetingID: "first", event: event, resetTitle: true, expectedVersion: titled.doorwayVersion!)
+        titled = try service.rename(meetingID: "first", title: "Protected manual title", expectedVersion: titled.doorwayVersion!)
+        titled = try service.associateCalendar(meetingID: "first", event: nil, expectedVersion: titled.doorwayVersion!)
+        titled = try service.associateCalendar(meetingID: "first", event: event, expectedVersion: titled.doorwayVersion!)
+        let actualStart = titled.row.startedAt
+        summaryPath = (titled.row.meetingRelativePath as NSString).deletingLastPathComponent + "/summary.md"
         // Merely inspecting the Meeting or dismissing the UI warning never enqueues work.
         _ = try service.detail(for: "first")
         let canonicalSummaryBeforeReprocess = try fixture.vault.readMarkdown(relativePath: summaryPath).data
         XCTAssertTrue(try store.jobs().isEmpty)
         let job = try service.reprocess(meetingID: "first", language: .ukrainian)
+        let afterReprocess = try service.detail(for: "first")
+        XCTAssertEqual(afterReprocess.row.title, "Protected manual title")
+        XCTAssertEqual(try MeetingCalendarContext.read(from: String(decoding: fixture.vault.readMarkdown(relativePath: afterReprocess.row.meetingRelativePath).data, as: UTF8.self))?.event, event)
+        XCTAssertEqual(afterReprocess.row.startedAt, actualStart)
         XCTAssertEqual(job.manifest.metadata["language"], "uk")
         let recovery = MeetingReprocessingRecovery(vault: fixture.vault).location(jobID: job.id)
         let snapshot = try JSONDecoder().decode([String: Data].self, from: Data(contentsOf: recovery))
