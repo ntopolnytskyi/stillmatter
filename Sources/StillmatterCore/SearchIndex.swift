@@ -315,12 +315,21 @@ public final class SearchIndex {
             guard allowed.contains(resolved.lastPathComponent.lowercased()) else { return false }
         }
         let isLightweightMetadata = path.hasSuffix("/recording.localref.json") || path == "recording.localref.json"
-        guard !isExcluded(relativePath: relativePath, isDirectory: false, applyConfiguredPatterns: !isLightweightMetadata) else { return false }
+        guard !isExcludedSource(relativePath: relativePath, resolvedURL: resolved,
+            applyConfiguredPatterns: !isLightweightMetadata) else { return false }
         if path.hasPrefix("meetings/"), path.hasSuffix("/transcript.txt") { return true }
         if path.hasSuffix(".md") { return true }
         if path.hasSuffix("/transcript.vtt") || path == "transcript.vtt" { return true }
         if path.hasSuffix("/transcript.json") || path == "transcript.json" { return true }
         return isLightweightMetadata
+    }
+
+    private func isExcludedSource(relativePath: String, resolvedURL: URL, applyConfiguredPatterns: Bool = true) -> Bool {
+        if isExcluded(relativePath: relativePath, isDirectory: false, applyConfiguredPatterns: applyConfiguredPatterns) { return true }
+        guard resolvedURL.path.hasPrefix(workspaceRootURL.path + "/") else { return false }
+        let actualPath = String(resolvedURL.path.dropFirst(workspaceRootURL.path.count + 1))
+        return actualPath != relativePath && isExcluded(relativePath: actualPath, isDirectory: false,
+            applyConfiguredPatterns: applyConfiguredPatterns)
     }
 
     private func isExcluded(relativePath: String, isDirectory: Bool, applyConfiguredPatterns: Bool = true) -> Bool {
@@ -343,6 +352,18 @@ public final class SearchIndex {
     }
 
     private func insertChunks(for relativePath: String, fileURL: URL) throws {
+        // Canonical representations are one artifact: an excluded companion must
+        // never re-enter retrieval through its other representation or a symlink.
+        if relativePath.hasPrefix("Meetings/"), ["transcript.json", "transcript.txt"].contains(fileURL.lastPathComponent) {
+            let directory = (relativePath as NSString).deletingLastPathComponent
+            let excludedCompanion = ["transcript.json", "transcript.txt", "meeting-artifacts.json"].contains { name in
+                let path = directory + "/" + name
+                let url = workspaceRootURL.appendingPathComponent(path)
+                return FileManager.default.fileExists(atPath: url.path) &&
+                    isExcludedSource(relativePath: path, resolvedURL: url.resolvingSymlinksInPath())
+            }
+            if excludedCompanion { return }
+        }
         let sourcePath: String
         let chunks: [SearchChunk]
         if let source = try SearchTranscriptSource.read(relativePath: relativePath, workspaceRoot: workspaceRootURL) {

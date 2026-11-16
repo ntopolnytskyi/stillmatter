@@ -241,6 +241,28 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertThrowsError(try index.search("Original"))
     }
 
+    func testCanonicalCompanionAndInsideWorkspaceSymlinksCannotBypassSearchExclusions() throws {
+        let fixture = try SearchIndexFixture()
+        try fixture.prepareCanonicalTranscript()
+        let source = fixture.vaultURL.appendingPathComponent("Meetings/call/transcript.txt")
+        let text = try String(contentsOf: source)
+        let excluded = try fixture.openIndex(excludedPatterns: ["**/transcript.txt"])
+        try excluded.rebuild()
+        XCTAssertTrue(try excluded.search("Original").isEmpty)
+        try fixture.write(text, to: "Private/transcript.txt")
+        try fixture.remove("Meetings/call/transcript.txt")
+        try FileManager.default.createSymbolicLink(at: source, withDestinationURL: fixture.vaultURL.appendingPathComponent("Private/transcript.txt"))
+        try fixture.write("# Private\n\nAliasSecretNeedle", to: "Private/notes.md")
+        try fixture.remove("Meetings/call/my-notes.md")
+        try FileManager.default.createSymbolicLink(at: fixture.vaultURL.appendingPathComponent("Meetings/call/my-notes.md"),
+            withDestinationURL: fixture.vaultURL.appendingPathComponent("Private/notes.md"))
+        let protected = try fixture.openIndex(excludedPatterns: ["Private/**"])
+        try protected.rebuild()
+        XCTAssertTrue(try protected.search("Original").isEmpty)
+        try protected.update(relativePath: "Meetings/call/my-notes.md")
+        XCTAssertTrue(try protected.search("AliasSecretNeedle").isEmpty)
+    }
+
     func testStartupScanIndexesKnownArtifactsAsTypedChunksAndSupportsFilters() throws {
         let fixture = try SearchIndexFixture()
         try fixture.write("# Meeting\n\nDiscuss Project Aurora.\n", to: "Meetings/2026/01/19/09-00-sync/meeting.md")
