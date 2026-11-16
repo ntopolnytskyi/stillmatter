@@ -144,5 +144,8 @@
   "answerableQueries": 8,
   "recallAt1": 0.75,
   "recallAt3": 1.0,
-  "meanReciprocalRank": 0.8333333333333334
+  "meanReciprocalRank": 0.8333333333333334,
+  "evaluationSourceCommit": "354e274a9857e22c940153f66087cd98563a96a5",
+  "fixtureSource": "Tests/StillmatterTests/E5LocalSemanticSearchTests.swift",
+  "fixtureSourceSHA256": "6f57536967bcaa51e9b714f00ba2d580835feb09eb8bd7cc8e8ce2ef792626c5"
 }
