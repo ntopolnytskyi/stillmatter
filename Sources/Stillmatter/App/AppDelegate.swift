@@ -254,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // The settings observer above schedules its work asynchronously, so create the
         // model before showing the window rather than leaving that first view disconnected.
         configureMeetingReadModel(settings: settingsStore.settings)
+        recoverMeetingImports()
         showMainWindow(selecting: .meetings)
         #if DEBUG
         if Self.isLifecycleProbe {
@@ -585,7 +586,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.indexRuntime.recover(self.settingsStore.settings, completion: completion)
             },
             onRetryPendingWorkspace: { [weak self] in self?.retryPendingWorkspace() },
-            meetingPresentationMetrics: meetingPresentationMetrics
+            meetingPresentationMetrics: meetingPresentationMetrics,
+            meetingImportServiceProvider: { [weak self] in self?.meetingImportService() }
         )
         let visibleFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1_200, height: 760)
@@ -661,11 +663,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // The old index must be invalidated before a new Meeting model can capture it.
         indexRuntime.configure(settings)
         configureMeetingReadModel(settings: settings)
+        recoverMeetingImports()
         processingRuntime.configure(settings: settings, searchIndex: searchIndex, indexGeneration: indexGeneration)
         configureCaptureService(settings: settings)
         workspaceRuntime.didActivateSelection()
         // An unchanged-root media reconfiguration can retain the same scheduler instance.
         processingRuntime.start()
+    }
+
+    private func meetingImportService() -> MeetingImportService? {
+        guard let root = settingsStore.settings.stillmatterRootURL,
+              let media = settingsStore.settings.recordingMediaURL, let jobs = jobStore else { return nil }
+        return MeetingImportService(vault: WorkspaceVault(workspaceRootURL: root, appSupportRootURL: Self.applicationSupportURL),
+            mediaRootURL: media, jobStore: jobs)
+    }
+
+    private func recoverMeetingImports() {
+        do {
+            let errors = try meetingImportService()?.recover() ?? []
+            if !errors.isEmpty { throw NSError(domain: "Stillmatter.Import", code: 2, userInfo: [NSLocalizedDescriptionKey: errors.joined(separator: "\n")]) }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "An interrupted import needs attention"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 
     func retryPendingWorkspace() {

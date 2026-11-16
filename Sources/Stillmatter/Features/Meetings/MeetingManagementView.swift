@@ -9,6 +9,10 @@ import StillmatterPresentation
 /// Meeting detail canvas. `browserView` is hosted independently in the shell's content-list region.
 final class MeetingManagementView: NSView {
     let browserView = NSView()
+    private let importServiceProvider: () -> MeetingImportService?
+    private lazy var importControls = MeetingImportControls(controls: controls, serviceProvider: importServiceProvider) { [weak self] in
+        self?.meetingsModel.refresh()
+    }
     private let calendarSnapshot: (Date) -> CalendarMeetingSnapshot
     private let controls: GraphiteFocusControls
 
@@ -182,9 +186,11 @@ final class MeetingManagementView: NSView {
         presentationMetrics: MeetingPresentationMetrics? = nil,
         calendarSnapshot: @escaping (Date) -> CalendarMeetingSnapshot = { CalendarMeetingProvider().snapshot(on: $0) },
         readTranscriptView: @escaping () -> TranscriptReadingView = { .timestamps },
-        saveTranscriptView: @escaping (TranscriptReadingView) -> Void = { _ in }
+        saveTranscriptView: @escaping (TranscriptReadingView) -> Void = { _ in },
+        importServiceProvider: @escaping () -> MeetingImportService? = { nil }
     ) {
         self.calendarSnapshot = calendarSnapshot
+        self.importServiceProvider = importServiceProvider
         self.readModelProvider = readModelProvider
         self.mutationExecutorProvider = mutationExecutorProvider
         self.playbackTransportProvider = playbackTransportProvider
@@ -415,7 +421,7 @@ final class MeetingManagementView: NSView {
         updateQueueButtons()
         queue.orientation = .horizontal
         queue.spacing = GraphiteFocusPresentation.Space.primitive
-        let filters = NSStackView(views: [header, searchRow, queue, advancedFilters])
+        let filters = NSStackView(views: [header, importControls, searchRow, queue, advancedFilters])
         filters.orientation = .vertical
         filters.alignment = .leading
         filters.spacing = GraphiteFocusPresentation.Space.compact

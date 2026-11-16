@@ -47,6 +47,56 @@ final class StillmatterFlowsUITests: XCTestCase {
         if let fixtureRoot { try FileManager.default.removeItem(at: fixtureRoot) }
     }
 
+    func testImportPickerCancelInvalidAudioAndPersistedOrdinaryMeeting() throws {
+        let original = fixtureRoot.appendingPathComponent("Imported sample.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        do {
+            let writer = try AVAudioFile(forWriting: original, settings: format.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
+            buffer.frameLength = 16_000
+            buffer.floatChannelData![0].update(repeating: 0.1, count: 16_000)
+            try writer.write(from: buffer)
+        }
+        let bytes = try Data(contentsOf: original)
+        let button = app.buttons["meetings-import"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        button.click()
+        XCTAssertTrue(app.dialogs["Import audio or video"].waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        let corrupt = fixtureRoot.appendingPathComponent("Broken.wav")
+        try Data("broken".utf8).write(to: corrupt)
+        func choose(_ url: URL) {
+            button.click()
+            app.typeKey("g", modifierFlags: [.command, .shift])
+            let location = app.dialogs.textFields.firstMatch
+            XCTAssertTrue(location.waitForExistence(timeout: 5), app.debugDescription)
+            location.typeText(url.path)
+            app.typeKey(.return, modifierFlags: [])
+            let confirm = app.dialogs.buttons["Import"].firstMatch
+            XCTAssertTrue(confirm.waitForExistence(timeout: 5), app.debugDescription)
+            confirm.click()
+        }
+        choose(corrupt)
+        let status = app.staticTexts["meetings-import-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        let failed = NSPredicate { _, _ in status.label.contains("no supported audio") }
+        expectation(for: failed, evaluatedWith: nil)
+        waitForExpectations(timeout: 15)
+        choose(original)
+        expectation(for: NSPredicate { _, _ in status.label.contains("Imported Imported sample.wav") }, evaluatedWith: nil)
+        waitForExpectations(timeout: 20)
+        XCTAssertEqual(try Data(contentsOf: original), bytes)
+        let importedRow = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Imported sample")).firstMatch
+        XCTAssertTrue(importedRow.waitForExistence(timeout: 10), app.debugDescription)
+        importedRow.click()
+        XCTAssertTrue(app.segmentedControls["meeting-page-selector"].waitForExistence(timeout: 10), app.debugDescription)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Imported sample")).firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(try Data(contentsOf: original), bytes)
+    }
+
     func testPlayableRecordingHasFullWidthSeekControl() throws {
         app.terminate()
         let directory = fixtureRoot.appendingPathComponent("workspace/Meetings/audio")

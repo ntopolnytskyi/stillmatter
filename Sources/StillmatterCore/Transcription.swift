@@ -18,11 +18,12 @@ public enum TranscriptLanguage: String, Codable, CaseIterable, Equatable {
 public enum TranscriptTrack: String, Codable, Equatable {
     case microphone
     case systemAudio = "system-audio"
+    case importedAudio = "imported-audio"
 
     public var speakerLabel: String {
         switch self {
         case .microphone: return "Me"
-        case .systemAudio: return "Meeting audio"
+        case .systemAudio, .importedAudio: return "Meeting audio"
         }
     }
 }
@@ -662,7 +663,7 @@ public final class TranscriptionPipeline {
     ) throws -> TranscriptAudioSource {
         guard let selection = selection else {
             return TranscriptAudioSource(
-                track: .microphone,
+                track: bundle.mic.role == "imported-audio" ? .importedAudio : .microphone,
                 filePath: bundle.mic.preferredAudioFilePath,
                 selection: TranscriptionAudioSelection.originalMicrophone.rawValue
             )

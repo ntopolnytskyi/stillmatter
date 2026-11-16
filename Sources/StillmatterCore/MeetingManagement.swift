@@ -768,11 +768,11 @@ public final class MeetingManagementService {
         let ordered: [TranscriptSegment] = document.segments.sorted(by: { $0.startSeconds < $1.startSeconds })
         var result: [MeetingTranscriptSegment] = []
         for segment in ordered {
-            let offset = segment.track == .microphone ? playback.microphoneOffsetSeconds : playback.systemOffsetSeconds
+            let offset = segment.track != .systemAudio ? playback.microphoneOffsetSeconds : playback.systemOffsetSeconds
             let start = segment.startSeconds + offset
             let end = segment.endSeconds + offset
             let valid = start.isFinite && end.isFinite && segment.startSeconds >= 0 && end >= start && end <= playback.durationSeconds
-            let timeline = segment.track == .microphone ? playback.microphoneRanges : playback.systemRanges
+            let timeline = segment.track != .systemAudio ? playback.microphoneRanges : playback.systemRanges
             let mapped: [Range<Double>]
             let target: Double?
             if !playback.microphoneRanges.isEmpty {
@@ -846,7 +846,7 @@ public final class MeetingManagementService {
             return Self.hasIntactEvidence(track) ? track.preferredAudioFilePath : nil
         }
         let mic = bundle.mic
-        guard mic.role == "microphone", let micPath = verifiedAudio(mic),
+        guard ["microphone", "imported-audio"].contains(mic.role), let micPath = verifiedAudio(mic),
               let micDuration = Self.audioDuration(micPath) else {
             return unavailable("Microphone audio missing, changed, or cannot be decoded. Inspect the Recording Bundle.")
         }
@@ -883,7 +883,7 @@ public final class MeetingManagementService {
             microphoneOffsetSeconds: offsets.mic, systemOffsetSeconds: offsets.system,
             microphoneRanges: hasGaps ? micRanges.map { $0.shifted(by: offsets.mic) } : [],
             systemRanges: hasGaps && mixed ? systemRanges.map { $0.shifted(by: offsets.system) } : [],
-            message: mixed ? (partial ? "Microphone and system audio (partial recording)" : "Microphone and system audio")
+            message: mic.role == "imported-audio" ? "Imported audio" : mixed ? (partial ? "Microphone and system audio (partial recording)" : "Microphone and system audio")
                 : (partial ? "Partial recording: microphone-only audio; system audio unavailable." : "Microphone-only audio; system audio unavailable."))
     }
 
@@ -933,7 +933,7 @@ public final class MeetingManagementService {
         // Recording Bundle paths are absolute media paths, not fabricated workspace-relative paths.
         let bundle = located?.0
         for track in [bundle?.mic, bundle?.system].compactMap({ $0 }) {
-            let mediaPath = track.role == "microphone" ? (playback.microphonePath ?? track.preferredAudioFilePath)
+            let mediaPath = track.role != "system-audio" ? (playback.microphonePath ?? track.preferredAudioFilePath)
                 : (playback.systemPath ?? track.preferredAudioFilePath)
             let available = FileManager.default.isReadableFile(atPath: mediaPath)
             artifacts.append(MeetingArtifact(role: .source, relativePath: mediaPath, available: available,

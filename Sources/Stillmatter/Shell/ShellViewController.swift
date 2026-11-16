@@ -16,6 +16,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     let meetingReadModelProvider: () -> MeetingReadModel?
     private let meetingMutationExecutorProvider: () -> MeetingMutationExecuting?
     private let meetingPlaybackTransportProvider: () -> MeetingPlaybackTransport?
+    private let meetingImportServiceProvider: () -> MeetingImportService?
     private let meetingPresentationMetrics: MeetingPresentationMetrics?
     private let onReviewTitle: (InboxItem) -> Void
     private let teamsDetectionProvider: () -> TeamsDetectionSnapshot?
@@ -77,7 +78,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 var settings = self.settingsStore.settings
                 settings.transcriptReadingView = view
                 self.settingsStore.settings = settings
-            }
+            },
+            importServiceProvider: meetingImportServiceProvider
         )
         workspace.setOnOpenSelection { [weak self] in
             guard let self, self.stateStore.state.selectedTab == .meetings else { return }
@@ -210,7 +212,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         transcriptionComponentInstaller: TranscriptionComponentInstaller,
         onRebuildIndex: @escaping (@escaping (Result<Void, Error>) -> Void) -> Void,
         onRetryPendingWorkspace: @escaping () -> Void = {},
-        meetingPresentationMetrics: MeetingPresentationMetrics? = nil
+        meetingPresentationMetrics: MeetingPresentationMetrics? = nil,
+        meetingImportServiceProvider: @escaping () -> MeetingImportService? = { nil }
     ) {
         self.stateStore = stateStore
         self.settingsStore = settingsStore
@@ -218,6 +221,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         self.searchIndexProvider = searchIndexProvider
         self.captureServiceProvider = captureServiceProvider
         self.meetingServiceProvider = meetingServiceProvider
+        self.meetingImportServiceProvider = meetingImportServiceProvider
         self.meetingReadModelProvider = meetingReadModelProvider
         self.meetingMutationExecutorProvider = meetingMutationExecutorProvider
         self.meetingPlaybackTransportProvider = meetingPlaybackTransportProvider
