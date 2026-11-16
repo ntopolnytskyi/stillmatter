@@ -74,8 +74,9 @@ final class SearchIndexFileMonitor {
     private func handle(path: String, flags: FSEventStreamEventFlags) {
         // Foundation may leave /var unresolved when the deleted leaf no longer
         // exists. Resolve an existing ancestor, then reattach the removed suffix.
-        var ancestor = URL(fileURLWithPath: path).standardizedFileURL
-        var suffix: [String] = []
+        let event = URL(fileURLWithPath: path).standardizedFileURL
+        var ancestor = event.deletingLastPathComponent()
+        var suffix = [event.lastPathComponent]
         while !FileManager.default.fileExists(atPath: ancestor.path), ancestor.path != "/" {
             suffix.append(ancestor.lastPathComponent)
             ancestor.deleteLastPathComponent()
@@ -87,7 +88,7 @@ final class SearchIndexFileMonitor {
         guard normalizedPath.hasPrefix(rootPath) else { return }
         let relativePath = String(normalizedPath.dropFirst(rootPath.count))
         guard !relativePath.isEmpty else { return }
-        if flags & FSEventStreamEventFlags(kFSEventStreamEventFlagItemIsDir) != 0 {
+        if flags & FSEventStreamEventFlags(kFSEventStreamEventFlagItemIsDir | kFSEventStreamEventFlagItemIsSymlink) != 0 {
             needsScan = true
         } else {
             pendingPaths.insert(relativePath)
@@ -109,9 +110,10 @@ final class SearchIndexFileMonitor {
             else {
                 for path in paths { try index.update(relativePath: path) }
             }
-            onChange()
         } catch {
+            needsScan = true
             NSLog("Could not update search index: %@", String(describing: error))
         }
+        onChange()
     }
 }

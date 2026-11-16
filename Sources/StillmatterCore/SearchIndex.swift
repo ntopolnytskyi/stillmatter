@@ -84,6 +84,7 @@ public final class SearchIndex {
     private let semanticSearch: LocalSemanticSearching?
     private let excludedPatterns: [String]
     private let lock = NSRecursiveLock()
+    private var refreshErrors: [String: Error] = [:]
 
     public init(databaseURL: URL, workspaceRootURL: URL, excludedPatterns: [String] = [], semanticSearch: LocalSemanticSearching? = nil) throws {
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -126,12 +127,16 @@ public final class SearchIndex {
     public func rebuild() throws {
         lock.lock()
         defer { lock.unlock() }
-        let files = try indexableFiles()
-        try database.transaction {
-            try database.run("DELETE FROM search_chunks")
-            for file in files {
-                try insertChunks(for: file.relativePath, fileURL: file.url)
+        do {
+            let files = try indexableFiles()
+            try database.transaction {
+                try database.run("DELETE FROM search_chunks")
+                for file in files { try insertChunks(for: file.relativePath, fileURL: file.url) }
             }
+            refreshErrors.removeAll()
+        } catch {
+            refreshErrors = ["rebuild": error]
+            throw error
         }
     }
 
@@ -139,24 +144,38 @@ public final class SearchIndex {
     public func update(relativePath: String) throws {
         lock.lock()
         defer { lock.unlock() }
+        if refreshErrors["rebuild"] != nil { try rebuild(); return }
         let normalizedPath = Self.normalize(relativePath)
-        let paths = normalizedPath.lowercased().hasSuffix("transcript.json")
-            ? [normalizedPath, (normalizedPath as NSString).deletingLastPathComponent + "/transcript.vtt"] : [normalizedPath]
-        try database.transaction {
-            for path in paths {
-                try database.run("DELETE FROM search_chunks WHERE source_path = ?", bindings: [.text(path)])
-                let fileURL = workspaceRootURL.appendingPathComponent(path).standardizedFileURL
-                var isDirectory: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
-                      !isDirectory.boolValue, isIndexable(relativePath: path) else { continue }
-                try insertChunks(for: path, fileURL: fileURL)
+        let directory = (normalizedPath as NSString).deletingLastPathComponent
+        let paired = ["transcript.json", "transcript.txt", "meeting-artifacts.json"].contains((normalizedPath as NSString).lastPathComponent)
+        let paths = paired ? ["transcript.json", "transcript.txt", "transcript.vtt"].map { directory.isEmpty ? $0 : directory + "/" + $0 } : [normalizedPath]
+        let key = paired ? directory + "/transcript" : normalizedPath
+        do {
+            try database.transaction {
+                // Delete the whole pair before inserting its chosen source. A JSON
+                // event may legitimately publish chunks whose source is the text file.
+                for path in paths {
+                    try database.run("DELETE FROM search_chunks WHERE source_path = ?", bindings: [.text(path)])
+                }
+                for path in paths {
+                    let fileURL = workspaceRootURL.appendingPathComponent(path).standardizedFileURL
+                    var isDirectory: ObjCBool = false
+                    guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
+                          !isDirectory.boolValue, isIndexable(relativePath: path) else { continue }
+                    try insertChunks(for: path, fileURL: fileURL)
+                }
             }
+            refreshErrors.removeValue(forKey: key)
+        } catch {
+            refreshErrors[key] = error
+            throw error
         }
     }
 
     public func search(_ query: String, filter: SearchFilter = SearchFilter(), limit: Int? = nil) throws -> [SearchResult] {
         lock.lock()
         defer { lock.unlock() }
+        if let key = refreshErrors.keys.sorted().first, let error = refreshErrors[key] { throw error }
         var clauses: [String] = []
         var bindings: [SearchSQLiteValue] = []
         let terms = query.split(whereSeparator: { $0.isWhitespace }).map(String.init)
@@ -284,13 +303,18 @@ public final class SearchIndex {
         guard resolved.path.hasPrefix(workspaceRootURL.path + "/") else { return false }
         let path = relativePath.lowercased()
         if path.hasSuffix("/transcript.vtt"),
+           ["transcript.json", "transcript.txt"].contains(where: {
+               FileManager.default.fileExists(atPath: resolved.deletingLastPathComponent().appendingPathComponent($0).path)
+           }) { return false }
+        if path.hasSuffix("/transcript.txt"),
            FileManager.default.fileExists(atPath: resolved.deletingLastPathComponent().appendingPathComponent("transcript.json").path) { return false }
         if path.hasPrefix("meetings/") {
-            let allowed = ["meeting.md", "summary.md", "notes.md", "my-notes.md", "action-items.md", "decisions.md", "open-items.md", "transcript.json", "transcript.vtt", "recording.localref.json"]
+            let allowed = ["meeting.md", "summary.md", "notes.md", "my-notes.md", "action-items.md", "decisions.md", "open-items.md", "transcript.json", "transcript.txt", "transcript.vtt", "recording.localref.json"]
             guard allowed.contains(resolved.lastPathComponent.lowercased()) else { return false }
         }
         let isLightweightMetadata = path.hasSuffix("/recording.localref.json") || path == "recording.localref.json"
         guard !isExcluded(relativePath: relativePath, isDirectory: false, applyConfiguredPatterns: !isLightweightMetadata) else { return false }
+        if path.hasPrefix("meetings/"), path.hasSuffix("/transcript.txt") { return true }
         if path.hasSuffix(".md") { return true }
         if path.hasSuffix("/transcript.vtt") || path == "transcript.vtt" { return true }
         if path.hasSuffix("/transcript.json") || path == "transcript.json" { return true }
@@ -317,13 +341,22 @@ public final class SearchIndex {
     }
 
     private func insertChunks(for relativePath: String, fileURL: URL) throws {
-        let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-        guard let contents = String(data: data, encoding: .utf8) else { return }
-        for chunk in Self.chunks(relativePath: relativePath, contents: contents) {
+        let sourcePath: String
+        let chunks: [SearchChunk]
+        if let source = try SearchTranscriptSource.read(relativePath: relativePath, workspaceRoot: workspaceRootURL) {
+            sourcePath = source.relativePath
+            chunks = Self.jsonTranscriptChunks(source.json)
+        } else {
+            let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+            guard let contents = String(data: data, encoding: .utf8) else { return }
+            sourcePath = relativePath
+            chunks = Self.chunks(relativePath: relativePath, contents: contents)
+        }
+        for chunk in chunks {
             try database.run(
                 "INSERT INTO search_chunks (source_path, kind, title, body, transcript_start, transcript_end) VALUES (?, ?, ?, ?, ?, ?)",
                 bindings: [
-                    .text(relativePath), .text(chunk.kind.rawValue), .text(chunk.title), .text(chunk.body),
+                    .text(sourcePath), .text(chunk.kind.rawValue), .text(chunk.title), .text(chunk.body),
                     chunk.transcriptStartSeconds.map(SearchSQLiteValue.double) ?? .null,
                     chunk.transcriptEndSeconds.map(SearchSQLiteValue.double) ?? .null
                 ]

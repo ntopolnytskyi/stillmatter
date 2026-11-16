@@ -159,6 +159,84 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertFalse(try index.search("proposal", filter: SearchFilter(kinds: [.markdown])).isEmpty)
     }
 
+    func testCanonicalTranscriptTextEditsRefreshWithoutWritingSourcesAndConflictsFailClosed() throws {
+        let fixture = try SearchIndexFixture()
+        try fixture.prepareCanonicalTranscript()
+        let jsonPath = "Meetings/call/transcript.json", textPath = "Meetings/call/transcript.txt"
+        let originalJSON = try String(contentsOf: fixture.vaultURL.appendingPathComponent(jsonPath))
+        let originalText = try String(contentsOf: fixture.vaultURL.appendingPathComponent(textPath))
+        let manifestPath = "Meetings/call/meeting-artifacts.json"
+        let originalManifest = try String(contentsOf: fixture.vaultURL.appendingPathComponent(manifestPath))
+        let index = try fixture.openIndex()
+        try index.rebuild()
+        try fixture.write(originalText.replacingOccurrences(of: "Original utterance", with: "Corrected utterance"), to: textPath)
+        try index.update(relativePath: textPath)
+        XCTAssertTrue(try index.search("Original").isEmpty)
+        XCTAssertEqual(try index.search("Corrected").first?.sourcePath, textPath)
+        XCTAssertEqual(try index.search("Corrected").first?.transcriptStartSeconds, 12)
+        XCTAssertEqual(try String(contentsOf: fixture.vaultURL.appendingPathComponent(jsonPath)), originalJSON)
+        try fixture.write(originalJSON.replacingOccurrences(of: "Original utterance", with: "Replacement utterance"), to: jsonPath)
+        XCTAssertThrowsError(try index.update(relativePath: jsonPath))
+        XCTAssertThrowsError(try index.search("Corrected"), "A conflicting pair cannot expose stale chunks")
+        try fixture.write(originalText, to: textPath)
+        try index.update(relativePath: textPath)
+        XCTAssertEqual(try index.search("Replacement").first?.sourcePath, jsonPath)
+        try fixture.write("malformed text", to: textPath)
+        XCTAssertThrowsError(try index.update(relativePath: textPath))
+        XCTAssertThrowsError(try index.search("Replacement"))
+        let replacementJSON = try Data(contentsOf: fixture.vaultURL.appendingPathComponent(jsonPath))
+        try fixture.write(String(decoding: MeetingTranscriptCodec.text(replacementJSON), as: UTF8.self), to: textPath)
+        try index.update(relativePath: textPath)
+        XCTAssertEqual(try index.search("Replacement").count, 1)
+        try fixture.write("broken manifest", to: manifestPath)
+        XCTAssertThrowsError(try index.update(relativePath: manifestPath))
+        XCTAssertThrowsError(try index.search("Replacement"))
+        var manifestObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(originalManifest.utf8)) as? [String: Any])
+        manifestObject["version"] = 99
+        try fixture.write(String(decoding: JSONSerialization.data(withJSONObject: manifestObject), as: UTF8.self), to: manifestPath)
+        XCTAssertThrowsError(try index.update(relativePath: manifestPath))
+        try fixture.write(originalManifest, to: manifestPath)
+        try index.update(relativePath: manifestPath)
+        var wrongOwner = try XCTUnwrap(JSONSerialization.jsonObject(with: replacementJSON) as? [String: Any])
+        wrongOwner["meeting_relative_path"] = "Meetings/other/meeting.md"
+        let wrongJSON = try JSONSerialization.data(withJSONObject: wrongOwner)
+        try fixture.write(String(decoding: wrongJSON, as: UTF8.self), to: jsonPath)
+        try fixture.write(String(decoding: MeetingTranscriptCodec.text(wrongJSON), as: UTF8.self), to: textPath)
+        XCTAssertThrowsError(try index.update(relativePath: jsonPath))
+        try fixture.write(String(decoding: replacementJSON, as: UTF8.self), to: jsonPath)
+        try fixture.write(String(decoding: MeetingTranscriptCodec.text(replacementJSON), as: UTF8.self), to: textPath)
+        try index.update(relativePath: jsonPath)
+        try fixture.remove(manifestPath)
+        try index.update(relativePath: manifestPath)
+        try fixture.remove(jsonPath)
+        try index.update(relativePath: jsonPath)
+        XCTAssertEqual(try index.search("Replacement").first?.sourcePath, textPath)
+        try fixture.remove(textPath)
+        try index.update(relativePath: textPath)
+        XCTAssertTrue(try index.search("Replacement").isEmpty)
+    }
+
+    func testCanonicalTranscriptFailedRebuildRecoversAndRejectsEscapingCompanion() throws {
+        let fixture = try SearchIndexFixture()
+        try fixture.prepareCanonicalTranscript()
+        let path = "Meetings/call/transcript.txt"
+        let original = try String(contentsOf: fixture.vaultURL.appendingPathComponent(path))
+        let index = try fixture.openIndex()
+        try index.rebuild()
+        try fixture.write("broken", to: path)
+        XCTAssertThrowsError(try index.rebuild())
+        XCTAssertThrowsError(try index.search("Original"))
+        try fixture.write(original, to: path)
+        try index.update(relativePath: path)
+        XCTAssertEqual(try index.search("Original").count, 1)
+        try fixture.remove(path)
+        let external = fixture.rootURL.appendingPathComponent("private-transcript.txt")
+        try original.write(to: external, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: fixture.vaultURL.appendingPathComponent(path), withDestinationURL: external)
+        XCTAssertThrowsError(try index.update(relativePath: path))
+        XCTAssertThrowsError(try index.search("Original"))
+    }
+
     func testStartupScanIndexesKnownArtifactsAsTypedChunksAndSupportsFilters() throws {
         let fixture = try SearchIndexFixture()
         try fixture.write("# Meeting\n\nDiscuss Project Aurora.\n", to: "Meetings/2026/01/19/09-00-sync/meeting.md")
@@ -345,6 +423,16 @@ private final class SearchIndexFixture {
 
     deinit {
         try? FileManager.default.removeItem(at: rootURL)
+    }
+
+    func prepareCanonicalTranscript() throws {
+        try write("---\ntitle: Canonical fixture\ncapture_session_id: call\n---\n# Canonical fixture\n", to: "Meetings/call/meeting.md")
+        let document: [String: Any] = ["schema_version": 1, "capture_session_id": "call", "meeting_relative_path": "Meetings/call/meeting.md",
+            "language": "en", "detected_languages": ["en"], "engine": "fixture", "model": "fixture", "generated_at": "2026-01-01T00:00:00Z",
+            "audio_sources": [], "diagnostics": [], "segments": [["id": "one", "start": 12, "end": 14, "language": "en", "track": "microphone", "speaker": "Me", "text": "Original utterance"]]]
+        try write(String(decoding: JSONSerialization.data(withJSONObject: document), as: UTF8.self), to: "Meetings/call/transcript.json")
+        let vault = WorkspaceVault(workspaceRootURL: vaultURL, appSupportRootURL: rootURL.appendingPathComponent("Support"))
+        _ = try MeetingManagementService(vault: vault).detail(for: "Meetings/call/meeting.md")
     }
 
     func write(_ contents: String, to relativePath: String) throws {

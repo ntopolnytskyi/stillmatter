@@ -1404,7 +1404,7 @@ final class MeetingManagementView: NSView {
                 case "my-notes.md", "notes.md": selectPage(.notes)
                 case "action-items.md": selectPage(.actionItems)
                 case "open-items.md": selectPage(.openItems)
-                case "transcript.json", "transcript.vtt":
+                case "transcript.json", "transcript.txt", "transcript.vtt":
                     selectPage(.transcript)
                     if let seconds = result.transcriptStartSeconds,
                        let segment = selected.transcript.first(where: {

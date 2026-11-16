@@ -44,7 +44,8 @@ extension StillmatterFlowsUITests {
     }
 
     func testSearchExternalEditAndRemovalRefreshVisibleResultsWithoutChangingQuery() throws {
-        try seedMeeting()
+        try seedMeeting(transcript: true)
+        openFixtureMeeting()
         let summary = meetingURL.deletingLastPathComponent().appendingPathComponent("summary.md")
         try "# Summary\n\nFreshSearchNeedle original.\n".write(to: summary, atomically: true, encoding: .utf8)
         app.buttons["sidebar-meetings"].click()
@@ -63,6 +64,20 @@ extension StillmatterFlowsUITests {
         let status = app.staticTexts["search-semantic-status"]
         XCTAssertTrue((status.value as? String)?.contains("Keyword results only") == true)
         XCTAssertEqual(search.value as? String, "FreshSearchNeedle")
+        let textSource = meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.txt")
+        let jsonSource = meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.json")
+        let beforeJSON = try Data(contentsOf: jsonSource)
+        let text = try String(contentsOf: textSource).replacingOccurrences(of: "Synthetic searchable moment 119", with: "FreshTranscriptTextNeedle")
+        try text.write(to: textSource, atomically: true, encoding: .utf8)
+        search.click(); search.typeKey("a", modifierFlags: .command); search.typeText("FreshTranscriptTextNeedle")
+        XCTAssertTrue(results.tableRows.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(try Data(contentsOf: jsonSource), beforeJSON, "Search must not rewrite canonical sources")
+        search.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.radioButtons["Transcript"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.radioButtons["Transcript"].value as? Int, 1)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "FreshTranscriptTextNeedle")).firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(try String(contentsOf: textSource), text)
     }
 
     func testSearchTranscriptResultLocatesLateSourceAndKeepsGlobalQuery() throws {

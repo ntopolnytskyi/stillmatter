@@ -128,6 +128,42 @@ final class MeetingSearchHostedTests: XCTestCase {
     }
 
     @MainActor
+    func testCanonicalTextRefreshPublishesConflictsAndRepairsWithoutOpeningMeeting() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("search-text-monitor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: root.appendingPathComponent("support"))
+        _ = try vault.writeMarkdown(Data("---\ntitle: Text fixture\ncapture_session_id: call\n---\n# Text fixture\n".utf8), relativePath: "Meetings/call/meeting.md", expectedVersion: nil)
+        let document: [String: Any] = ["schema_version": 1, "capture_session_id": "call", "meeting_relative_path": "Meetings/call/meeting.md",
+            "language": "en", "detected_languages": ["en"], "engine": "fixture", "model": "fixture", "generated_at": "2026-01-01T00:00:00Z",
+            "audio_sources": [], "diagnostics": [], "segments": [["id": "one", "start": 12, "end": 14, "language": "en", "track": "microphone", "speaker": "Me", "text": "OriginalTextNeedle"]]]
+        _ = try vault.writeMarkdown(JSONSerialization.data(withJSONObject: document), relativePath: "Meetings/call/transcript.json", expectedVersion: nil)
+        _ = try MeetingManagementService(vault: vault).detail(for: "Meetings/call/meeting.md")
+        let textURL = workspace.appendingPathComponent("Meetings/call/transcript.txt")
+        let jsonURL = workspace.appendingPathComponent("Meetings/call/transcript.json")
+        let originalJSON = try Data(contentsOf: jsonURL)
+        let edited = try String(contentsOf: textURL).replacingOccurrences(of: "OriginalTextNeedle", with: "EditedTextNeedle")
+        var publications = 0
+        let runtime = SearchIndexRuntime(databaseURL: root.appendingPathComponent("search.sqlite")) { index, _ in if index != nil { publications += 1 } }
+        defer { runtime.stop() }
+        var settings = AppSettings(); settings.stillmatterRootURL = workspace
+        runtime.configure(settings)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in runtime.index != nil }, evaluatedWith: runtime)], timeout: 10)
+        try edited.write(to: textURL, atomically: true, encoding: .utf8)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in (try? runtime.index?.search("EditedTextNeedle").count) == 1 }, evaluatedWith: runtime)], timeout: 10)
+        XCTAssertEqual(try Data(contentsOf: jsonURL), originalJSON)
+        let beforeFailure = publications
+        try "broken text".write(to: textURL, atomically: true, encoding: .utf8)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in
+            guard publications > beforeFailure, let index = runtime.index else { return false }
+            do { _ = try index.search("EditedTextNeedle"); return false } catch { return true }
+        }, evaluatedWith: runtime)], timeout: 10)
+        try edited.write(to: textURL, atomically: true, encoding: .utf8)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in (try? runtime.index?.search("EditedTextNeedle").count) == 1 }, evaluatedWith: runtime)], timeout: 10)
+        XCTAssertEqual(try Data(contentsOf: jsonURL), originalJSON)
+    }
+
+    @MainActor
     func testFilesystemRuntimePublishesFreshEditsRemovalAndProviderAfterRecovery() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("search-monitor-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -161,6 +197,12 @@ final class MeetingSearchHostedTests: XCTestCase {
         try "# Summary\n\nRecovered text".write(to: file, atomically: true, encoding: .utf8)
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in (try? runtime.index?.search("Recovered").count) == 1 }, evaluatedWith: runtime)], timeout: 10)
         XCTAssertEqual(try runtime.index?.retrieve("paraphrase").results.count, 1)
+        let outside = root.appendingPathComponent("outside.md")
+        try "# Private\n\nOutsidePrivateNeedle".write(to: outside, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: outside)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in (try? runtime.index?.search("Recovered").isEmpty) == true }, evaluatedWith: runtime)], timeout: 10)
+        XCTAssertTrue(try XCTUnwrap(runtime.index).search("OutsidePrivateNeedle").isEmpty)
     }
 }
 
