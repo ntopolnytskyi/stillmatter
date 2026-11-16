@@ -138,6 +138,23 @@ public enum MeetingManagementError: Error, Equatable, LocalizedError { case unav
     public var errorDescription: String? { switch self { case let .retryRejected(reason), let .malformed(reason): return reason; case let .notFound(id): return "Meeting \(id) could not be found. Reload the Meeting list."; case .unavailable: return "Meeting processing is unavailable." } }
 }
 
+/// Shared lifecycle metadata for Meeting browsing and keyword search. Legacy markers
+/// without an archive date remain readable and never acquire an invented date.
+struct MeetingArchiveState: Codable {
+    let archived: Bool
+    var archivedAt: Date? = nil
+
+    static func relativePath(for artifactPath: String) -> String {
+        (artifactPath as NSString).deletingLastPathComponent + "/archive.json"
+    }
+
+    static func decode(_ data: Data) throws -> MeetingArchiveState {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(Self.self, from: data)
+    }
+}
+
 public final class MeetingManagementService {
     private var artifactStore: MeetingArtifactStore { MeetingArtifactStore(vault: vault, inbox: inbox) }
     private let vault: WorkspaceVault; private let jobs: JobStore?; private let inbox: TasksInbox?; private let index: SearchIndex?; private let captureSnapshot: () -> CaptureSnapshot?
@@ -404,20 +421,11 @@ public final class MeetingManagementService {
 
     public func sourceArtifacts(for id: String) throws -> [MeetingArtifact] { try detail(for:id).artifacts }
 
-    private struct ArchiveMarker: Codable { let archived: Bool; var archivedAt: Date? = nil }
-    private static func archivePath(for path: String) -> String { sibling(path, "archive.json") }
-
-    private static func archiveDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }
-
     private func archived(at path: String) throws -> Bool {
-        let marker = Self.archivePath(for: path)
+        let marker = MeetingArchiveState.relativePath(for: path)
         guard let version = try vault.versionOfMarkdown(relativePath: marker) else { return false }
         let data = try vault.readMarkdown(relativePath: marker)
-        guard data.version == version, let state = try? Self.archiveDecoder().decode(ArchiveMarker.self, from: data.data) else {
+        guard data.version == version, let state = try? MeetingArchiveState.decode(data.data) else {
             throw MeetingManagementError.malformed("Invalid archive marker at \(marker)")
         }
         return state.archived
@@ -443,11 +451,11 @@ public final class MeetingManagementService {
             path: selected.row.meetingRelativePath) && ($0.status == .queued || $0.status == .running) }) else {
             throw MeetingManagementError.retryRejected("Finish processing before archiving this Meeting.")
         }
-        let path = Self.archivePath(for: selected.row.meetingRelativePath)
+        let path = MeetingArchiveState.relativePath(for: selected.row.meetingRelativePath)
         let existing = try vault.versionOfMarkdown(relativePath: path)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(ArchiveMarker(archived: true, archivedAt: Date()))
+        let data = try encoder.encode(MeetingArchiveState(archived: true, archivedAt: Date()))
         _ = try vault.writeMarkdown(data, relativePath: path, expectedVersion: existing)
         onMeetingChanged([selected.row.meetingRelativePath])
     }
@@ -629,6 +637,7 @@ public final class MeetingManagementService {
     public func retryFailedJob(meetingID: String, jobID: String) throws {
         guard jobs != nil else { throw MeetingManagementError.retryRejected("Job store is unavailable.") }
         let detail = try detail(for: meetingID)
+        guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meetings cannot retry processing.") }
         let session = Self.fields(detail.doorwayText).sessionID
         let records = try workspaceJobs().filter { Self.owns($0, session: session, path: detail.row.meetingRelativePath) }
         guard records.contains(where: { $0.id == jobID }) else { throw MeetingManagementError.retryRejected("This Job does not belong to the selected Meeting.") }

@@ -484,7 +484,7 @@ final class MeetingManagementView: NSView {
         renameButton.action = #selector(confirmRename)
         renameButton.setAccessibilityLabel("Rename selected Meeting")
         archiveButton.target = self
-        archiveButton.action = #selector(toggleArchive)
+        archiveButton.action = #selector(archiveMeeting)
         archiveButton.setAccessibilityLabel("Archive selected Meeting")
         openRecordingButton.target = self
         openRecordingButton.action = #selector(openRecordingAction)
@@ -549,7 +549,7 @@ final class MeetingManagementView: NSView {
             (transcriptionButton, "text.book.closed", "Transcript & recording", #selector(openTimeline), "meeting-open-transcription"),
             (editSummaryTool, "square.and.pencil", "Edit summary", #selector(editSummaryFromToolbar), "meeting-edit-summary"),
             (editNotesTool, "note.text", "Edit my notes", #selector(editNotesFromToolbar), "meeting-edit-notes"),
-            (archiveButton, "archivebox", "Archive meeting", #selector(toggleArchive), "meeting-archive"),
+            (archiveButton, "archivebox", "Archive meeting", #selector(archiveMeeting), "meeting-archive"),
             (moreButton, "ellipsis", "More meeting actions", #selector(showMeetingMenu(_:)), "meeting-more")
         ] {
             button.title = ""
@@ -2476,7 +2476,7 @@ final class MeetingManagementView: NSView {
             label.alignment = .left
             label.textColor = presentationColors.destructive
             row.addArrangedSubview(label)
-            let reason = job.retryReason ?? (detail.jobs.contains(where: { $0.jobID != job.jobID && ($0.status == .queued || $0.status == .running) }) ? "This Meeting already has processing work in progress." : nil)
+            let reason = detail.row.isArchived ? "Archived Meetings cannot retry processing." : job.retryReason ?? (detail.jobs.contains(where: { $0.jobID != job.jobID && ($0.status == .queued || $0.status == .running) }) ? "This Meeting already has processing work in progress." : nil)
             let button = NSButton(title: "Retry", target: self, action: #selector(retryFailedJob(_:)))
             button.identifier = NSUserInterfaceItemIdentifier(job.jobID)
             button.setAccessibilityLabel("Retry \(job.title) for this Meeting")
@@ -2503,6 +2503,7 @@ final class MeetingManagementView: NSView {
 
     @objc private func showMeetingMenu(_ sender: NSButton) {
         let menu = NSMenu()
+        menu.autoenablesItems = false
         let rename = NSMenuItem(title: "Rename…", action: #selector(confirmRename), keyEquivalent: "")
         rename.target = self
         rename.isEnabled = renameButton.isEnabled
@@ -2512,7 +2513,7 @@ final class MeetingManagementView: NSView {
         calendar.isEnabled = canEditCalendar
         calendar.setAccessibilityIdentifier("meeting-calendar")
         menu.addItem(calendar)
-        let archive = NSMenuItem(title: "Archive", action: #selector(toggleArchive), keyEquivalent: "")
+        let archive = NSMenuItem(title: "Archive", action: #selector(archiveMeeting), keyEquivalent: "")
         archive.target = self
         archive.isEnabled = archiveButton.isEnabled
         menu.addItem(archive)
@@ -2522,7 +2523,8 @@ final class MeetingManagementView: NSView {
         menu.addItem(regenerate)
         let remove = NSMenuItem(title: "Remove…", action: #selector(confirmRemove), keyEquivalent: "")
         remove.target = self
-        remove.isEnabled = displayedDetail?.row.captureState == .stopped && reprocessButton.isEnabled
+        remove.isEnabled = displayedDetail?.row.captureState == .stopped &&
+            displayedDetail?.jobs.contains(where: { $0.status == .queued || $0.status == .running }) == false && !meetingsModel.isDirty
         menu.addItem(remove)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
     }
@@ -2548,7 +2550,7 @@ final class MeetingManagementView: NSView {
         }
     }
 
-    @objc private func toggleArchive() {
+    @objc private func archiveMeeting() {
         guard let detail = displayedDetail, detail.archiveUnavailableReason == nil, !meetingsModel.isDirty else { return }
         archiveButton.isEnabled = false
         meetingsModel.archive { [weak self] result in

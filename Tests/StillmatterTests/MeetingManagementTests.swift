@@ -206,6 +206,9 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(archived.id, before.row.id)
         XCTAssertEqual(archived.processingState, before.row.processingState)
         XCTAssertTrue(archived.isArchived)
+        let marker = try JSONSerialization.jsonObject(with: Data(contentsOf: fixture.root.appendingPathComponent("Meetings/legacy/archive.json"))) as? [String: Any]
+        XCTAssertNotNil((marker?["archivedAt"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) })
+        XCTAssertThrowsError(try service.archive(meetingID: path))
         XCTAssertEqual(try service.detail(for: path).humanNotes, "\nKeep this\n")
         XCTAssertEqual(try Data(contentsOf: fixture.root.appendingPathComponent(path)), original)
         XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("Meetings/legacy/transcript.md")), "Transcript evidence")
@@ -762,6 +765,12 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try service.detail(for: "first").jobs.first?.stage, "Transcribe audio")
         XCTAssertEqual(try service.detail(for: "first").row.processingState, .needsAttention)
         XCTAssertThrowsError(try service.retryFailedJob(meetingID: "second", jobID: "retry-first"))
+        try fixture.write("Meetings/first/archive.json", "{\"archived\":true}")
+        XCTAssertThrowsError(try service.retryFailedJob(meetingID: "first", jobID: "retry-first")) {
+            XCTAssertEqual($0.localizedDescription, "Archived Meetings cannot retry processing.")
+        }
+        XCTAssertEqual(try store.job(id: "retry-first")?.status, .failed)
+        try fixture.replace("Meetings/first/archive.json", "{\"archived\":false}")
         try service.retryFailedJob(meetingID: "first", jobID: "retry-first")
         XCTAssertEqual(try store.job(id: "retry-first")?.manifest.metadata["language"], "uk")
         XCTAssertEqual(try service.detail(for: "first").row.processingState, .processing)

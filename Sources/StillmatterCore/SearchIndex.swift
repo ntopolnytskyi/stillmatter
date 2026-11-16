@@ -190,16 +190,13 @@ public final class SearchIndex {
         }
         let visible = try results.filter { result in
             guard !filter.includeArchived, result.sourcePath.hasPrefix("Meetings/") else { return true }
-            let folder = (result.sourcePath as NSString).deletingLastPathComponent
-            let marker = workspaceRootURL.appendingPathComponent(folder).appendingPathComponent("archive.json")
+            let marker = workspaceRootURL.appendingPathComponent(MeetingArchiveState.relativePath(for: result.sourcePath))
             guard FileManager.default.fileExists(atPath: marker.path) else { return true }
-            let state = try JSONDecoder().decode(SearchArchiveMarker.self, from: Data(contentsOf: marker))
+            let state = try MeetingArchiveState.decode(Data(contentsOf: marker))
             return !state.archived
         }
         return limit.map { Array(visible.prefix($0)) } ?? visible
     }
-
-    private struct SearchArchiveMarker: Decodable { let archived: Bool }
 
     private func migrate() throws {
         try database.run("PRAGMA journal_mode = WAL")
