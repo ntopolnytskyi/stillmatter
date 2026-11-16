@@ -4,6 +4,7 @@ import StillmatterCore
 /// Offline E5 inference. Models and Python packages are installed explicitly; search
 /// itself never downloads anything. Derived vectors live only in the child process.
 public final class E5LocalSemanticSearch: LocalSemanticSearching {
+    private let inferenceLock = NSLock()
     private let componentURL: URL
     private let timeout: TimeInterval
 
@@ -13,6 +14,11 @@ public final class E5LocalSemanticSearch: LocalSemanticSearching {
     }
 
     public func similarities(query: String, passages: [String]) throws -> [Double] {
+        // Rapid queries share one memory-heavy model process. Superseded requests
+        // waiting for that capacity never start another child.
+        inferenceLock.lock()
+        defer { inferenceLock.unlock() }
+        try Task.checkCancellation()
         let python = componentURL.appendingPathComponent("runtime/bin/python3")
         let model = componentURL.appendingPathComponent("model.onnx")
         let tokenizer = componentURL.appendingPathComponent("tokenizer.json")

@@ -136,6 +136,29 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertEqual(try index.search("Obsolete").count, 1, "Legacy VTT is authoritative only when JSON is absent")
     }
 
+    func testPersonalTodoSearchRetainsApprovedNotesAndActionsWithoutPendingOrOtherOwners() throws {
+        let fixture = try SearchIndexFixture()
+        func task(_ title: String, owner: String, review: String) throws -> String {
+            let metadata = MeetingItemMetadata(v: 1, id: UUID().uuidString.lowercased(), owner: owner,
+                review: review, origin: "user", legacyID: nil, citations: [])
+            return "- [ ] \(title) <!-- sm-item:\(String(decoding: try JSONEncoder().encode(metadata), as: UTF8.self)) -->"
+        }
+        let notes = try [task("Approved note deadline", owner: "me", review: "approved"),
+            task("Other owner deadline", owner: "person:someone", review: "approved")].joined(separator: "\n")
+            + "\n- [ ] User authored deadline\n- [ ] Malformed deadline <!-- sm-item:broken -->"
+        try fixture.write("# My Notes\n\n" + notes, to: "Meetings/call/my-notes.md")
+        let actions = try [task("Approved action deadline", owner: "me", review: "approved"),
+            task("Pending proposal deadline", owner: "me", review: "pending")].joined(separator: "\n")
+        try fixture.write("# Actions\n\n" + actions, to: "Meetings/call/action-items.md")
+        try fixture.write("# Todos\n\n- [ ] Standalone task", to: "Todos/todo.md")
+        let index = try fixture.openIndex()
+        try index.rebuild()
+        XCTAssertEqual(Set(try index.search("deadline", filter: SearchFilter(kinds: [.todo])).map(\.title)),
+            ["Approved note deadline", "User authored deadline", "Approved action deadline"])
+        XCTAssertTrue(try index.search("proposal", filter: SearchFilter(kinds: [.todo])).isEmpty)
+        XCTAssertFalse(try index.search("proposal", filter: SearchFilter(kinds: [.markdown])).isEmpty)
+    }
+
     func testStartupScanIndexesKnownArtifactsAsTypedChunksAndSupportsFilters() throws {
         let fixture = try SearchIndexFixture()
         try fixture.write("# Meeting\n\nDiscuss Project Aurora.\n", to: "Meetings/2026/01/19/09-00-sync/meeting.md")

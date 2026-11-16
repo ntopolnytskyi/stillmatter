@@ -1407,7 +1407,10 @@ final class MeetingManagementView: NSView {
                 case "transcript.json", "transcript.vtt":
                     selectPage(.transcript)
                     if let seconds = result.transcriptStartSeconds,
-                       let segment = selected.transcript.first(where: { $0.startSeconds <= seconds && $0.endSeconds > seconds }) {
+                       let segment = selected.transcript.first(where: {
+                           $0.startSeconds <= seconds && $0.endSeconds > seconds &&
+                               $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == result.body
+                       }) {
                         timelineNavigation.show(seconds: seconds, segmentID: segment.id, kind: .transcript)
                         if let seek = segment.seekSeconds, meetingsModel.detail.playbackState.isAvailable {
                             meetingsModel.detail.seekPlayback(to: seek)

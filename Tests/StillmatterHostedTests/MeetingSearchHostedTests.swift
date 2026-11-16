@@ -71,7 +71,15 @@ final class MeetingSearchHostedTests: XCTestCase {
         let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support)
         let path = "Meetings/call/meeting.md"
         _ = try vault.writeMarkdown(Data("---\ntitle: Search target\ncapture_session_id: call\n---\n# Search target\n".utf8), relativePath: path, expectedVersion: nil)
+        let transcript: [String: Any] = ["schema_version": 1, "capture_session_id": "call",
+            "meeting_relative_path": path, "language": "en", "detected_languages": ["en"],
+            "engine": "fixture", "model": "fixture", "generated_at": "2026-01-01T00:00:00Z", "audio_sources": [], "diagnostics": [],
+            "segments": [["id": "overlap-first", "start": 12, "end": 14, "text": "Earlier wording", "language": "en", "track": "system-audio", "speaker": "Guest"],
+                         ["id": "overlap-target", "start": 12, "end": 14, "text": "Target wording", "language": "en", "track": "microphone", "speaker": "Me"]]]
+        _ = try vault.writeMarkdown(JSONSerialization.data(withJSONObject: transcript), relativePath: "Meetings/call/transcript.json", expectedVersion: nil)
         func service() -> MeetingManagementService { MeetingManagementService(vault: vault) }
+        XCTAssertEqual(try service().detail(for: path).transcript.count, 2)
+        XCTAssertEqual(try service().detail(for: path).transcript.count, 2)
         let read = MeetingReadModel(workspaceID: workspace.path, sourceFactory: { MeetingManagementReadSource(serviceProvider: service) })
         var currentRead = read
         let view = MeetingManagementView(readModelProvider: { currentRead }, mutationExecutorProvider: { nil },
@@ -79,6 +87,9 @@ final class MeetingSearchHostedTests: XCTestCase {
         defer { view.refresh(isVisible: false); read.stop() }
         view.refresh(isVisible: true)
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil }, evaluatedWith: view)], timeout: 10)
+        guard view.displayedDetail != nil else {
+            return XCTFail("Browser: \(view.meetingsModel.loadState), detail: \(view.meetingsModel.detail.loadState), status: \(view.status.stringValue)")
+        }
         let cases: [(String, MeetingDetailPage)] = [("my-notes.md", .notes), ("action-items.md", .actionItems),
             ("open-items.md", .openItems), ("summary.md", .summary), ("transcript.json", .transcript)]
         for (filename, page) in cases {
@@ -87,6 +98,9 @@ final class MeetingSearchHostedTests: XCTestCase {
                 view.displayedDetail?.row.meetingRelativePath == path && view.meetingsModel.detail.page == page
             }, evaluatedWith: view)], timeout: 5)
         }
+        view.focusSearchResult(SearchResult(kind: .transcript, sourcePath: "Meetings/call/transcript.json",
+            title: "Transcript", body: "Target wording", transcriptStartSeconds: 12, transcriptEndSeconds: 14))
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.timelineNavigation.jump?.segmentID == "overlap-target" }, evaluatedWith: view)], timeout: 5)
         view.focusSearchResult(SearchResult(kind: .markdown, sourcePath: "Meetings/missing/my-notes.md", title: "Missing", body: "Old hit"))
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.status.stringValue.contains("no longer available") }, evaluatedWith: view)], timeout: 5)
         view.refresh(isVisible: false)

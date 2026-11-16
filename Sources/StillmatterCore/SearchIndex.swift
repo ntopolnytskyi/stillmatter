@@ -342,7 +342,18 @@ public final class SearchIndex {
         }
         if relativePath.lowercased().hasSuffix(".md") {
             let lines = contents.components(separatedBy: .newlines)
-            let todoBodies = relativePath.hasPrefix("Meetings/") ? [] : lines.compactMap(todoBody)
+            let todoBodies: [String]
+            if relativePath.hasPrefix("Meetings/") {
+                let isNotes = ["my-notes.md", "notes.md"].contains(URL(fileURLWithPath: relativePath).lastPathComponent)
+                todoBodies = TodoItemParser().parse(markdown: contents, relativePath: relativePath).compactMap { item in
+                    if let metadata = TodoItemParser.metadata(in: item.rawText) {
+                        return metadata.owner == "me" && metadata.review == "approved" ? item.title : nil
+                    }
+                    // User-authored My Notes tasks default to Me/approved. Explicit
+                    // broken metadata is never treated as implicit approval.
+                    return isNotes && !item.rawText.contains("<!-- sm-item:") ? item.title : nil
+                }
+            } else { todoBodies = lines.compactMap(todoBody) }
             if kind == .todo && !todoBodies.isEmpty {
                 return todoBodies.map { SearchChunk(kind: .todo, title: $0, body: $0) }
             }

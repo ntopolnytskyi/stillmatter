@@ -6,11 +6,12 @@ extension StillmatterFlowsUITests {
         try seedMeeting(transcript: true)
         app.terminate()
         let directory = meetingURL.deletingLastPathComponent()
-        let notes = "# My Notes\n\nArchiveSearchNeedle retained notes.\n"
+        let notes = "# My Notes\n\n- [ ] ArchiveSearchNeedle retained notes. "
+            + #"<!-- sm-item:{"v":1,"id":"11111111-1111-4111-8111-111111111111","owner":"me","review":"approved","origin":"note","citations":[]} -->"# + "\n"
         try notes.write(to: directory.appendingPathComponent("my-notes.md"), atomically: true, encoding: .utf8)
         try "{\"archived\":true}".write(to: directory.appendingPathComponent("archive.json"), atomically: true, encoding: .utf8)
         relaunch()
-        app.buttons["sidebar-meetings"].click()
+        app.buttons["sidebar-tasks"].click()
         app.typeKey("f", modifierFlags: .command)
         let search = app.searchFields["Search"]
         search.typeText("ArchiveSearchNeedle")
@@ -35,6 +36,7 @@ extension StillmatterFlowsUITests {
         let notesTab = app.radioButtons["My Notes"]
         XCTAssertTrue(notesTab.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(notesTab.value as? Int, 1)
+        XCTAssertFalse(app.buttons["meeting-overview-edit-notes"].isEnabled)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "ArchiveSearchNeedle retained notes")).firstMatch.exists)
         XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("my-notes.md")), notes)
         relaunch()

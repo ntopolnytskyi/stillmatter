@@ -967,7 +967,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         let destination: ShellTab
         switch result.kind {
         case .todo:
-            destination = .tasks
+            destination = result.isArchived && result.sourcePath.hasPrefix("Meetings/") ? .meetings : .tasks
         case .meeting, .summary, .transcript, .metadata:
             destination = .meetings
         case .project, .markdown:

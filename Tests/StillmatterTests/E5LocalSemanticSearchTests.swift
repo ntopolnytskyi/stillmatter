@@ -31,6 +31,23 @@ final class E5LocalSemanticSearchTests: XCTestCase {
         }
     }
 
+    func testConcurrentQueriesUseBoundedLocalInferenceCapacity() async throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try installChild(root, body: #"mkdir "$3.busy" 2>/dev/null || exit 8; /bin/sleep 0.2; printf '[0.8]' > "$6"; rmdir "$3.busy""#)
+        let engine = E5LocalSemanticSearch(componentURL: root)
+        try await withThrowingTaskGroup(of: [Double].self) { group in
+            for _ in 0..<4 { group.addTask { try engine.similarities(query: "query", passages: ["passage"]) } }
+            for try await scores in group { XCTAssertEqual(scores, [0.8]) }
+        }
+        let gate = DispatchSemaphore(value: 0)
+        let superseded = Task.detached { gate.wait(); return try engine.similarities(query: "old", passages: ["passage"]) }
+        superseded.cancel()
+        gate.signal()
+        do { _ = try await superseded.value; XCTFail("Superseded query must not start inference") }
+        catch { XCTAssertTrue(error is CancellationError) }
+    }
+
     func testUnresponsiveLocalChildHasBoundedLifetime() throws {
         let root = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
