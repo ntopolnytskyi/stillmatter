@@ -959,7 +959,7 @@ final class MeetingManagementView: NSView {
                 }
             }
         }
-        if pendingSearchSourcePath != nil, searchNavigationOwner !== currentReadModel() {
+        if searchNavigationID != nil, searchNavigationOwner !== currentReadModel() {
             clearSearchNavigation()
         }
         if let sourcePath = pendingSearchSourcePath, meetingsModel.loadState == .loaded,
@@ -1299,6 +1299,7 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderDetail(_ selected: MeetingBrowserDetail) {
+            if searchNavigationID != nil, searchNavigationOwner !== currentReadModel() { clearSearchNavigation() }
             canEditCalendar = false
             let opensReview = reviewSelectionStarted && reviewDetailPath == selected.row.meetingRelativePath
             if reviewNavigationID != nil && !opensReview { return }
@@ -1394,7 +1395,7 @@ final class MeetingManagementView: NSView {
             status.stringValue = retryFeedback?.meetingID == selected.row.id ? retryFeedback!.message : (selected.row.isArchived ? "" : selected.archiveUnavailableReason ?? "")
             if let result = pendingSearchResult,
                (result.sourcePath as NSString).deletingLastPathComponent == (selected.row.meetingRelativePath as NSString).deletingLastPathComponent {
-                pendingSearchResult = nil
+                clearSearchNavigation()
                 let filename = (result.sourcePath as NSString).lastPathComponent
                 switch filename {
                 case "my-notes.md", "notes.md": selectPage(.notes)

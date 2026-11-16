@@ -73,7 +73,8 @@ final class MeetingSearchHostedTests: XCTestCase {
         _ = try vault.writeMarkdown(Data("---\ntitle: Search target\ncapture_session_id: call\n---\n# Search target\n".utf8), relativePath: path, expectedVersion: nil)
         func service() -> MeetingManagementService { MeetingManagementService(vault: vault) }
         let read = MeetingReadModel(workspaceID: workspace.path, sourceFactory: { MeetingManagementReadSource(serviceProvider: service) })
-        let view = MeetingManagementView(readModelProvider: { read }, mutationExecutorProvider: { nil },
+        var currentRead = read
+        let view = MeetingManagementView(readModelProvider: { currentRead }, mutationExecutorProvider: { nil },
             playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in })
         defer { view.refresh(isVisible: false); read.stop() }
         view.refresh(isVisible: true)
@@ -95,6 +96,15 @@ final class MeetingSearchHostedTests: XCTestCase {
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.meetingsModel.availableRows.count == 2 }, evaluatedWith: view)], timeout: 5)
         XCTAssertEqual(view.displayedDetail?.row.meetingRelativePath, path)
         XCTAssertNotEqual(view.meetingsModel.detail.page, .notes)
+        let otherVault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("other-workspace"), appSupportRootURL: root.appendingPathComponent("other-support"))
+        _ = try otherVault.writeMarkdown(Data("---\ntitle: Other workspace\ncapture_session_id: call\n---\n# Other workspace\n".utf8), relativePath: path, expectedVersion: nil)
+        let otherRead = MeetingReadModel(workspaceID: "other", sourceFactory: { MeetingManagementReadSource(serviceProvider: { MeetingManagementService(vault: otherVault) }) })
+        defer { otherRead.stop() }
+        view.focusSearchResult(SearchResult(kind: .markdown, sourcePath: "Meetings/call/my-notes.md", title: "Old workspace", body: "Old hit"))
+        currentRead = otherRead
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail?.row.title == "Other workspace" }, evaluatedWith: view)], timeout: 5)
+        XCTAssertEqual(view.meetingsModel.detail.page, .summary, "A same-path Meeting in a new workspace must not consume the old route")
     }
 
     @MainActor
