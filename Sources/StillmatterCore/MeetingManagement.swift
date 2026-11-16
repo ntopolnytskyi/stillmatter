@@ -115,6 +115,25 @@ public struct MeetingActionDraft: Equatable { public let title: String; public l
 public struct MeetingBrowserDetail: Equatable { public var tagCatalog: [String] = []; public var reviewItems: [MeetingReviewItem] = []; public var speakerCorrectionReview: [MeetingSpeakerCorrectionReview] = []; public var analysisOutdated = false; public var speakerReviewRequired = false; public let actionDrafts: [String: MeetingActionDraft]; public let decisions: [MeetingCitedOutcome]; public let openQuestions: [MeetingCitedOutcome]; public let transcript: [MeetingTranscriptSegment]; public let row: MeetingBrowserRow; public let doorwayText: String; public let doorwayVersion: WorkspaceFileVersion?; public let humanNotes: String; public let notesVersion: WorkspaceFileVersion?; public let artifacts: [MeetingArtifact]; public let job: MeetingJobPresentation?; public let jobs: [MeetingJobPresentation]; public let summaryVersion: WorkspaceFileVersion?; public let summary: MeetingSummarySections?; public let extraction: MeetingSummaryExtraction?; public let myActionItems: [MeetingActionItem]; public let otherActionItems: [MeetingActionItem]; public let staleProposals: [ActionItemProposal]; public let playback: MeetingPlayback
     public init(row: MeetingBrowserRow, doorwayText: String, doorwayVersion: WorkspaceFileVersion? = nil, humanNotes: String = "", notesVersion: WorkspaceFileVersion? = nil, artifacts: [MeetingArtifact] = [], job: MeetingJobPresentation? = nil, jobs: [MeetingJobPresentation] = [], summaryVersion: WorkspaceFileVersion? = nil, summary: MeetingSummarySections? = nil, extraction: MeetingSummaryExtraction? = nil, myActionItems: [MeetingActionItem] = [], otherActionItems: [MeetingActionItem] = [], staleProposals: [ActionItemProposal] = [], transcript: [MeetingTranscriptSegment] = [], decisions: [MeetingCitedOutcome] = [], openQuestions: [MeetingCitedOutcome] = [], playback: MeetingPlayback = MeetingPlayback(capability: .unavailable, message: "Recording Bundle unavailable"), actionDrafts: [String: MeetingActionDraft] = [:]) { self.actionDrafts=actionDrafts; self.decisions=decisions; self.openQuestions=openQuestions; self.transcript=transcript; self.playback=playback; self.row=row; self.doorwayText=doorwayText; self.doorwayVersion=doorwayVersion; self.humanNotes=humanNotes; self.notesVersion=notesVersion ?? doorwayVersion; self.artifacts=artifacts; self.job=job; self.jobs=jobs; self.summaryVersion=summaryVersion; self.summary=summary; self.extraction=extraction; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.staleProposals=staleProposals }
 }
+extension MeetingBrowserDetail {
+    /// Shared by the archive command and its disabled-state explanation.
+    public var archiveUnavailableReason: String? {
+        if row.isArchived { return "Archived Meetings are read-only." }
+        if row.captureState == .live { return "Stop recording before archiving this Meeting." }
+        if jobs.contains(where: { $0.status == .queued || $0.status == .running }) || row.processingState == .processing {
+            return "Finish processing before archiving this Meeting."
+        }
+        if row.captureState != .stopped || row.processingState != .ready {
+            return "Only Ready Meetings can be archived."
+        }
+        if reviewItems.contains(where: { $0.review != "rejected" && $0.review != "dismissed" &&
+            ($0.isPending || $0.status != .done) }) || !staleProposals.isEmpty {
+            return "Resolve or reject every Action Item, including other people’s and unknown-owner work, before archiving."
+        }
+        return nil
+    }
+}
+
 public enum MeetingManagementError: Error, Equatable, LocalizedError { case unavailable; case malformed(String); case notFound(String); case retryRejected(String)
     public var errorDescription: String? { switch self { case let .retryRejected(reason), let .malformed(reason): return reason; case let .notFound(id): return "Meeting \(id) could not be found. Reload the Meeting list."; case .unavailable: return "Meeting processing is unavailable." } }
 }
@@ -140,12 +159,13 @@ public final class MeetingManagementService {
     public func saveActionDraft(id: String, title: String, comment: String) throws {
         guard let inbox else { throw MeetingManagementError.unavailable }
         let meetingPath = proposalMeetingPath(id: id)
+        if let meetingPath { _ = try editableActionMeeting(meetingPath) }
         try inbox.saveProposalDraft(id: id, title: title, comment: comment)
         if let meetingPath { onMeetingChanged([meetingPath]) }
     }
 
     public func reassignNoteTask(itemID: String, owner: String, meetingID: String) throws {
-        let detail = try self.detail(for: meetingID)
+        let detail = try editableActionMeeting(meetingID)
         let notesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
         let matching = TodoItemParser().parse(markdown: detail.humanNotes, relativePath: notesPath).contains { $0.id == itemID }
         guard matching else { throw TodoItemMutationError.itemNotFound(itemID) }
@@ -158,7 +178,7 @@ public final class MeetingManagementService {
         guard inbox != nil else { throw MeetingManagementError.unavailable }
         let meetingPath = proposalMeetingPath(id: id)
         guard let meetingPath else { throw MeetingManagementError.notFound(id) }
-        let detail = try self.detail(for: meetingPath)
+        let detail = try editableActionMeeting(meetingPath)
         try artifactStore.review(proposalID: id, accept: accept, meetingPath: meetingPath, meetingID: detail.row.id)
         onMeetingChanged([meetingPath])
     }
@@ -265,7 +285,7 @@ public final class MeetingManagementService {
         }
         let results = try index.search(
             query,
-            filter: SearchFilter(kinds: [.meeting, .summary, .transcript], pathPrefix: "Meetings/")
+            filter: SearchFilter(kinds: [.meeting, .summary, .transcript], pathPrefix: "Meetings/", includeArchived: true)
         )
         return Set(results.compactMap { result in
             let path = result.sourcePath
@@ -384,14 +404,20 @@ public final class MeetingManagementService {
 
     public func sourceArtifacts(for id: String) throws -> [MeetingArtifact] { try detail(for:id).artifacts }
 
-    private struct ArchiveMarker: Codable { let archived: Bool }
+    private struct ArchiveMarker: Codable { let archived: Bool; var archivedAt: Date? = nil }
     private static func archivePath(for path: String) -> String { sibling(path, "archive.json") }
+
+    private static func archiveDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
 
     private func archived(at path: String) throws -> Bool {
         let marker = Self.archivePath(for: path)
         guard let version = try vault.versionOfMarkdown(relativePath: marker) else { return false }
         let data = try vault.readMarkdown(relativePath: marker)
-        guard data.version == version, let state = try? JSONDecoder().decode(ArchiveMarker.self, from: data.data) else {
+        guard data.version == version, let state = try? Self.archiveDecoder().decode(ArchiveMarker.self, from: data.data) else {
             throw MeetingManagementError.malformed("Invalid archive marker at \(marker)")
         }
         return state.archived
@@ -409,18 +435,19 @@ public final class MeetingManagementService {
         onMeetingChanged([selected.row.meetingRelativePath])
     }
 
-    public func archive(meetingID: String) throws { try setArchived(true, meetingID: meetingID) }
-    public func restore(meetingID: String) throws { try setArchived(false, meetingID: meetingID) }
-
-    private func setArchived(_ archived: Bool, meetingID: String) throws {
+    public func archive(meetingID: String) throws {
         let selected = try detail(for: meetingID)
-        guard selected.row.captureState != .live else {
-            throw MeetingManagementError.retryRejected("Stop recording before archiving this Meeting.")
+        if let reason = selected.archiveUnavailableReason { throw MeetingManagementError.retryRejected(reason) }
+        // Check every owned Job, including an older run hidden by the row projection.
+        guard try !workspaceJobs().contains(where: { Self.owns($0, session: Self.fields(selected.doorwayText).sessionID,
+            path: selected.row.meetingRelativePath) && ($0.status == .queued || $0.status == .running) }) else {
+            throw MeetingManagementError.retryRejected("Finish processing before archiving this Meeting.")
         }
         let path = Self.archivePath(for: selected.row.meetingRelativePath)
         let existing = try vault.versionOfMarkdown(relativePath: path)
-        guard selected.row.isArchived != archived else { return }
-        let data = try JSONEncoder().encode(ArchiveMarker(archived: archived))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(ArchiveMarker(archived: true, archivedAt: Date()))
         _ = try vault.writeMarkdown(data, relativePath: path, expectedVersion: existing)
         onMeetingChanged([selected.row.meetingRelativePath])
     }

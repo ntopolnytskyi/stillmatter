@@ -17,6 +17,92 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertFalse(MeetingCitation(segmentID: "segment-1", startSeconds: .nan, endSeconds: 15).matches(segment))
     }
 
+    func testArchiveBlocksUnresolvedItemsForEveryOwnerAndNeverRunsAutomatically() throws {
+        for owner in ["me", "person:other", "unknown"] {
+            for (review, marker, blocked) in [("pending", " ", true), ("pending", "x", true), ("approved", " ", true),
+                                               ("approved", "b", true), ("approved", "x", false),
+                                               ("rejected", " ", false), ("dismissed", " ", false)] {
+                let fixture = try Fixture()
+                let path = "Meetings/ready/meeting.md"
+                try seedArchiveReady(fixture, path: path)
+                let service = MeetingManagementService(vault: fixture.vault)
+                _ = try service.detail(for: path)
+                let metadata = "{\"v\":1,\"id\":\"00000000-0000-0000-0000-000000000036\",\"owner\":\"\(owner)\",\"review\":\"\(review)\",\"origin\":\"generated\",\"citations\":[]}"
+                try Data("- [\(marker)] Resolve work <!-- sm-item:\(metadata) -->\n".utf8).write(to: fixture.root.appendingPathComponent("Meetings/ready/action-items.md"))
+                XCTAssertFalse(try service.detail(for: path).row.isArchived)
+                if blocked {
+                    XCTAssertThrowsError(try service.archive(meetingID: path), "\(owner) \(review) \(marker)")
+                    XCTAssertFalse(try service.detail(for: path).row.isArchived)
+                } else {
+                    try service.archive(meetingID: path)
+                    XCTAssertTrue(try service.detail(for: path).row.isArchived)
+                }
+            }
+        }
+    }
+
+    func testArchiveExcludesIndexedContentImmediatelyAndExternalEditsRemainAuthoritative() throws {
+        let fixture = try Fixture()
+        let path = "Meetings/ready/meeting.md"
+        try seedArchiveReady(fixture, path: path)
+        let index = try SearchIndex(databaseURL: fixture.root.appendingPathComponent("Support/search.sqlite"), workspaceRootURL: fixture.root)
+        try index.startupScan()
+        XCTAssertFalse(try index.search("Ready").isEmpty)
+        let service = MeetingManagementService(vault: fixture.vault, searchIndex: index)
+        try service.archive(meetingID: path)
+        XCTAssertTrue(try index.search("Ready").isEmpty)
+        XCTAssertFalse(try index.search("Ready", filter: SearchFilter(includeArchived: true)).isEmpty)
+        XCTAssertEqual(try service.list(filters: MeetingBrowserFilters(query: "Ready", archived: true)).map(\.meetingRelativePath), [path])
+        try Data("{\"archived\":false}".utf8).write(to: fixture.root.appendingPathComponent("Meetings/ready/archive.json"))
+        XCTAssertFalse(try index.search("Ready").isEmpty)
+        XCTAssertFalse(try service.detail(for: path).row.isArchived)
+    }
+
+    func testArchiveRejectsIncompleteAndQueuedMeetingsWithoutWritingMarker() throws {
+        let fixture = try Fixture()
+        let path = "Meetings/ready/meeting.md"
+        try fixture.write(path, "# Incomplete\n")
+        let jobs = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/jobs.sqlite"))
+        let service = MeetingManagementService(vault: fixture.vault, jobStore: jobs)
+        XCTAssertThrowsError(try service.archive(meetingID: path))
+        try seedArchiveReady(fixture, path: path)
+        _ = try jobs.enqueue(id: "active", manifest: JobManifest(type: "meeting.transcription", title: "Queued", executionClass: .heavy,
+            stages: [JobStageDefinition(id: "transcribe", title: "Transcribe")], sourceArtifacts: [JobArtifactReference(relativePath: path, role: "meeting")]))
+        XCTAssertThrowsError(try service.archive(meetingID: path)) { XCTAssertTrue($0.localizedDescription.contains("processing")) }
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/ready/archive.json"))
+    }
+
+    func testRecordingCannotArchiveEvenWithCompletedArtifacts() throws {
+        let fixture = try Fixture()
+        let path = "Meetings/ready/meeting.md"
+        try seedArchiveReady(fixture, path: path)
+        let snapshot = CaptureSnapshot(state: .recording, meetingTitle: "Live", meetingRelativePath: path,
+            source: .teams, elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil,
+            micRecording: nil, systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
+        let service = MeetingManagementService(vault: fixture.vault, captureSnapshot: { snapshot })
+        XCTAssertEqual(try service.detail(for: path).archiveUnavailableReason, "Stop recording before archiving this Meeting.")
+        XCTAssertThrowsError(try service.archive(meetingID: path))
+        XCTAssertNil(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/ready/archive.json"))
+    }
+
+    private func seedArchiveReady(_ fixture: Fixture, path: String) throws {
+        if try fixture.vault.versionOfMarkdown(relativePath: path) == nil { try fixture.write(path, "# Ready\n") }
+        let directory = (path as NSString).deletingLastPathComponent
+        let doorway = String(decoding: try fixture.vault.readMarkdown(relativePath: path).data, as: UTF8.self)
+        let session = doorway.components(separatedBy: "\n").first(where: { $0.hasPrefix("capture_session_id:") })?.dropFirst("capture_session_id:".count).trimmingCharacters(in: .whitespaces) ?? "ready"
+        let transcript = TranscriptDocument(schemaVersion: 1, captureSessionID: session, meetingRelativePath: path,
+            language: .english, detectedLanguages: [], engine: "fixture", model: "fixture",
+            generatedAt: Date(timeIntervalSince1970: 0), audioSources: [], segments: [], diagnostics: [])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try fixture.write(directory + "/transcript.json", String(decoding: encoder.encode(transcript), as: UTF8.self))
+        if try fixture.vault.versionOfMarkdown(relativePath: directory + "/transcript.md") == nil { try fixture.write(directory + "/transcript.md", "# Transcript\n") }
+        if try fixture.vault.versionOfMarkdown(relativePath: directory + "/summary.md") == nil { try fixture.write(directory + "/summary.md", "# Summary\n") }
+        let extraction = MeetingSummaryExtraction(meeting: path, transcript: directory + "/transcript.json",
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        try fixture.write(directory + "/summary-extraction.json", String(decoding: encoder.encode(extraction), as: UTF8.self))
+    }
+
     func testActionDraftSaveDoesNotAcceptOrCreateTodoAndSurvivesRequeue() throws {
         let fixture = try Fixture()
         let path = "Meetings/draft/meeting.md"
@@ -78,9 +164,10 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(edited.humanNotes, "Updated notes")
         XCTAssertEqual(changes, [[path]])
 
+        try seedArchiveReady(fixture, path: path)
         try service.archive(meetingID: path)
-        try service.restore(meetingID: path)
-        XCTAssertEqual(changes, [[path], [path], [path]])
+        XCTAssertEqual(changes, [[path], [path]])
+        try Data("{\"archived\":false}".utf8).write(to: fixture.root.appendingPathComponent("Meetings/legacy/archive.json"))
 
         let renamed = try service.rename(meetingID: path, title: "Updated title",
                                          expectedVersion: try XCTUnwrap(edited.doorwayVersion))
@@ -102,17 +189,15 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("Todos/todo.md")), "# Todos\n")
     }
 
-    func testArchiveRestorePersistsWithoutTouchingMeetingArtifactsOrProcessing() throws {
+    func testArchivePersistsWithoutTouchingMeetingArtifactsOrProcessing() throws {
         let fixture = try Fixture()
         let path = "Meetings/legacy/meeting.md"
         try fixture.write(path, "# Legacy meeting\n\n## Notes\n\nKeep this\n")
         try fixture.write("Meetings/legacy/transcript.md", "Transcript evidence")
         let link = "[[Meetings/legacy/meeting|source]]"
         try fixture.write("Tasks/linked.md", link)
-        let store = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/jobs.sqlite"))
-        _ = try store.enqueue(id: "legacy-job", manifest: JobManifest(type: "meeting.transcription", title: "Process legacy", executionClass: .heavy,
-            stages: [JobStageDefinition(id: "transcribe", title: "Transcribe")], sourceArtifacts: [JobArtifactReference(relativePath: path, role: "meeting")]))
-        let service = MeetingManagementService(vault: fixture.vault, jobStore: store)
+        try seedArchiveReady(fixture, path: path)
+        let service = MeetingManagementService(vault: fixture.vault)
         let before = try service.detail(for: path)
         let original = try Data(contentsOf: fixture.root.appendingPathComponent(path))
         try service.archive(meetingID: path)
@@ -125,12 +210,11 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fixture.root.appendingPathComponent(path)), original)
         XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("Meetings/legacy/transcript.md")), "Transcript evidence")
         XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("Tasks/linked.md")), link)
-        XCTAssertNotNil(try store.job(id: "legacy-job"))
-        let reopened = MeetingManagementService(vault: fixture.vault, jobStore: try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/jobs.sqlite")))
+        let reopened = MeetingManagementService(vault: fixture.vault)
         XCTAssertEqual(try reopened.list(filters: MeetingBrowserFilters(archived: true)).map(\.id), [path])
-        try reopened.restore(meetingID: path)
-        XCTAssertEqual(try reopened.list().map(\.id), [path])
-        XCTAssertTrue(try reopened.list(filters: MeetingBrowserFilters(archived: true)).isEmpty)
+        XCTAssertTrue(try reopened.list().isEmpty)
+        try Data("# External archived notes\n".utf8).write(to: fixture.root.appendingPathComponent("Meetings/legacy/my-notes.md"))
+        XCTAssertTrue(try reopened.detail(for: path).humanNotes.contains("External archived notes"))
         XCTAssertEqual(try reopened.detail(for: path).row.processingState, before.row.processingState)
     }
 
@@ -140,13 +224,14 @@ final class MeetingManagementTests: XCTestCase {
         try fixture.write("Meetings/b/meeting.md", "# Beta\n")
         let service = MeetingManagementService(vault: fixture.vault)
         XCTAssertEqual(try service.list().count, 2)
+        try seedArchiveReady(fixture, path: "Meetings/a/meeting.md")
         try service.archive(meetingID: "alpha")
         XCTAssertEqual(try service.list(filters: MeetingBrowserFilters(query: "Alpha", archived: true)).map(\.id), ["alpha"])
         XCTAssertTrue(try service.list(filters: MeetingBrowserFilters(query: "Beta", archived: true)).isEmpty)
         XCTAssertThrowsError(try service.archive(meetingID: "missing"))
         try fixture.write("Meetings/b/archive.json", "not json")
         XCTAssertThrowsError(try service.list())
-        XCTAssertThrowsError(try service.restore(meetingID: "Meetings/b/meeting.md"))
+        XCTAssertThrowsError(try service.archive(meetingID: "Meetings/b/meeting.md"))
     }
 
     func testListsDoorwaysNewestFirstAndExposesDetail() throws {
@@ -1365,7 +1450,10 @@ final class MeetingManagementTests: XCTestCase {
         _ = try makePlaybackBundle(in: fixture, id: "archived")
         let jobs = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/jobs.sqlite"))
         let service = MeetingManagementService(vault: fixture.vault, jobStore: jobs, retryUnavailableReason: { _ in nil })
+        try seedArchiveReady(fixture, path: "Meetings/archived/meeting.md")
+        let playbackBefore = try service.detail(for: "archived").playback
         try service.archive(meetingID: "archived")
+        XCTAssertEqual(try service.detail(for: "archived").playback, playbackBefore)
         XCTAssertThrowsError(try service.reprocess(meetingID: "archived", language: .ukrainian)) {
             XCTAssertTrue($0.localizedDescription.contains("Archived"))
         }

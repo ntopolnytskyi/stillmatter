@@ -26,10 +26,12 @@ public enum SearchChunkKind: String, CaseIterable, Hashable, Codable {
 public struct SearchFilter: Equatable {
     public var kinds: Set<SearchChunkKind>
     public var pathPrefix: String?
+    public var includeArchived: Bool
 
-    public init(kinds: Set<SearchChunkKind> = [], pathPrefix: String? = nil) {
+    public init(kinds: Set<SearchChunkKind> = [], pathPrefix: String? = nil, includeArchived: Bool = false) {
         self.kinds = kinds
         self.pathPrefix = pathPrefix
+        self.includeArchived = includeArchived
     }
 }
 
@@ -167,15 +169,10 @@ public final class SearchIndex {
         }
         let whereClause = clauses.isEmpty ? "" : " WHERE " + clauses.joined(separator: " AND ")
         let orderClause = terms.isEmpty ? " ORDER BY source_path, rowid" : " ORDER BY bm25(search_chunks), source_path, rowid"
-        let limitClause: String
-        if let limit {
-            precondition(limit > 0, "Search limit must be positive")
-            limitClause = " LIMIT \(limit)"
-        } else {
-            limitClause = ""
-        }
-        return try database.query(
-            "SELECT kind, source_path, title, body, transcript_start, transcript_end FROM search_chunks\(whereClause)\(orderClause)\(limitClause)",
+        if let limit { precondition(limit > 0, "Search limit must be positive") }
+        // Apply lifecycle filtering before limiting, so archives cannot consume result slots.
+        let results = try database.query(
+            "SELECT kind, source_path, title, body, transcript_start, transcript_end FROM search_chunks\(whereClause)\(orderClause)",
             bindings: bindings
         ) { statement in
             let storedKind = SearchSQLiteDatabase.text(statement, column: 0)
@@ -191,7 +188,18 @@ public final class SearchIndex {
                 transcriptEndSeconds: SearchSQLiteDatabase.optionalDouble(statement, column: 5)
             )
         }
+        let visible = try results.filter { result in
+            guard !filter.includeArchived, result.sourcePath.hasPrefix("Meetings/") else { return true }
+            let folder = (result.sourcePath as NSString).deletingLastPathComponent
+            let marker = workspaceRootURL.appendingPathComponent(folder).appendingPathComponent("archive.json")
+            guard FileManager.default.fileExists(atPath: marker.path) else { return true }
+            let state = try JSONDecoder().decode(SearchArchiveMarker.self, from: Data(contentsOf: marker))
+            return !state.archived
+        }
+        return limit.map { Array(visible.prefix($0)) } ?? visible
     }
+
+    private struct SearchArchiveMarker: Decodable { let archived: Bool }
 
     private func migrate() throws {
         try database.run("PRAGMA journal_mode = WAL")

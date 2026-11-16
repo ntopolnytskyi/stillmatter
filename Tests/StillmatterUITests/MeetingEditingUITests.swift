@@ -429,6 +429,68 @@ extension StillmatterFlowsUITests {
         XCTAssertEqual(try Data(contentsOf: notesURL), before)
     }
 
+    func testManualArchiveRequiresResolvedItemsAndPersistsReadOnlyTabs() throws {
+        try seedMeeting(transcript: true, notes: "- [ ] Finish the last task")
+        app.terminate()
+        try "# Transcript\n".write(to: meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
+        relaunch()
+        openFixtureMeeting()
+        let archive = app.buttons["meeting-archive"]
+        XCTAssertTrue(archive.waitForExistence(timeout: 10))
+        XCTAssertFalse(archive.isEnabled)
+        XCTAssertTrue(app.staticTexts["meeting-management-status"].value as? String == "Resolve or reject every Action Item, including other people’s and unknown-owner work, before archiving.")
+        app.radioButtons["Action Items"].click()
+        let notesPath = "Meetings/ui-fixture/my-notes.md"
+        let notesText = try String(contentsOf: fixtureRoot.appendingPathComponent("workspace/" + notesPath), encoding: .utf8)
+        let id = try XCTUnwrap(TodoItemParser().parse(markdown: notesText, relativePath: notesPath).first?.id)
+        let taskStatus = app.popUpButtons["meeting-item-status-" + id]
+        XCTAssertTrue(taskStatus.waitForExistence(timeout: 10))
+        taskStatus.click()
+        app.menuItems["Completed"].click()
+        app.buttons["meeting-item-save-" + id].click()
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: archive)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: meetingURL.deletingLastPathComponent().appendingPathComponent("archive.json").path))
+        archive.click()
+        let marker = meetingURL.deletingLastPathComponent().appendingPathComponent("archive.json")
+        let saved = NSPredicate { _, _ in FileManager.default.fileExists(atPath: marker.path) }
+        expectation(for: saved, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.tables["Meetings"].staticTexts["UI fixture meeting"].exists)
+        app.terminate()
+        relaunch()
+        app.buttons["sidebar-meetings"].click()
+        app.buttons["Recorded"].click()
+        app.buttons["Show Meeting filters"].click()
+        let filter = app.popUpButtons["Meeting archive filter"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 10))
+        filter.click()
+        app.menuItems["Archived Meetings"].click()
+        let row = app.tables["Meetings"].staticTexts["UI fixture meeting"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+        XCTAssertTrue(app.buttons["meeting-edit-summary"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["meeting-edit-summary"].isEnabled)
+        XCTAssertFalse(app.buttons["meeting-edit-notes"].isEnabled)
+        XCTAssertFalse(archive.exists)
+        for tab in ["Summary", "Action Items", "Open Items", "My Notes", "Transcript"] {
+            let button = app.radioButtons[tab]
+            XCTAssertTrue(button.exists)
+            button.click()
+            XCTAssertEqual(button.value as? Int, 1)
+        }
+        XCTAssertTrue(app.searchFields["meeting-transcript-search"].waitForExistence(timeout: 5))
+        app.typeKey(.leftArrow, modifierFlags: [.command, .option])
+        XCTAssertEqual(app.radioButtons["My Notes"].value as? Int, 1)
+        app.buttons["meeting-more"].click()
+        XCTAssertFalse(app.menuItems["Restore"].exists)
+        XCTAssertFalse(app.menuItems["Archive"].isEnabled)
+        XCTAssertFalse(app.menuItems["Rename…"].isEnabled)
+        XCTAssertFalse(app.menuItems["Regenerate…"].isEnabled)
+        XCTAssertTrue(app.menuItems["Remove…"].isEnabled)
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
     func testArchivedMeetingDisplaysContentWithBothEditorsDisabled() throws {
         try seedMeeting()
         app.terminate()

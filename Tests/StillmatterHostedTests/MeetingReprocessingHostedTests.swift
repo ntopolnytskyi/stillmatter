@@ -59,7 +59,7 @@ final class MeetingReprocessingHostedTests: XCTestCase {
         await fulfillment(of: [finished], timeout: 5)
         XCTAssertEqual(view.selectedID, selected)
         XCTAssertFalse(view.reprocessButton.isEnabled, "Keep disabled until the queued run is observed")
-        try service.archive(meetingID: selected!)
+        _ = try vault.writeMarkdown(Data("{\"archived\":true}".utf8), relativePath: "Meetings/fixture/archive.json", expectedVersion: nil)
         view.archiveFilter.selectItem(at: 1)
         view.filtersChanged(nil)
         model.invalidate(.rescanRequired(reason: "Archived fixture"))
@@ -71,6 +71,44 @@ final class MeetingReprocessingHostedTests: XCTestCase {
         XCTAssertEqual(executor.mutations.count, 1)
         view.refresh(isVisible: false); model.stop(); otherModel.stop()
     }
+    @MainActor
+    func testArchiveFailureExplainsErrorAndAllowsRetryWithoutMovingMeeting() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("archive-hosted-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"), appSupportRootURL: root.appendingPathComponent("support"))
+        let path = "Meetings/fixture/meeting.md"
+        let transcript = TranscriptDocument(schemaVersion: 1, captureSessionID: "fixture", meetingRelativePath: path,
+            language: .english, detectedLanguages: [], engine: "fixture", model: "fixture", generatedAt: Date(), audioSources: [], segments: [], diagnostics: [])
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let extraction = MeetingSummaryExtraction(meeting: path, transcript: "Meetings/fixture/transcript.json",
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        for (file, data) in [(path, Data("# Fixture\n".utf8)), ("Meetings/fixture/transcript.json", try encoder.encode(transcript)),
+                             ("Meetings/fixture/transcript.md", Data("# Transcript\n".utf8)),
+                             ("Meetings/fixture/summary.md", Data("# Summary\n".utf8)),
+                             ("Meetings/fixture/summary-extraction.json", try encoder.encode(extraction))] {
+            _ = try vault.writeMarkdown(data, relativePath: file, expectedVersion: nil)
+        }
+        let service = MeetingManagementService(vault: vault)
+        let model = MeetingReadModel(workspaceID: root.path, sourceFactory: { MeetingManagementReadSource(serviceProvider: { service }) })
+        let executor = ReprocessingControlExecutor()
+        let view = MeetingManagementView(readModelProvider: { model }, mutationExecutorProvider: { executor },
+            playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in })
+        defer { view.refresh(isVisible: false); model.stop() }
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.archiveButton.isEnabled }, evaluatedWith: nil)], timeout: 10)
+        XCTAssertEqual(view.archiveButton.toolTip, "Archive meeting")
+        view.archiveButton.performClick(nil)
+        XCTAssertEqual(executor.mutations.count, 1)
+        executor.completion?(.failure(MeetingManagementError.retryRejected("Synthetic write failure")))
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.retryFeedback?.message.contains("Synthetic write failure") == true }, evaluatedWith: nil)], timeout: 10)
+        XCTAssertTrue(view.archiveButton.isEnabled)
+        XCTAssertEqual(try service.list().count, 1)
+        XCTAssertFalse(try service.detail(for: path).row.isArchived)
+        view.archiveButton.performClick(nil)
+        XCTAssertEqual(executor.mutations.count, 2)
+        executor.completion?(.failure(MeetingManagementError.retryRejected("Still unavailable")))
+    }
+
 }
 
 private final class ReprocessingControlExecutor: MeetingMutationExecuting {

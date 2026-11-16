@@ -62,9 +62,6 @@ final class MeetingMutationExecutor: MeetingMutationExecuting {
                 case let .archive(meetingID):
                     try service.archive(meetingID: meetingID)
                     return .none
-                case let .restore(meetingID):
-                    try service.restore(meetingID: meetingID)
-                    return .none
                 case let .associateCalendar(meetingID, event, resetTitle, baseVersion):
                     return .detail(try service.associateCalendar(meetingID: meetingID, event: event, resetTitle: resetTitle, expectedVersion: baseVersion))
                 case let .rename(meetingID, title, baseVersion):

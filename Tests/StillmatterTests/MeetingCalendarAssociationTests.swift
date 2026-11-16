@@ -31,7 +31,8 @@ final class MeetingCalendarAssociationTests: XCTestCase {
         XCTAssertEqual(detail.row.title, "External title")
         XCTAssertTrue(detail.calendarContext?.manualTitle == true)
         XCTAssertNil(detail.calendarContext?.event)
-        try service.archive(meetingID: "external")
+        let archivePath = (detail.row.meetingRelativePath as NSString).deletingLastPathComponent + "/archive.json"
+        _ = try vault.writeMarkdown(Data("{\"archived\":true}".utf8), relativePath: archivePath, expectedVersion: nil)
         detail = try service.detail(for: "external")
         XCTAssertThrowsError(try service.associateCalendar(meetingID: "external", event: event, expectedVersion: detail.doorwayVersion!))
     }

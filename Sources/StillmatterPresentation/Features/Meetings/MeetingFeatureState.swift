@@ -105,7 +105,6 @@ public enum MeetingMutation {
     case reviewAction(id: String, accept: Bool)
     case reassignNoteTask(meetingID: String, itemID: String, owner: String)
     case archive(meetingID: String)
-    case restore(meetingID: String)
     case associateCalendar(meetingID: String, event: CalendarMeeting?, resetTitle: Bool, baseVersion: WorkspaceFileVersion)
     case rename(meetingID: String, title: String, baseVersion: WorkspaceFileVersion)
     case remove(meetingID: String)
@@ -456,11 +455,6 @@ public final class MeetingDetailModel: ObservableObject {
         perform(.archive(meetingID: detail.row.id), progress: "Archiving Meeting…", completion: completion)
     }
 
-    public func restore(completion: ((Result<Void, Error>) -> Void)? = nil) {
-        guard let detail else { completion?(.failure(MeetingManagementError.unavailable)); return }
-        perform(.restore(meetingID: detail.row.id), progress: "Restoring Meeting…", completion: completion)
-    }
-
     public func associateCalendar(event: CalendarMeeting?, resetTitle: Bool) {
         guard !hasDirtyDrafts, let detail, let version = detail.doorwayVersion else { return }
         perform(.associateCalendar(meetingID: detail.row.id, event: event, resetTitle: resetTitle, baseVersion: version),
@@ -706,7 +700,6 @@ public final class MeetingsModel: ObservableObject {
     public var isDirty: Bool { detail.hasDirtyDrafts }
 
     public func archive(completion: ((Result<Void, Error>) -> Void)? = nil) { detail.archive(completion: completion) }
-    public func restore(completion: ((Result<Void, Error>) -> Void)? = nil) { detail.restore(completion: completion) }
     public func remove(completion: ((Result<Void, Error>) -> Void)? = nil) { detail.remove(completion: completion) }
     public func rename(to title: String, completion: ((Result<MeetingBrowserDetail, Error>) -> Void)? = nil) { detail.rename(to: title, completion: completion) }
     public func reprocess(language: TranscriptLanguage, completion: ((Result<JobRecord, Error>) -> Void)? = nil) { detail.reprocess(language: language, completion: completion) }

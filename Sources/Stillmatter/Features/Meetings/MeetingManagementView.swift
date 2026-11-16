@@ -469,6 +469,7 @@ final class MeetingManagementView: NSView {
         files.orientation = .vertical
         files.alignment = .leading
         files.spacing = GraphiteFocusPresentation.Space.primitive
+        status.setAccessibilityIdentifier("meeting-management-status")
         status.maximumNumberOfLines = 0
         status.alignment = .left
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1339,14 +1340,14 @@ final class MeetingManagementView: NSView {
             } else {
                 calendarStatus.stringValue = context?.status ?? "No linked calendar event. Calendar… to set up or link."
             }
-            renameButton.isEnabled = canChangeFolder && selected.doorwayVersion != nil && !meetingsModel.isDirty
-            archiveButton.title = selected.row.isArchived ? "Restore" : "Archive"
-            let archiveName = selected.row.isArchived ? "Restore meeting" : "Archive meeting"
-            archiveButton.image = NSImage(systemSymbolName: selected.row.isArchived ? "arrow.uturn.backward" : "archivebox", accessibilityDescription: archiveName)
-            archiveButton.toolTip = archiveName
-            archiveButton.setAccessibilityLabel(archiveName)
-            archiveButton.isEnabled = selected.row.captureState != .live
-            status.stringValue = retryFeedback?.meetingID == selected.row.id ? retryFeedback!.message : ""
+            renameButton.isEnabled = !selected.row.isArchived && canChangeFolder && selected.doorwayVersion != nil && !meetingsModel.isDirty
+            archiveButton.title = "Archive"
+            archiveButton.image = NSImage(systemSymbolName: "archivebox", accessibilityDescription: "Archive meeting")
+            archiveButton.toolTip = selected.archiveUnavailableReason ?? "Archive meeting"
+            archiveButton.setAccessibilityLabel(archiveButton.toolTip)
+            archiveButton.isEnabled = selected.archiveUnavailableReason == nil && !meetingsModel.isDirty
+            archiveButton.isHidden = selected.row.isArchived
+            status.stringValue = retryFeedback?.meetingID == selected.row.id ? retryFeedback!.message : (selected.row.isArchived ? "" : selected.archiveUnavailableReason ?? "")
             presentationMetrics?.recordViewUpdate()
     }
 
@@ -2511,7 +2512,7 @@ final class MeetingManagementView: NSView {
         calendar.isEnabled = canEditCalendar
         calendar.setAccessibilityIdentifier("meeting-calendar")
         menu.addItem(calendar)
-        let archive = NSMenuItem(title: displayedDetail?.row.isArchived == true ? "Restore" : "Archive", action: #selector(toggleArchive), keyEquivalent: "")
+        let archive = NSMenuItem(title: "Archive", action: #selector(toggleArchive), keyEquivalent: "")
         archive.target = self
         archive.isEnabled = archiveButton.isEnabled
         menu.addItem(archive)
@@ -2548,23 +2549,17 @@ final class MeetingManagementView: NSView {
     }
 
     @objc private func toggleArchive() {
-        guard let detail = displayedDetail else { return }
+        guard let detail = displayedDetail, detail.archiveUnavailableReason == nil, !meetingsModel.isDirty else { return }
         archiveButton.isEnabled = false
-        let operation = detail.row.isArchived ? meetingsModel.restore : meetingsModel.archive
-        operation { [weak self] result in
+        meetingsModel.archive { [weak self] result in
             guard let self else { return }
             switch result {
             case .success:
-                self.retryFeedback = (detail.row.id, detail.row.isArchived ? "Meeting restored." : "Meeting archived.")
-                if detail.row.isArchived {
-                    self.restoredSelectionID = detail.row.id
-                    self.archiveFilter.selectItem(at: 0)
-                    self.applyFilters()
-                }
+                self.retryFeedback = (detail.row.id, "Meeting archived.")
             case let .failure(error):
-                self.retryFeedback = (detail.row.id, "Could not update Meeting archive: \(error.localizedDescription)")
+                self.retryFeedback = (detail.row.id, "Could not archive Meeting: \(error.localizedDescription)")
+                self.archiveButton.isEnabled = true
             }
-            self.archiveButton.isEnabled = true
         }
     }
 

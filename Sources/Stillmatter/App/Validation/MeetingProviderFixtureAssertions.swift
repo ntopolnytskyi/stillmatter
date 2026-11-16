@@ -260,6 +260,11 @@ extension MeetingManagementView {
             precondition(removedDoorway == nil, "Confirmed Rename must remove the old path")
             renameView.refresh(isVisible: false)
 
+            for (path, text) in [("Meetings/first/summary.md", "# Summary\n"), ("Meetings/first/transcript.md", "# Transcript\n")] {
+                if try vault.versionOfMarkdown(relativePath: path) == nil {
+                    _ = try vault.writeMarkdown(Data(text.utf8), relativePath: path, expectedVersion: nil)
+                }
+            }
             let archiveView = MeetingFixtureProviders.make(serviceProvider: {
                 MeetingManagementService(vault: vault)
             })
@@ -279,16 +284,10 @@ extension MeetingManagementView {
             await waitForMeetingFixture("archived filter") { archiveView.rows.map(\.id) == ["first"] && archiveView.displayedDetail?.row.isArchived == true }
             precondition(archiveView.rows.map(\.id) == ["first"] &&
                          archiveView.displayedDetail?.row.isArchived == true &&
-                         archiveView.archiveButton.title == "Restore",
-                         "Archived filter must expose the Meeting detail and Restore")
-            archiveView.archiveButton.performClick(nil)
-            await waitForMeetingFixture("restore mutation") { archiveView.archiveFilter.indexOfSelectedItem == 0 && archiveView.selectedID == "first" && archiveView.rows.contains { $0.id == "first" && !$0.isArchived } }
-            precondition(archiveView.archiveFilter.indexOfSelectedItem == 0 &&
-                         archiveView.selectedID == "first" &&
-                         archiveView.rows.contains(where: { $0.id == "first" && !$0.isArchived }),
-                         "Restore must return the same Meeting to the current list and selection")
+                         archiveView.archiveButton.isHidden && !archiveView.archiveButton.isEnabled,
+                         "Archived filter must retain reading without Restore")
             archiveView.refresh(isVisible: false)
-            print("TASK09_MEETING archive/restore passed"); fflush(stdout)
+            print("TASK09_MEETING archive/read-only passed"); fflush(stdout)
 
             selectionView.refresh(isVisible: false)
             precondition(selectionView.evidenceRows.arrangedSubviews.isEmpty && selectionView.audioPlayer == nil,
