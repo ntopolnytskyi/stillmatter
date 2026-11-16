@@ -87,13 +87,31 @@ final class StillmatterFlowsUITests: XCTestCase {
         expectation(for: NSPredicate { _, _ in status.label.contains("Imported Imported sample.wav") }, evaluatedWith: nil)
         waitForExpectations(timeout: 20)
         XCTAssertEqual(try Data(contentsOf: original), bytes)
-        let importedRow = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Imported sample")).firstMatch
+        let importedRow = app.tables["Meetings"].staticTexts["Imported sample"].firstMatch
         XCTAssertTrue(importedRow.waitForExistence(timeout: 10), app.debugDescription)
         importedRow.click()
-        XCTAssertTrue(app.segmentedControls["meeting-page-selector"].waitForExistence(timeout: 10), app.debugDescription)
+        let tabs = app.radioGroups["meeting-page-selector"]
+        XCTAssertTrue(tabs.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(tabs.radioButtons.count, 5)
+        for title in ["Summary", "Action Items", "Open Items", "My Notes", "Transcript"] {
+            XCTAssertTrue(tabs.radioButtons[title].exists)
+        }
+        tabs.radioButtons["Transcript"].click()
+        XCTAssertEqual(tabs.radioButtons["Transcript"].value as? Int, 1)
+        XCTAssertTrue(app.staticTexts["No Transcript available."].waitForExistence(timeout: 5))
+        app.typeKey(.leftArrow, modifierFlags: [.command, .option])
+        XCTAssertEqual(tabs.radioButtons["My Notes"].value as? Int, 1)
         app.terminate()
+        let workspace = fixtureRoot.appendingPathComponent("workspace").resolvingSymlinksInPath()
+        let namespace = SHA256.hash(data: Data(workspace.path.utf8)).map { String(format: "%02x", $0) }.joined()
+        let interrupted = fixtureRoot.appendingPathComponent("media/Imports/\(namespace)/import-corrupt-recovery")
+        try FileManager.default.createDirectory(at: interrupted, withIntermediateDirectories: true)
+        try Data("damaged preparation journal".utf8).write(to: interrupted.appendingPathComponent("import-intent.json"))
         app.launch()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Imported sample")).firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["An interrupted import needs attention"].waitForExistence(timeout: 10))
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.tables["Meetings"].staticTexts["Imported sample"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(app.tables["Meetings"].cells.count, 1)
         XCTAssertEqual(try Data(contentsOf: original), bytes)
     }
 
