@@ -145,6 +145,7 @@ final class MeetingManagementView: NSView {
     private(set) var retryFeedback: (meetingID: String, message: String)?
     private var restoredSelectionID: String?
     private var pendingSearchSourcePath: String?
+    private var pendingSearchResult: SearchResult?
     private var pendingReviewPath: String?
     private var reviewDetailPath: String?
     private var reviewNavigationID: UUID?
@@ -226,6 +227,19 @@ final class MeetingManagementView: NSView {
 
     func setOnOpenSelection(_ handler: @escaping () -> Void) {
         onOpenSelection = handler
+    }
+
+    func focusSearchResult(_ result: SearchResult) {
+        pendingSearchResult = result
+        queryField.stringValue = ""
+        projectFilter.selectItem(at: 0)
+        processingFilter.selectItem(at: 0)
+        startDateEnabled.state = .off
+        endDateEnabled.state = .off
+        meetingsModel.setQueueFilter(.recorded)
+        archiveFilter.selectItem(at: result.isArchived ? 1 : 0)
+        applyFilters()
+        focusSearchSource(result.sourcePath)
     }
 
     func focusSearchSource(_ sourcePath: String) {
@@ -936,12 +950,12 @@ final class MeetingManagementView: NSView {
             pendingSearchSourcePath = nil
             restoredSelectionID = row.id
         }
-        if let id = restoredSelectionID, snapshot?.visibleRows.contains(where: { $0.id == id && !$0.isArchived }) == true {
+        if let id = restoredSelectionID, snapshot?.visibleRows.contains(where: { $0.id == id }) == true {
             restoredSelectionID = nil
             let shouldOpenSelection = restoredSearchSelectionNeedsOpen
             restoredSearchSelectionNeedsOpen = false
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.featureIsVisible, self.archiveFilter.indexOfSelectedItem == 0,
+                guard let self, self.featureIsVisible,
                       let index = self.rows.firstIndex(where: { $0.id == id }) else { return }
                 self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
                 self.show(row: index)
@@ -1348,6 +1362,26 @@ final class MeetingManagementView: NSView {
             archiveButton.isEnabled = selected.archiveUnavailableReason == nil && !meetingsModel.isDirty
             archiveButton.isHidden = selected.row.isArchived
             status.stringValue = retryFeedback?.meetingID == selected.row.id ? retryFeedback!.message : (selected.row.isArchived ? "" : selected.archiveUnavailableReason ?? "")
+            if let result = pendingSearchResult,
+               (result.sourcePath as NSString).deletingLastPathComponent == (selected.row.meetingRelativePath as NSString).deletingLastPathComponent {
+                pendingSearchResult = nil
+                let filename = (result.sourcePath as NSString).lastPathComponent
+                switch filename {
+                case "my-notes.md", "notes.md": selectPage(.notes)
+                case "action-items.md": selectPage(.actionItems)
+                case "open-items.md": selectPage(.openItems)
+                case "transcript.json", "transcript.vtt":
+                    selectPage(.transcript)
+                    if let seconds = result.transcriptStartSeconds,
+                       let segment = selected.transcript.first(where: { $0.startSeconds <= seconds && $0.endSeconds > seconds }) {
+                        timelineNavigation.show(seconds: seconds, segmentID: segment.id, kind: .transcript)
+                        if let seek = segment.seekSeconds, meetingsModel.detail.playbackState.isAvailable {
+                            meetingsModel.detail.seekPlayback(to: seek)
+                        }
+                    }
+                default: selectPage(.summary)
+                }
+            }
             presentationMetrics?.recordViewUpdate()
     }
 

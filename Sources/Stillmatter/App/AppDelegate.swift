@@ -94,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     var jobStore: JobStore? { composition.jobStore }
     lazy var indexRuntime = SearchIndexRuntime(databaseURL: Self.searchDatabaseURL,
+        semanticSearch: E5LocalSemanticSearch(componentURL: Self.applicationSupportURL.appendingPathComponent("Components/semantic-search")),
         onChange: { [weak self] index, generation in
             guard let self, !self.isShuttingDown else { return }
             self.meetingReadModel?.updateSearchIndex(index)

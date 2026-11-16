@@ -8,6 +8,7 @@ import StillmatterCore
 final class SearchIndexFileMonitor {
     private let rootURL: URL
     private let index: SearchIndex
+    private let onChange: () -> Void
     private let queue = DispatchQueue(label: "works.stillmatter.search-index-events", qos: .utility)
     private var stream: FSEventStreamRef?
     // Accessed only on queue, including the FSEvents callback.
@@ -15,9 +16,10 @@ final class SearchIndexFileMonitor {
     private var needsScan = false
     private var pendingFlush: DispatchWorkItem?
 
-    init(rootURL: URL, index: SearchIndex) {
+    init(rootURL: URL, index: SearchIndex, onChange: @escaping () -> Void = {}) {
         self.rootURL = rootURL.standardizedFileURL.resolvingSymlinksInPath()
         self.index = index
+        self.onChange = onChange
     }
 
     func start() {
@@ -70,7 +72,17 @@ final class SearchIndexFileMonitor {
     }
 
     private func handle(path: String, flags: FSEventStreamEventFlags) {
-        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        // Foundation may leave /var unresolved when the deleted leaf no longer
+        // exists. Resolve an existing ancestor, then reattach the removed suffix.
+        var ancestor = URL(fileURLWithPath: path).standardizedFileURL
+        var suffix: [String] = []
+        while !FileManager.default.fileExists(atPath: ancestor.path), ancestor.path != "/" {
+            suffix.append(ancestor.lastPathComponent)
+            ancestor.deleteLastPathComponent()
+        }
+        var resolved = ancestor.resolvingSymlinksInPath()
+        for component in suffix.reversed() { resolved.appendPathComponent(component) }
+        let normalizedPath = resolved.path
         let rootPath = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
         guard normalizedPath.hasPrefix(rootPath) else { return }
         let relativePath = String(normalizedPath.dropFirst(rootPath.count))
@@ -97,6 +109,7 @@ final class SearchIndexFileMonitor {
             else {
                 for path in paths { try index.update(relativePath: path) }
             }
+            onChange()
         } catch {
             NSLog("Could not update search index: %@", String(describing: error))
         }

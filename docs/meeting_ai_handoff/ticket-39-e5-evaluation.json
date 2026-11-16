@@ -1,0 +1,148 @@
+{
+  "abstention": "Not calibrated",
+  "longDocumentTailRankedFirst": true,
+  "model": "multilingual-e5-small FP32 ONNX",
+  "results": [
+    {
+      "expectedPassage": 0,
+      "order": [
+        0,
+        4,
+        1,
+        5,
+        6,
+        2,
+        3
+      ],
+      "query": "Who is shipping the phone app and when?",
+      "rank": 1
+    },
+    {
+      "expectedPassage": 0,
+      "order": [
+        1,
+        5,
+        0,
+        4,
+        2,
+        3,
+        6
+      ],
+      "query": "Хто випустить мобільний застосунок?",
+      "rank": 3
+    },
+    {
+      "expectedPassage": 1,
+      "order": [
+        1,
+        5,
+        0,
+        6,
+        2,
+        4,
+        3
+      ],
+      "query": "Who will check the price of the new computers?",
+      "rank": 1
+    },
+    {
+      "expectedPassage": 1,
+      "order": [
+        1,
+        5,
+        2,
+        0,
+        4,
+        3,
+        6
+      ],
+      "query": "Що вирішили щодо коштів на ноутбуки?",
+      "rank": 1
+    },
+    {
+      "expectedPassage": 2,
+      "order": [
+        2,
+        4,
+        0,
+        1,
+        5,
+        3,
+        6
+      ],
+      "query": "How long is the audio kept after archiving?",
+      "rank": 1
+    },
+    {
+      "expectedPassage": 4,
+      "order": [
+        1,
+        5,
+        4,
+        2,
+        0,
+        6,
+        3
+      ],
+      "query": "Чи передають голосові дані у пошук?",
+      "rank": 3
+    },
+    {
+      "expectedPassage": 5,
+      "order": [
+        5,
+        2,
+        6,
+        0,
+        1,
+        4,
+        3
+      ],
+      "query": "When is the rescheduled appointment?",
+      "rank": 1
+    },
+    {
+      "expectedPassage": 6,
+      "order": [
+        6,
+        5,
+        4,
+        3,
+        2,
+        0,
+        1
+      ],
+      "query": "cafe resume Jose",
+      "rank": 1
+    },
+    {
+      "expectedPassage": null,
+      "order": [
+        5,
+        1,
+        2,
+        0,
+        6,
+        3,
+        4
+      ],
+      "query": "What was the agreed ocean freight contract price?",
+      "rank": null
+    }
+  ],
+  "kind": "actual-local-synthetic-evaluation-not-human-quality",
+  "hashes": {
+    "model.onnx": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665",
+    "tokenizer.json": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
+  },
+  "runtime": {
+    "numpy": "2.2.6",
+    "onnxruntime": "1.23.2",
+    "tokenizers": "0.21.4"
+  },
+  "environment": "macOS-15.8.3-x86_64-i386-64bit-Mach-O",
+  "answerableQueries": 8,
+  "recallAt1": 0.75,
+  "recallAt3": 1.0,
+  "meanReciprocalRank": 0.8333333333333334
+}

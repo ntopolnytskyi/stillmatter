@@ -133,6 +133,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     )
     private let controls = GraphiteFocusControls()
     lazy var searchField = controls.searchField(identifier: "global-search")
+    lazy var searchArchiveButton = controls.button("Archived", identifier: "global-search-archived", target: self, action: #selector(searchArchiveChanged(_:)))
     lazy var searchKindPopup = controls.popup(identifier: "global-search-type")
     let toolbarAreaLabel = NSTextField(labelWithString: "Today")
     lazy var narrowBackButton = controls.button("Back", identifier: "narrow-back")
@@ -181,9 +182,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     var isSearchPresented = false
     private var pendingSearch: Task<Void, Never>?
     private var searchRevision = 0
-    var searchRunner: (SearchIndex, String, SearchFilter) throws -> [SearchResult] = {
-        try $0.search($1, filter: $2, limit: 100)
-    }
+    var searchRunner: ((SearchIndex, String, SearchFilter) throws -> [SearchResult])?
     private var lastSearchRequest: String?
     private var requestedWindowWidth: CGFloat?
     private var isApplyingAdaptiveLayout = false
@@ -319,6 +318,9 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         narrowBackButton.isHidden = true
         statusBarContent.addArrangedSubview(searchField)
         statusBarContent.addArrangedSubview(searchKindPopup)
+        searchArchiveButton.setButtonType(.switch)
+        searchArchiveButton.setAccessibilityHelp("Include retained archived Meetings in search. Off by default.")
+        statusBarContent.addArrangedSubview(searchArchiveButton)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusBarContent.addArrangedSubview(spacer)
@@ -755,6 +757,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             searchRevision += 1
             updateSearchPresentation()
         case .workspace:
+            searchArchiveButton.state = .off
             todayLoader.reset()
             todoLoader.reset()
             lastSearchRequest = nil
@@ -865,7 +868,8 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         let selectedKind = currentSearchKind()
         let typeName = selectedKind?.displayName ?? "All types"
         let index = searchIndexProvider()
-        let request = "\(area.rawValue)|\(typeName)|\(query)|\(index.map { ObjectIdentifier($0).hashValue } ?? 0)"
+        let includeArchived = searchArchiveButton.state == .on
+        let request = "\(includeArchived)|\(area.rawValue)|\(typeName)|\(query)|\(index.map { ObjectIdentifier($0).hashValue } ?? 0)"
         guard request != lastSearchRequest else { return }
         lastSearchRequest = request
         pendingSearch?.cancel()
@@ -890,13 +894,19 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         pendingSearch = Task.detached(priority: .userInitiated) { [weak self] in
             do { try await Task.sleep(for: .milliseconds(200)) }
             catch { return }
-            let result = Result { try runner(index, query, SearchFilter(kinds: kinds)) }
+            let result = Result { () throws -> SearchRetrieval in
+                let filter = SearchFilter(kinds: kinds, pathPrefix: area == .meetings ? "Meetings/" : nil,
+                    includeArchived: includeArchived)
+                if let runner { return SearchRetrieval(results: try runner(index, query, filter)) }
+                return try index.retrieve(query, filter: filter)
+            }
             guard !Task.isCancelled, let controller = self else { return }
             await MainActor.run {
                 guard controller.searchRevision == revision else { return }
                 switch result {
-                case let .success(results):
-                    controller.searchResultsView.render(query: query, scope: area.rawValue, type: typeName, state: results.isEmpty ? .noResults : .results(results))
+                case let .success(retrieval):
+                    let results = retrieval.results
+                    controller.searchResultsView.render(query: query, scope: area.rawValue, type: typeName, state: results.isEmpty ? .noResults : .results(results), semanticNotice: retrieval.semanticNotice)
                 case let .failure(error):
                     controller.searchResultsView.render(query: query, scope: area.rawValue, type: typeName, state: .failed(String(describing: error)))
                 }
@@ -920,7 +930,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         switch area {
         case .today: return [.todo, .meeting]
         case .recording: return []
-        case .meetings: return [.meeting, .summary, .transcript, .metadata]
+        case .meetings: return [.meeting, .summary, .transcript, .metadata, .markdown]
         case .tasks: return [.todo]
         case .settings: return []
         }
@@ -969,7 +979,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
         stateStore.state.select(destination)
         render()
         if destination == .meetings {
-            meetingManagementView.focusSearchSource(result.sourcePath)
+            meetingManagementView.focusSearchResult(result)
         }
     }
 
@@ -1290,6 +1300,11 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     @objc private func searchChanged(_ sender: NSSearchField) {
         isSearchPresented = true
         stateStore.state.searchText = sender.stringValue
+    }
+
+    @objc private func searchArchiveChanged(_ sender: NSButton) {
+        lastSearchRequest = nil
+        updateSearchPresentation()
     }
 
     @objc func searchKindChanged(_ sender: NSPopUpButton) {

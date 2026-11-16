@@ -21,6 +21,7 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
     private let onOpenSettings: () -> Void
     private let onRetry: () -> Void
     private let onDismiss: () -> Void
+    let semanticLabel = NSTextField(wrappingLabelWithString: "")
     let contextLabel = NSTextField(labelWithString: "")
     let tableView = SearchResultsTableView()
     private let scrollView = NSScrollView()
@@ -51,7 +52,7 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
         fatalError("init(coder:) has not been implemented")
     }
 
-    func render(query: String, scope: String, type: String, state: State) {
+    func render(query: String, scope: String, type: String, state: State, semanticNotice: String? = nil) {
         let focusedResultsForSameSearch = resultsHaveKeyboardFocus
             && selectionContext?.query == query
             && selectionContext?.scope == scope
@@ -67,6 +68,8 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
         selectionContext = (query, scope, type)
         contextLabel.stringValue = "Query: \(query.isEmpty ? "None" : "“\(query)”")   •   Scope: \(scope)   •   Type: \(type)"
         contextLabel.setAccessibilityValue(contextLabel.stringValue)
+        semanticLabel.stringValue = semanticNotice ?? ""
+        semanticLabel.setAccessibilityValue(semanticLabel.stringValue)
         results = []
         stateContainer.subviews.forEach { $0.removeFromSuperview() }
 
@@ -177,6 +180,10 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         stateContainer.translatesAutoresizingMaskIntoConstraints = false
 
+        semanticLabel.font = GraphiteFocusPresentation.Typography.metadata
+        semanticLabel.translatesAutoresizingMaskIntoConstraints = false
+        semanticLabel.setAccessibilityIdentifier("search-semantic-status")
+        addSubview(semanticLabel)
         addSubview(contextLabel)
         addSubview(scrollView)
         addSubview(stateContainer)
@@ -184,13 +191,16 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
             contextLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             contextLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
             contextLabel.topAnchor.constraint(equalTo: topAnchor),
+            semanticLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            semanticLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            semanticLabel.topAnchor.constraint(equalTo: contextLabel.bottomAnchor, constant: GraphiteFocusPresentation.Space.compact),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: contextLabel.bottomAnchor, constant: GraphiteFocusPresentation.Space.panel),
+            scrollView.topAnchor.constraint(equalTo: semanticLabel.bottomAnchor, constant: GraphiteFocusPresentation.Space.panel),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             stateContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
             stateContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stateContainer.topAnchor.constraint(equalTo: contextLabel.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
+            stateContainer.topAnchor.constraint(equalTo: semanticLabel.bottomAnchor, constant: GraphiteFocusPresentation.Space.page),
             stateContainer.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor)
         ])
     }

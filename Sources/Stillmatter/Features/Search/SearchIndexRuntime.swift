@@ -7,6 +7,7 @@ import StillmatterCore
 /// UI and processing subscribers receive nil before a new workspace is installed.
 final class SearchIndexRuntime {
     private let databaseURL: URL
+    private let semanticSearch: LocalSemanticSearching?
     private let builder = SearchIndexBuilder()
     private let onChange: (SearchIndex?, Int) -> Void
     private var monitor: SearchIndexFileMonitor?
@@ -16,8 +17,9 @@ final class SearchIndexRuntime {
     private(set) var generation = 0
     private var stopped = false
 
-    init(databaseURL: URL, onChange: @escaping (SearchIndex?, Int) -> Void) {
+    init(databaseURL: URL, semanticSearch: LocalSemanticSearching? = nil, onChange: @escaping (SearchIndex?, Int) -> Void) {
         self.databaseURL = databaseURL
+        self.semanticSearch = semanticSearch
         self.onChange = onChange
     }
 
@@ -67,11 +69,11 @@ final class SearchIndexRuntime {
         configurationKey = key
         onChange(nil, generation)
         let expected = generation
-        buildTask = Task.detached(priority: .utility) { [weak self, builder, databaseURL] in
+        buildTask = Task.detached(priority: .utility) { [weak self, builder, databaseURL, semanticSearch] in
             let result: Result<SearchIndex, Error>
             do {
                 result = .success(try await builder.build(databaseURL: databaseURL,
-                    rootURL: root, excludedPatterns: patterns, recovering: recovering))
+                    rootURL: root, excludedPatterns: patterns, recovering: recovering, semanticSearch: semanticSearch))
             } catch { result = .failure(error) }
             await MainActor.run { [weak self] in
                 guard let self, !self.stopped, self.generation == expected else {
@@ -81,7 +83,12 @@ final class SearchIndexRuntime {
                 self.buildTask = nil
                 switch result {
                 case let .success(index):
-                    let monitor = SearchIndexFileMonitor(rootURL: root, index: index)
+                    let monitor = SearchIndexFileMonitor(rootURL: root, index: index) { [weak self] in
+                        DispatchQueue.main.async {
+                            guard let self, self.generation == expected, !self.stopped else { return }
+                            self.onChange(index, expected)
+                        }
+                    }
                     monitor.start()
                     self.index = index
                     self.monitor = monitor

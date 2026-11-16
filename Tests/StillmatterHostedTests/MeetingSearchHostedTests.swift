@@ -1,0 +1,103 @@
+import AppKit
+import XCTest
+import StillmatterCore
+import StillmatterPresentation
+@testable import StillmatterHostedTestHost
+
+final class MeetingSearchHostedTests: XCTestCase {
+    @MainActor
+    func testSlowOldQueryAndWorkspaceCannotReplaceNewResultsAndErrorsRemainVisible() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("search-hosted-\(UUID().uuidString)")
+        let suite = "works.stillmatter.search-hosted.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let index = try SearchIndex(databaseURL: root.appendingPathComponent("search.sqlite"), workspaceRootURL: workspace)
+        let settings = SettingsStore(userDefaults: defaults)
+        settings.settings.stillmatterRootURL = workspace
+        let state = ShellStateStore(state: ShellState(selectedTab: .meetings))
+        let installer = TranscriptionComponentInstaller(paths: .init(applicationSupportURL: root.appendingPathComponent("support")), acquirer: SearchNoAcquirer())
+        let shell = ShellViewController(stateStore: state, settingsStore: settings, tasksInbox: nil,
+            searchIndexProvider: { index }, captureServiceProvider: { nil }, teamsDetectionProvider: { nil },
+            teamsRecordingDiagnosticProvider: { "" }, onManualCapture: {}, jobRecordsProvider: { [] }, jobStatusProvider: { "Idle" },
+            transcriptionComponentInstaller: installer, onRebuildIndex: { $0(.success(())) })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentViewController = shell
+        defer { window.contentViewController = nil; window.orderOut(nil) }
+        let started = expectation(description: "Old query started")
+        let released = expectation(description: "Old query released")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        shell.searchRunner = { _, query, _ in
+            if query == "old" {
+                started.fulfill(); gate.wait(); released.fulfill()
+                return [.init(kind: .summary, sourcePath: "Meetings/old/summary.md", title: "OLD", body: "private old workspace")]
+            }
+            if query == "error" { throw NSError(domain: "Fixture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Controlled failure"]) }
+            return [.init(kind: .summary, sourcePath: "Meetings/new/summary.md", title: "NEW", body: "current workspace")]
+        }
+        shell.isSearchPresented = true
+        state.state.searchText = "old"
+        await fulfillment(of: [started], timeout: 5)
+        XCTAssertEqual(shell.searchResultsView.renderedState, "loading")
+        state.state.searchText = "new"
+        shell.receive(.workspace)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in shell.searchResultsView.resultTitlesForValidation == ["NEW"] }, evaluatedWith: shell)], timeout: 5)
+        gate.signal()
+        await fulfillment(of: [released], timeout: 5)
+        // Drain the main queue after old completion, then assert its observable result.
+        await Task.yield()
+        XCTAssertEqual(shell.searchResultsView.resultTitlesForValidation, ["NEW"])
+        state.state.searchText = "error"
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in shell.searchResultsView.renderedState == "failed" }, evaluatedWith: shell)], timeout: 5)
+        XCTAssertEqual(state.state.searchText, "error")
+    }
+
+    @MainActor
+    func testFilesystemRuntimePublishesFreshEditsRemovalAndProviderAfterRecovery() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("search-monitor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace"), file = workspace.appendingPathComponent("Meetings/call/summary.md")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "# Summary\n\nOriginal marker".write(to: file, atomically: true, encoding: .utf8)
+        var publications = 0
+        let runtime = SearchIndexRuntime(databaseURL: root.appendingPathComponent("search.sqlite"), semanticSearch: SearchLocalScores()) { index, _ in
+            if index != nil { publications += 1 }
+        }
+        defer { runtime.stop() }
+        var settings = AppSettings(); settings.stillmatterRootURL = workspace
+        runtime.configure(settings)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in runtime.index != nil }, evaluatedWith: runtime)], timeout: 10)
+        XCTAssertEqual(try runtime.index?.retrieve("paraphrase").results.count, 1)
+        try "# Summary\n\nReplacement marker".write(to: file, atomically: true, encoding: .utf8)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in
+            publications > 1 && (try? runtime.index?.search("Replacement").count) == 1
+        }, evaluatedWith: runtime)], timeout: 10)
+        XCTAssertTrue(try XCTUnwrap(runtime.index).search("Original").isEmpty)
+        try FileManager.default.removeItem(at: file)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in
+            (try? runtime.index?.search("Replacement").isEmpty) == true
+        }, evaluatedWith: runtime)], timeout: 10)
+        let recovered = expectation(description: "Recovered index")
+        runtime.recover(settings) { result in
+            if case let .failure(error) = result { XCTFail(error.localizedDescription) }
+            recovered.fulfill()
+        }
+        await fulfillment(of: [recovered], timeout: 10)
+        try "# Summary\n\nRecovered text".write(to: file, atomically: true, encoding: .utf8)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in (try? runtime.index?.search("Recovered").count) == 1 }, evaluatedWith: runtime)], timeout: 10)
+        XCTAssertEqual(try runtime.index?.retrieve("paraphrase").results.count, 1)
+    }
+}
+
+private struct SearchLocalScores: LocalSemanticSearching {
+    func similarities(query: String, passages: [String]) throws -> [Double] { passages.map { _ in 0.8 } }
+}
+
+private struct SearchNoAcquirer: TranscriptionModelAcquiring {
+    func acquireModel(_ model: TranscriptionModelChoice, in stagingURL: URL, cancellation: TranscriptionInstallCancellation, progress: @escaping (TranscriptionInstallProgress) -> Void) throws -> URL {
+        XCTFail("Search tests must never install a transcription model")
+        throw NSError(domain: "Unexpected installation", code: 1)
+    }
+}

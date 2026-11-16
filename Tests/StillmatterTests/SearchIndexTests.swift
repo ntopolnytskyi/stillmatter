@@ -3,6 +3,110 @@ import XCTest
 @testable import StillmatterCore
 
 final class SearchIndexTests: XCTestCase {
+    func testHybridRetrievalCombinesKeywordAndLocalParaphraseWithoutPrivateProfiles() throws {
+        let fixture = try SearchIndexFixture()
+        try fixture.write("# Summary\n\nMove the launch to Friday.", to: "Meetings/call/summary.md")
+        try fixture.write("# Notes\n\nrelease deadline", to: "Meetings/call/notes.md")
+        try fixture.write("# Voice\n\nprivate voice secret", to: "People/VoiceProfiles/person/profile.md")
+        let provider = FixtureSemanticSearch()
+        let index = try SearchIndex(databaseURL: fixture.databaseURL, workspaceRootURL: fixture.vaultURL,
+                                    semanticSearch: provider)
+        try index.startupScan()
+        let response = try index.retrieve("release deadline")
+        XCTAssertEqual(Set(response.results.map(\.sourcePath)), ["Meetings/call/summary.md", "Meetings/call/notes.md"])
+        XCTAssertTrue(response.semanticNotice?.contains("suggestions") == true)
+        XCTAssertFalse(provider.passages.contains(where: { $0.contains("private voice") }))
+        XCTAssertTrue(try index.search("secret").isEmpty)
+    }
+
+    func testSemanticLifecycleRefreshArchiveAndWorkspaceIsolation() throws {
+        let fixture = try SearchIndexFixture()
+        let path = "Meetings/call/summary.md"
+        try fixture.write("# Summary\n\nMove the launch to Friday.", to: path)
+        let provider = FixtureSemanticSearch()
+        let index = try SearchIndex(databaseURL: fixture.databaseURL, workspaceRootURL: fixture.vaultURL, semanticSearch: provider)
+        try index.startupScan()
+        try fixture.write("{\"archived\":true}", to: "Meetings/call/archive.json")
+        XCTAssertTrue(try index.retrieve("release").results.isEmpty)
+        XCTAssertEqual(try index.retrieve("release", filter: SearchFilter(includeArchived: true)).results.count, 1)
+        try fixture.write("{\"archived\":false}", to: "Meetings/call/archive.json")
+        try fixture.write("# Summary\n\nMonday replacement.", to: path)
+        try index.update(relativePath: path)
+        XCTAssertEqual(try index.retrieve("release").results.map(\.body), ["Monday replacement."])
+        XCTAssertFalse(provider.passages.contains(where: { $0.contains("Friday") }))
+        try fixture.remove(path)
+        try index.update(relativePath: path)
+        XCTAssertTrue(try index.retrieve("release").results.isEmpty)
+        let other = try SearchIndexFixture()
+        let switched = try SearchIndex(databaseURL: fixture.databaseURL, workspaceRootURL: other.vaultURL, semanticSearch: provider)
+        try switched.startupScan()
+        XCTAssertTrue(try switched.retrieve("release", filter: SearchFilter(includeArchived: true)).results.isEmpty)
+        let restarted = try fixture.openIndex()
+        try restarted.startupScan()
+        XCTAssertTrue(try restarted.search("Monday").isEmpty)
+    }
+
+    func testSemanticFailureKeepsKeywordResultsAndExplainsMissingCapability() throws {
+        let fixture = try SearchIndexFixture()
+        try fixture.write("# Summary\n\nFriday café review.", to: "Meetings/call/summary.md")
+        let provider = FixtureSemanticSearch()
+        let index = try SearchIndex(databaseURL: fixture.databaseURL, workspaceRootURL: fixture.vaultURL, semanticSearch: provider)
+        try index.rebuild()
+        provider.scores = [.nan]
+        let invalid = try index.retrieve("cafe")
+        XCTAssertEqual(invalid.results.count, 1)
+        XCTAssertTrue(invalid.semanticNotice?.contains("invalid scores") == true)
+        provider.scores = []
+        XCTAssertTrue(try index.retrieve("cafe").semanticNotice?.contains("invalid scores") == true)
+        provider.failure = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "Model missing"])
+        XCTAssertTrue(try index.retrieve("Friday").semanticNotice?.contains("Model missing") == true)
+        let missing = try fixture.openIndex()
+        XCTAssertEqual(try missing.retrieve("cafe", limit: 1).results.count, 1)
+        XCTAssertTrue(try missing.retrieve("cafe").semanticNotice?.contains("not installed") == true)
+        XCTAssertEqual(try missing.retrieve("").results.count, 1)
+    }
+
+    func testRemovedContentCannotReturnFromDelayedInferenceAndProposalsStayOutOfTodoSearch() throws {
+        let fixture = try SearchIndexFixture()
+        let path = "Meetings/call/action-items.md"
+        try fixture.write("# Actions\n\n- [ ] Friday proposal", to: path)
+        let provider = FixtureSemanticSearch()
+        let index = try SearchIndex(databaseURL: fixture.databaseURL, workspaceRootURL: fixture.vaultURL, semanticSearch: provider)
+        try index.rebuild()
+        XCTAssertTrue(try index.retrieve("Friday", filter: SearchFilter(kinds: [.todo])).results.isEmpty)
+        provider.duringInference = {
+            try fixture.remove(path)
+            try index.update(relativePath: path)
+        }
+        XCTAssertTrue(try index.retrieve("Friday").results.isEmpty)
+    }
+
+    func testSearchRejectsEscapingPathsSymlinksAndPrivateMaterialEvenWithArchiveOption() throws {
+        let fixture = try SearchIndexFixture()
+        let secret = fixture.rootURL.appendingPathComponent("secret.md")
+        try "private needle".write(to: secret, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: fixture.vaultURL.appendingPathComponent("escape.md"), withDestinationURL: secret)
+        try fixture.write("private needle", to: "People/voice-profiles/secret.md")
+        try fixture.write("private needle", to: "Meetings/call/diagnostics.md")
+        let index = try fixture.openIndex()
+        try index.rebuild()
+        try index.update(relativePath: "../secret.md")
+        try index.update(relativePath: "escape.md")
+        XCTAssertTrue(try index.retrieve("needle", filter: SearchFilter(includeArchived: true)).results.isEmpty)
+    }
+
+    func testAllCanonicalTextIncludesNotesPreambleAndOnlyCurrentTranscript() throws {
+        let fixture = try SearchIndexFixture()
+        try fixture.write("Preamble compass.\n\n# Notes\n\nLater section.", to: "Meetings/call/my-notes.md")
+        try fixture.write("{\"segments\":[{\"text\":\"Corrected speaker\",\"start\":12,\"end\":14}]}", to: "Meetings/call/transcript.json")
+        try fixture.write("WEBVTT\n\n00:00:12.000 --> 00:00:14.000\nObsolete speaker\n", to: "Meetings/call/transcript.vtt")
+        let index = try fixture.openIndex()
+        try index.startupScan()
+        XCTAssertEqual(try index.search("compass").count, 1)
+        XCTAssertTrue(try index.search("Obsolete").isEmpty)
+        XCTAssertEqual(try index.search("Corrected").first?.transcriptStartSeconds, 12)
+    }
+
     func testStartupScanIndexesKnownArtifactsAsTypedChunksAndSupportsFilters() throws {
         let fixture = try SearchIndexFixture()
         try fixture.write("# Meeting\n\nDiscuss Project Aurora.\n", to: "Meetings/2026/01/19/09-00-sync/meeting.md")
@@ -217,5 +321,19 @@ private final class SearchIndexFixture {
 
     func openIndex(excludedPatterns: [String] = []) throws -> SearchIndex {
         try SearchIndex(databaseURL: databaseURL, workspaceRootURL: vaultURL, excludedPatterns: excludedPatterns)
+    }
+}
+
+private final class FixtureSemanticSearch: LocalSemanticSearching {
+    var passages: [String] = []
+    var scores: [Double]?
+    var failure: Error?
+    var duringInference: (() throws -> Void)?
+    func similarities(query: String, passages: [String]) throws -> [Double] {
+        self.passages = passages
+        try duringInference?()
+        if let failure { throw failure }
+        if let scores { return scores }
+        return passages.map { $0.contains("Friday") ? 0.95 : 0.2 }
     }
 }

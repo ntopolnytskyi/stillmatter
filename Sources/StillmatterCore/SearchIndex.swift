@@ -36,6 +36,7 @@ public struct SearchFilter: Equatable {
 }
 
 public struct SearchResult: Equatable {
+    public var isArchived: Bool = false
     public let kind: SearchChunkKind
     public let sourcePath: String
     public let title: String
@@ -80,14 +81,16 @@ public enum SearchIndexError: Error, Equatable, CustomStringConvertible {
 public final class SearchIndex {
     private let database: SearchSQLiteDatabase
     private let workspaceRootURL: URL
+    private let semanticSearch: LocalSemanticSearching?
     private let excludedPatterns: [String]
     private let lock = NSRecursiveLock()
 
-    public init(databaseURL: URL, workspaceRootURL: URL, excludedPatterns: [String] = []) throws {
+    public init(databaseURL: URL, workspaceRootURL: URL, excludedPatterns: [String] = [], semanticSearch: LocalSemanticSearching? = nil) throws {
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         self.database = try SearchSQLiteDatabase(url: databaseURL)
         self.workspaceRootURL = workspaceRootURL.standardizedFileURL.resolvingSymlinksInPath()
         self.excludedPatterns = excludedPatterns
+        self.semanticSearch = semanticSearch
         try migrate()
     }
 
@@ -96,7 +99,8 @@ public final class SearchIndex {
     public static func recoveringRebuild(
         databaseURL: URL,
         workspaceRootURL: URL,
-        excludedPatterns: [String] = []
+        excludedPatterns: [String] = [],
+        semanticSearch: LocalSemanticSearching? = nil
     ) throws -> SearchIndex {
         for suffix in ["", "-wal", "-shm"] {
             let url = URL(fileURLWithPath: databaseURL.path + suffix)
@@ -107,7 +111,7 @@ public final class SearchIndex {
         let index = try SearchIndex(
             databaseURL: databaseURL,
             workspaceRootURL: workspaceRootURL,
-            excludedPatterns: excludedPatterns
+            excludedPatterns: excludedPatterns, semanticSearch: semanticSearch
         )
         try index.rebuild()
         return index
@@ -188,14 +192,56 @@ public final class SearchIndex {
                 transcriptEndSeconds: SearchSQLiteDatabase.optionalDouble(statement, column: 5)
             )
         }
-        let visible = try results.filter { result in
-            guard !filter.includeArchived, result.sourcePath.hasPrefix("Meetings/") else { return true }
+        let visible = try results.compactMap { result -> SearchResult? in
+            guard result.sourcePath.hasPrefix("Meetings/") else { return result }
             let marker = workspaceRootURL.appendingPathComponent(MeetingArchiveState.relativePath(for: result.sourcePath))
-            guard FileManager.default.fileExists(atPath: marker.path) else { return true }
+            guard FileManager.default.fileExists(atPath: marker.path) else { return result }
             let state = try MeetingArchiveState.decode(Data(contentsOf: marker))
-            return !state.archived
+            guard filter.includeArchived || !state.archived else { return nil }
+            var result = result
+            result.isArchived = state.archived
+            return result
         }
         return limit.map { Array(visible.prefix($0)) } ?? visible
+    }
+
+    /// Keyword matches lead; locally ranked suggestions follow. No relevance cutoff is
+    /// claimed: the selected model has no calibrated abstention threshold.
+    public func retrieve(_ query: String, filter: SearchFilter = SearchFilter(), limit: Int = 100) throws -> SearchRetrieval {
+        precondition(limit > 0)
+        let keywords = try search(query, filter: filter)
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return SearchRetrieval(results: Array(keywords.prefix(limit)))
+        }
+        guard let semanticSearch else {
+            return SearchRetrieval(results: Array(keywords.prefix(limit)),
+                semanticNotice: "Keyword results only. Local semantic search is not installed. See local search setup instructions.")
+        }
+        let candidates = try search("", filter: filter).filter { result in
+            // Embed only canonical Meeting text, never recording metadata or arbitrary
+            // workspace files. Existing global destinations remain keyword searchable.
+            result.sourcePath.hasPrefix("Meetings/") && result.kind != .metadata && result.kind != .todo
+        }
+        guard !candidates.isEmpty else { return SearchRetrieval(results: Array(keywords.prefix(limit))) }
+        do {
+            let scores = try semanticSearch.similarities(query: query, passages: candidates.map { $0.title + "\n" + $0.body })
+            guard scores.count == candidates.count, scores.allSatisfy({ $0.isFinite && (-1.001...1.001).contains($0) }) else {
+                throw NSError(domain: "Stillmatter.Search", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Local embedding model returned invalid scores."])
+            }
+            let ranked = candidates.indices.sorted { scores[$0] == scores[$1] ? $0 < $1 : scores[$0] > scores[$1] }
+            var combined = keywords
+            for index in ranked.prefix(20) where !combined.contains(candidates[index]) { combined.append(candidates[index]) }
+            // A watcher or mutation may have refreshed canonical content while the
+            // model was working. Never publish a removed/replaced chunk from that snapshot.
+            let current = try search("", filter: filter)
+            combined = combined.filter { current.contains($0) }
+            return SearchRetrieval(results: Array(combined.prefix(limit)),
+                semanticNotice: "Keyword matches first, then local semantic suggestions. Suggestions may be unrelated; verify their source.")
+        } catch {
+            return SearchRetrieval(results: Array(keywords.prefix(limit)),
+                semanticNotice: "Keyword results only. Local semantic search unavailable: \(error.localizedDescription)")
+        }
     }
 
     private func migrate() throws {
@@ -218,6 +264,7 @@ public final class SearchIndex {
         var files: [(url: URL, relativePath: String)] = []
         for case let enumeratedURL as URL in enumerator {
             let url = enumeratedURL.resolvingSymlinksInPath()
+            guard url.path.hasPrefix(workspaceRootURL.path + "/") else { continue }
             let relativePath = String(url.path.dropFirst(workspaceRootURL.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
             if values.isDirectory == true && isExcluded(relativePath: relativePath, isDirectory: true, applyConfiguredPatterns: false) {
@@ -230,7 +277,15 @@ public final class SearchIndex {
     }
 
     private func isIndexable(relativePath: String) -> Bool {
+        let resolved = workspaceRootURL.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.path.hasPrefix(workspaceRootURL.path + "/") else { return false }
         let path = relativePath.lowercased()
+        if path.hasSuffix("/transcript.vtt"),
+           FileManager.default.fileExists(atPath: resolved.deletingLastPathComponent().appendingPathComponent("transcript.json").path) { return false }
+        if path.hasPrefix("meetings/") {
+            let allowed = ["meeting.md", "summary.md", "notes.md", "my-notes.md", "action-items.md", "decisions.md", "open-items.md", "transcript.json", "transcript.vtt", "recording.localref.json"]
+            guard allowed.contains(resolved.lastPathComponent.lowercased()) else { return false }
+        }
         let isLightweightMetadata = path.hasSuffix("/recording.localref.json") || path == "recording.localref.json"
         guard !isExcluded(relativePath: relativePath, isDirectory: false, applyConfiguredPatterns: !isLightweightMetadata) else { return false }
         if path.hasSuffix(".md") { return true }
@@ -243,7 +298,7 @@ public final class SearchIndex {
         let normalized = Self.normalize(relativePath)
         let lowercased = normalized.lowercased()
         let components = lowercased.split(separator: "/").map(String.init)
-        let noisyDirectories: Set<String> = [".git", ".obsidian", "node_modules", "dist", "build", ".build", ".cache", ".tmp", "snapshots", "logs"]
+        let noisyDirectories: Set<String> = ["voiceprofiles", "voice-profiles", "voice_profiles", "voices",".git", ".obsidian", "node_modules", "dist", "build", ".build", ".cache", ".tmp", "snapshots", "logs"]
         if components.contains(where: noisyDirectories.contains) { return true }
         if !isDirectory {
             let filename = components.last ?? ""
@@ -284,7 +339,7 @@ public final class SearchIndex {
         }
         if relativePath.lowercased().hasSuffix(".md") {
             let lines = contents.components(separatedBy: .newlines)
-            let todoBodies = lines.compactMap(todoBody)
+            let todoBodies = relativePath.hasPrefix("Meetings/") ? [] : lines.compactMap(todoBody)
             if kind == .todo && !todoBodies.isEmpty {
                 return todoBodies.map { SearchChunk(kind: .todo, title: $0, body: $0) }
             }
@@ -320,12 +375,14 @@ public final class SearchIndex {
             bodyLines = []
         }
 
-        for line in lines {
+        let contentStart = lines.first?.trimmingCharacters(in: .whitespaces) == "---"
+            ? (lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }).map { $0 + 1 } ?? 0) : 0
+        for line in lines.dropFirst(contentStart) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("#"), let firstText = trimmed.firstIndex(where: { $0 != "#" && !$0.isWhitespace }) {
                 appendSection()
                 title = String(trimmed[firstText...]).trimmingCharacters(in: .whitespaces)
-            } else if title != nil {
+            } else {
                 bodyLines.append(line)
             }
         }
