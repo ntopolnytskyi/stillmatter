@@ -9,6 +9,7 @@ final class MeetingImportControls: NSStackView {
     let importButton: NSButton
     let cancelButton: NSButton
     let status = GraphiteFocusStatusLabel()
+    let progress = GraphiteFocusProgressStatusView()
     private let serviceProvider: () -> MeetingImportService?
     private let onImported: () -> Void
     private var cancellation: JobExecutionCancellation?
@@ -28,6 +29,8 @@ final class MeetingImportControls: NSStackView {
         actions.spacing = GraphiteFocusPresentation.Space.compact
         addArrangedSubview(actions)
         addArrangedSubview(status)
+        addArrangedSubview(progress)
+        progress.isHidden = true
         status.setAccessibilityIdentifier("meetings-import-status")
         cancelButton.isHidden = true
         importButton.target = self; importButton.action = #selector(chooseFile)
@@ -39,7 +42,7 @@ final class MeetingImportControls: NSStackView {
     @objc func chooseFile() {
         guard cancellation == nil else { return }
         guard let service = serviceProvider() else {
-            status.stringValue = "Import unavailable. Select a writable workspace and recording-media folder in Settings."
+            show("Import unavailable. Select a writable workspace and recording-media folder in Settings.", meaning: .attention)
             return
         }
         let picker = NSOpenPanel()
@@ -67,35 +70,45 @@ final class MeetingImportControls: NSStackView {
         importButton.isEnabled = false
         cancelButton.isHidden = false
         cancelButton.isEnabled = true
-        status.stringValue = "Preparing \(url.lastPathComponent)…"
+        show("Preparing \(url.lastPathComponent)…")
+        progress.configure(title: "Preparing import", value: nil, valueDescription: url.lastPathComponent, colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
+        progress.isHidden = false
+        progress.progressIndicator.startAnimation(nil)
         let access = url.startAccessingSecurityScopedResource()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Swift.Result { try service.importFile(url, cancelled: { token.isCancelled }, progress: { phase in
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     switch phase {
-                    case .copying: self.status.stringValue = "Copying \(url.lastPathComponent)…"
-                    case .extracting: self.status.stringValue = "Preparing audio from \(url.lastPathComponent)…"
+                    case .copying: self.show("Copying \(url.lastPathComponent)…")
+                    case .extracting: self.show("Preparing audio from \(url.lastPathComponent)…")
                     case .prepared, .published, .enqueued:
                         self.cancelButton.isEnabled = false
-                        self.status.stringValue = "Saving prepared Meeting…"
+                        self.show("Saving prepared Meeting…")
                     }
                 }
             }) }
             if access { url.stopAccessingSecurityScopedResource() }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                let restoreFocus = self.window?.firstResponder === self.cancelButton
                 self.cancellation = nil
                 self.importButton.isEnabled = true
                 self.cancelButton.isHidden = true
+                self.progress.progressIndicator.stopAnimation(nil)
+                self.progress.isHidden = true
                 switch result {
-                case .success: self.status.stringValue = "Imported \(url.lastPathComponent). Select its Meeting to follow processing."
-                case let .failure(error): self.status.stringValue = error.localizedDescription
+                case .success: self.show("Imported \(url.lastPathComponent). Select its Meeting to follow processing.", meaning: .success)
+                case let .failure(error): self.show(error.localizedDescription, meaning: .destructive)
                 }
                 self.onImported()
-                self.window?.makeFirstResponder(self.importButton)
+                if restoreFocus { self.window?.makeFirstResponder(self.importButton) }
             }
         }
+    }
+
+    private func show(_ text: String, meaning: GraphiteFocusStatusMeaning = .informational) {
+        status.setStatus(text, meaning: meaning, colors: GraphiteFocusPresentation.Colors(environment: .system(window: window)))
     }
 
     @objc func cancelImport() { _ = cancellation?.cancelAndWait() }

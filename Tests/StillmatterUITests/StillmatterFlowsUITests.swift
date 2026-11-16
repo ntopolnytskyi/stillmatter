@@ -61,7 +61,7 @@ final class StillmatterFlowsUITests: XCTestCase {
         let button = app.buttons["meetings-import"]
         XCTAssertTrue(button.waitForExistence(timeout: 10))
         button.click()
-        XCTAssertTrue(app.dialogs["Import audio or video"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.windows["open-panel"].waitForExistence(timeout: 5))
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(button.waitForExistence(timeout: 5))
         let corrupt = fixtureRoot.appendingPathComponent("Broken.wav")
@@ -69,11 +69,11 @@ final class StillmatterFlowsUITests: XCTestCase {
         func choose(_ url: URL) {
             button.click()
             app.typeKey("g", modifierFlags: [.command, .shift])
-            let location = app.dialogs.textFields.firstMatch
+            let location = app.sheets.textFields.firstMatch
             XCTAssertTrue(location.waitForExistence(timeout: 5), app.debugDescription)
             location.typeText(url.path)
             app.typeKey(.return, modifierFlags: [])
-            let confirm = app.dialogs.buttons["Import"].firstMatch
+            let confirm = app.windows["open-panel"].buttons["Import"].firstMatch
             XCTAssertTrue(confirm.waitForExistence(timeout: 5), app.debugDescription)
             confirm.click()
         }

@@ -23,15 +23,17 @@ public final class MeetingImportService {
     private let vault: WorkspaceVault
     private let directory: URL
     private let jobs: JobStore
+    private let onQueued: () -> Void
     private let files = FileManager.default
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    public init(vault: WorkspaceVault, mediaRootURL: URL, jobStore: JobStore) {
+    public init(vault: WorkspaceVault, mediaRootURL: URL, jobStore: JobStore, onQueued: @escaping () -> Void = {}) {
         self.vault = vault
-        directory = mediaRootURL.appendingPathComponent("Imports", isDirectory: true)
+        directory = mediaRootURL.standardizedFileURL.resolvingSymlinksInPath().appendingPathComponent("Imports", isDirectory: true)
             .appendingPathComponent(SHA256Hex.digest(Data(vault.rootURL.resolvingSymlinksInPath().path.utf8)), isDirectory: true)
         jobs = jobStore
+        self.onQueued = onQueued
         encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
     }
@@ -52,24 +54,22 @@ public final class MeetingImportService {
         let id = "import-" + UUID().uuidString.lowercased()
         let folder = directory.appendingPathComponent(id, isDirectory: true)
         Self.activeLock.lock()
-        Self.activeFolders.insert(folder.path)
+        Self.activeFolders.insert(folder.lastPathComponent)
         Self.activeLock.unlock()
         defer {
             Self.activeLock.lock()
-            Self.activeFolders.remove(folder.path)
+            Self.activeFolders.remove(folder.lastPathComponent)
             Self.activeLock.unlock()
         }
         try files.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let intentURL = folder.appendingPathComponent("import-intent.json")
         do {
             try checkCancellation(cancelled)
-            try progress(.copying)
             let copy = folder.appendingPathComponent("source." + source.pathExtension.lowercased())
-            try files.copyItem(at: source, to: copy)
+            try self.copy(source, to: copy, cancelled: cancelled, progress: progress)
             try checkCancellation(cancelled)
-            try progress(.extracting)
             let audio = folder.appendingPathComponent("audio.m4a")
-            try extract(copy, to: audio, cancelled: cancelled)
+            try extract(copy, to: audio, cancelled: cancelled, progress: progress)
             let file = try AVAudioFile(forReading: audio)
             let duration = Double(file.length) / file.processingFormat.sampleRate
             guard duration.isFinite, duration > 0 else { throw failure("This file has no usable audio. Choose another file.") }
@@ -99,6 +99,7 @@ public final class MeetingImportService {
                 .components(separatedBy: .newlines).joined(separator: " ")
             let intent = Intent(owner: vault.rootURL.resolvingSymlinksInPath().path, bundle: bundle,
                 title: title, occurrence: occurrence, dateSource: useCreation ? "file_creation" : "file_modification", language: language)
+            try checkCancellation(cancelled)
             try encoder.encode(intent).write(to: intentURL, options: .atomic)
             // Recovery owns the operation from here, including a failed publication/enqueue.
             try progress(.prepared)
@@ -118,7 +119,7 @@ public final class MeetingImportService {
         var errors: [String] = []
         for folder in try files.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) {
             Self.activeLock.lock()
-            let active = Self.activeFolders.contains(folder.path)
+            let active = Self.activeFolders.contains(folder.lastPathComponent)
             Self.activeLock.unlock()
             if active { continue }
             let url = folder.appendingPathComponent("import-intent.json")
@@ -170,11 +171,29 @@ public final class MeetingImportService {
             title: intent.title, bundle: intent.bundle, selection: nil, language: intent.language))
         let job = try CaptureProcessingHandoff.enqueueOnce(manifest: manifest, sessionID: intent.bundle.captureSessionID,
             meetingRelativePath: path, workspaceRootURL: vault.rootURL, jobStore: jobs)
+        onQueued()
         try progress(.enqueued)
         return Result(bundle: intent.bundle, job: job)
     }
 
-    private func extract(_ source: URL, to destination: URL, cancelled: () -> Bool) throws {
+    private func copy(_ source: URL, to destination: URL, cancelled: () -> Bool,
+                      progress: (Phase) throws -> Void) throws {
+        let input = try FileHandle(forReadingFrom: source)
+        defer { try? input.close() }
+        guard files.createFile(atPath: destination.path, contents: nil) else {
+            throw failure("Cannot create the private import copy. Check recording-media folder access and free disk space.")
+        }
+        let output = try FileHandle(forWritingTo: destination)
+        defer { try? output.close() }
+        while let block = try input.read(upToCount: 1_048_576), !block.isEmpty {
+            try checkCancellation(cancelled)
+            try output.write(contentsOf: block)
+            try progress(.copying)
+        }
+        try output.synchronize()
+    }
+
+    private func extract(_ source: URL, to destination: URL, cancelled: () -> Bool, progress: (Phase) throws -> Void) throws {
         let asset = AVURLAsset(url: source)
         guard !asset.tracks(withMediaType: .audio).isEmpty,
               let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
@@ -184,11 +203,17 @@ public final class MeetingImportService {
         export.outputFileType = .m4a
         let done = DispatchSemaphore(value: 0)
         export.exportAsynchronously { done.signal() }
+        do { try progress(.extracting) }
+        catch {
+            export.cancelExport()
+            _ = done.wait(timeout: .now() + 10)
+            throw error
+        }
         let deadline = Date().addingTimeInterval(3600)
         while done.wait(timeout: .now() + 0.1) == .timedOut {
             if cancelled() || Date() >= deadline {
                 export.cancelExport()
-                done.wait()
+                _ = done.wait(timeout: .now() + 10)
                 throw failure("Import cancelled or timed out. The original file is unchanged; you can retry.")
             }
         }

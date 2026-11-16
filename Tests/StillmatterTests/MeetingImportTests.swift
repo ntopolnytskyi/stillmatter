@@ -23,11 +23,11 @@ final class MeetingImportTests: XCTestCase {
         XCTAssertEqual(result.bundle.mic.role, "imported-audio")
     }
 
-    static func audio(_ url: URL) throws {
+    static func audio(_ url: URL, frequency: Double = 0.17) throws {
         let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000)!
         buffer.frameLength = 16_000
-        for i in 0..<16_000 { buffer.floatChannelData![0][i] = Float(sin(Double(i) * 0.17)) * 0.1 }
+        for i in 0..<16_000 { buffer.floatChannelData![0][i] = Float(sin(Double(i) * frequency)) * 0.1 }
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         try file.write(from: buffer)
     }
@@ -39,11 +39,13 @@ final class MeetingImportTests: XCTestCase {
             XCTAssertThrowsError(try fixture.service.importFile(fixture.source, progress: {
                 if $0 == phase { throw CocoaError(.userCancelled) }
             }))
-            let reopened = MeetingImportService(vault: fixture.vault, mediaRootURL: fixture.media, jobStore: fixture.jobs)
+            let reopenedVault = WorkspaceVault(workspaceRootURL: fixture.vault.rootURL, appSupportRootURL: fixture.root.appendingPathComponent("support"))
+            let reopenedJobs = try JobStore(databaseURL: fixture.root.appendingPathComponent("jobs.sqlite"))
+            let reopened = MeetingImportService(vault: reopenedVault, mediaRootURL: fixture.media, jobStore: reopenedJobs)
             XCTAssertEqual(try reopened.recover(), [])
             XCTAssertEqual(try reopened.recover(), [])
             let prepared = [.prepared, .published, .enqueued].contains(phase)
-            XCTAssertEqual(try fixture.jobs.jobs().count, prepared ? 1 : 0)
+            XCTAssertEqual(try reopenedJobs.jobs().count, prepared ? 1 : 0)
             let rows = try MeetingManagementService(vault: fixture.vault, jobStore: fixture.jobs).browserProjection()
             XCTAssertEqual(rows.count, prepared ? 1 : 0)
             XCTAssertEqual(try Data(contentsOf: fixture.source), bytes)
@@ -167,7 +169,7 @@ final class MeetingImportTests: XCTestCase {
         XCTAssertNotEqual(imported.bundle.mic.preferredAudioFilePath, original.bundle.mic.preferredAudioFilePath)
         XCTAssertNotEqual(imported.job.id, original.job.id)
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: imported.bundle.mic.recoveryFilePath)), bytes)
-        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: original.bundle.mic.recoveryFilePath)), Data(contentsOf: fixture.source))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: original.bundle.mic.recoveryFilePath)), try Data(contentsOf: fixture.source))
     }
 
     func testOneDamagedPreparedImportDoesNotPreventOtherRecovery() throws {
@@ -182,6 +184,39 @@ final class MeetingImportTests: XCTestCase {
         try Data("changed".utf8).write(to: audio)
         XCTAssertEqual(try fixture.service.recover().count, 1)
         XCTAssertEqual(try fixture.jobs.jobs().count, 1)
+    }
+
+    func testCancellationDuringExtractionPreventsPublicationAndConcurrentImportsStayIsolated() throws {
+        let fixture = try Fixture()
+        var cancel = false
+        XCTAssertThrowsError(try fixture.service.importFile(fixture.source, cancelled: { cancel }, progress: {
+            if $0 == .extracting { cancel = true }
+        }))
+        XCTAssertEqual(try fixture.jobs.jobs().count, 0)
+        let second = fixture.root.appendingPathComponent("Second.wav")
+        try Self.audio(second, frequency: 0.31)
+        let entered = DispatchSemaphore(value: 0)
+        let proceed = DispatchSemaphore(value: 0)
+        let finished = expectation(description: "First concurrent import")
+        DispatchQueue.global().async {
+            defer { finished.fulfill() }
+            do {
+                _ = try fixture.service.importFile(fixture.source, progress: { phase in
+                    if phase == .extracting {
+                        entered.signal()
+                        XCTAssertEqual(proceed.wait(timeout: .now() + 15), .success)
+                    }
+                })
+            } catch { XCTFail("First import failed: \(error)") }
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 15), .success)
+        let other = try fixture.service.importFile(second)
+        proceed.signal()
+        wait(for: [finished], timeout: 15)
+        XCTAssertEqual(try fixture.jobs.jobs().count, 2)
+        XCTAssertEqual(Set(try fixture.jobs.jobs().map(\.id)).count, 2)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: other.bundle.mic.recoveryFilePath)), try Data(contentsOf: second))
+        XCTAssertEqual(try MeetingManagementService(vault: fixture.vault, jobStore: fixture.jobs).browserProjection().count, 2)
     }
 
     private final class ImportEngine: TranscriptionEngine {

@@ -675,7 +675,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let root = settingsStore.settings.stillmatterRootURL,
               let media = settingsStore.settings.recordingMediaURL, let jobs = jobStore else { return nil }
         return MeetingImportService(vault: WorkspaceVault(workspaceRootURL: root, appSupportRootURL: Self.applicationSupportURL),
-            mediaRootURL: media, jobStore: jobs)
+            mediaRootURL: media, jobStore: jobs, onQueued: { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self, !self.isShuttingDown, self.settingsStore.pendingWorkspace == nil,
+                          self.settingsStore.settings.stillmatterRootURL == root else { return }
+                    self.transcriptionScheduler?.start()
+                }
+            })
     }
 
     private func recoverMeetingImports() {

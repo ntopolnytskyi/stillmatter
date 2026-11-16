@@ -16,19 +16,22 @@ final class MeetingImportHostedTests: XCTestCase {
         var callbacks = 0
         let controls = MeetingImportControls(controls: GraphiteFocusControls(), serviceProvider: { service }, onImported: { callbacks += 1 })
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
-        window.contentView = controls
+        let unrelatedEditor = NSTextField(string: "Keep editing")
+        window.contentView = NSStackView(views: [controls, unrelatedEditor])
         defer { window.orderOut(nil) }
         let unavailable = MeetingImportControls(controls: GraphiteFocusControls(), serviceProvider: { nil }, onImported: {})
         unavailable.chooseFile()
         XCTAssertTrue(unavailable.status.stringValue.contains("Settings"))
         let corrupt = root.appendingPathComponent("corrupt.wav")
         try Data("broken".utf8).write(to: corrupt)
+        window.makeFirstResponder(unrelatedEditor)
         controls.start(corrupt, service: service)
         XCTAssertFalse(controls.importButton.isEnabled)
         XCTAssertFalse(controls.cancelButton.isHidden)
         controls.start(corrupt, service: service) // A second request cannot replace the active operation.
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in callbacks == 1 }, evaluatedWith: nil)], timeout: 15)
         XCTAssertTrue(controls.status.stringValue.contains("audio"))
+        XCTAssertTrue(window.firstResponder === unrelatedEditor.currentEditor(), "Import failure must preserve editing focus")
         XCTAssertTrue(controls.importButton.isEnabled)
         XCTAssertTrue(controls.cancelButton.isHidden)
         let audio = root.appendingPathComponent("Audio.wav")
