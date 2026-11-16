@@ -107,6 +107,35 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertEqual(try index.search("Corrected").first?.transcriptStartSeconds, 12)
     }
 
+    func testFailedInferenceCannotReturnDeletedKeywordSnapshot() throws {
+        let fixture = try SearchIndexFixture()
+        let path = "Meetings/call/summary.md"
+        try fixture.write("# Summary\n\nFriday deleted material", to: path)
+        let provider = FixtureSemanticSearch()
+        let index = try SearchIndex(databaseURL: fixture.databaseURL, workspaceRootURL: fixture.vaultURL, semanticSearch: provider)
+        try index.rebuild()
+        provider.duringInference = { try fixture.remove(path); try index.update(relativePath: path) }
+        provider.failure = NSError(domain: "Unavailable model", code: 1)
+        XCTAssertTrue(try index.retrieve("Friday").results.isEmpty)
+    }
+
+    func testCanonicalTranscriptCreationAndRemovalReconsidersLegacyVTT() throws {
+        let fixture = try SearchIndexFixture()
+        let vtt = "Meetings/call/transcript.vtt", json = "Meetings/call/transcript.json"
+        try fixture.write("WEBVTT\n\n00:00:12.000 --> 00:00:14.000\nObsolete text\n", to: vtt)
+        let index = try fixture.openIndex()
+        try index.rebuild()
+        XCTAssertEqual(try index.search("Obsolete").count, 1)
+        try fixture.write("{\"segments\":[{\"text\":\"Corrected text\",\"start\":12,\"end\":14}]}", to: json)
+        try index.update(relativePath: json)
+        XCTAssertTrue(try index.search("Obsolete").isEmpty)
+        XCTAssertEqual(try index.search("Corrected").count, 1)
+        try fixture.remove(json)
+        try index.update(relativePath: json)
+        XCTAssertTrue(try index.search("Corrected").isEmpty)
+        XCTAssertEqual(try index.search("Obsolete").count, 1, "Legacy VTT is authoritative only when JSON is absent")
+    }
+
     func testStartupScanIndexesKnownArtifactsAsTypedChunksAndSupportsFilters() throws {
         let fixture = try SearchIndexFixture()
         try fixture.write("# Meeting\n\nDiscuss Project Aurora.\n", to: "Meetings/2026/01/19/09-00-sync/meeting.md")

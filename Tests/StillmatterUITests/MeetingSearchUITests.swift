@@ -18,6 +18,11 @@ extension StillmatterFlowsUITests {
         let archived = app.checkBoxes["global-search-archived"]
         XCTAssertTrue(archived.exists)
         XCTAssertEqual(archived.value as? Int, 0)
+        app.menuBars.menuBarItems["Navigate"].click()
+        app.menuItems["Include Archived in Search"].click()
+        XCTAssertEqual(archived.value as? Int, 1)
+        archived.click()
+        XCTAssertTrue(app.staticTexts["No results"].waitForExistence(timeout: 10))
         archived.click()
         let results = app.tables["Search results"]
         XCTAssertTrue(results.tableRows.firstMatch.waitForExistence(timeout: 15))

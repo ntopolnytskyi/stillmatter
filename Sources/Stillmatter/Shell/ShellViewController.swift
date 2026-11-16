@@ -5,7 +5,7 @@ import StillmatterCore
 import StillmatterPresentation
 #endif
 
-final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
+final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolbarDelegate, NSSearchFieldDelegate, NSMenuItemValidation {
     // Module-internal native controls/state support the owner-approved validation extensions.
     let stateStore: ShellStateStore
     let settingsStore: SettingsStore
@@ -1300,6 +1300,19 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     @objc private func searchChanged(_ sender: NSSearchField) {
         isSearchPresented = true
         stateStore.state.searchText = sender.stringValue
+    }
+
+    @objc func toggleArchivedSearch(_ sender: Any?) {
+        searchArchiveButton.state = searchArchiveButton.state == .on ? .off : .on
+        searchArchiveChanged(searchArchiveButton)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(toggleArchivedSearch(_:)) {
+            menuItem.state = searchArchiveButton.state
+            return stateStore.state.selectedTab != .settings
+        }
+        return true
     }
 
     @objc private func searchArchiveChanged(_ sender: NSButton) {

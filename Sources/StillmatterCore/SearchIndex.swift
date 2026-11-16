@@ -140,14 +140,17 @@ public final class SearchIndex {
         lock.lock()
         defer { lock.unlock() }
         let normalizedPath = Self.normalize(relativePath)
+        let paths = normalizedPath.lowercased().hasSuffix("transcript.json")
+            ? [normalizedPath, (normalizedPath as NSString).deletingLastPathComponent + "/transcript.vtt"] : [normalizedPath]
         try database.transaction {
-            try database.run("DELETE FROM search_chunks WHERE source_path = ?", bindings: [.text(normalizedPath)])
-            let fileURL = workspaceRootURL.appendingPathComponent(normalizedPath).standardizedFileURL
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
-                  !isDirectory.boolValue,
-                  isIndexable(relativePath: normalizedPath) else { return }
-            try insertChunks(for: normalizedPath, fileURL: fileURL)
+            for path in paths {
+                try database.run("DELETE FROM search_chunks WHERE source_path = ?", bindings: [.text(path)])
+                let fileURL = workspaceRootURL.appendingPathComponent(path).standardizedFileURL
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
+                      !isDirectory.boolValue, isIndexable(relativePath: path) else { continue }
+                try insertChunks(for: path, fileURL: fileURL)
+            }
         }
     }
 
@@ -239,7 +242,7 @@ public final class SearchIndex {
             return SearchRetrieval(results: Array(combined.prefix(limit)),
                 semanticNotice: "Keyword matches first, then local semantic suggestions. Suggestions may be unrelated; verify their source.")
         } catch {
-            return SearchRetrieval(results: Array(keywords.prefix(limit)),
+            return SearchRetrieval(results: try search(query, filter: filter, limit: limit),
                 semanticNotice: "Keyword results only. Local semantic search unavailable: \(error.localizedDescription)")
         }
     }

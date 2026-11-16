@@ -146,6 +146,9 @@ final class MeetingManagementView: NSView {
     private var restoredSelectionID: String?
     private var pendingSearchSourcePath: String?
     private var pendingSearchResult: SearchResult?
+    private weak var searchNavigationOwner: MeetingReadModel?
+    private var searchNavigationID: UUID?
+    private var searchNavigationMessage: String?
     private var pendingReviewPath: String?
     private var reviewDetailPath: String?
     private var reviewNavigationID: UUID?
@@ -242,7 +245,19 @@ final class MeetingManagementView: NSView {
         focusSearchSource(result.sourcePath)
     }
 
+    private func clearSearchNavigation() {
+        if restoredSearchSelectionNeedsOpen { restoredSelectionID = nil }
+        pendingSearchSourcePath = nil
+        pendingSearchResult = nil
+        restoredSearchSelectionNeedsOpen = false
+        searchNavigationID = nil
+        searchNavigationOwner = nil
+    }
+
     func focusSearchSource(_ sourcePath: String) {
+        searchNavigationOwner = currentReadModel()
+        searchNavigationID = UUID()
+        searchNavigationMessage = nil
         pendingSearchSourcePath = sourcePath
         restoredSearchSelectionNeedsOpen = true
         guard featureIsVisible else { return }
@@ -328,6 +343,8 @@ final class MeetingManagementView: NSView {
         isHidden = !isVisible
         browserView.isHidden = !isVisible
         guard isVisible else {
+            clearSearchNavigation()
+            searchNavigationMessage = nil
             clearReviewNavigation()
             lastRenderedDetail = nil
             if featureIsVisible { meetingsModel.deactivate() }
@@ -942,24 +959,37 @@ final class MeetingManagementView: NSView {
                 }
             }
         }
-        if let sourcePath = pendingSearchSourcePath,
-           let row = snapshot?.visibleRows.first(where: {
-               URL(fileURLWithPath: $0.meetingRelativePath).deletingLastPathComponent().path
-                   == URL(fileURLWithPath: sourcePath).deletingLastPathComponent().path
-           }) {
-            pendingSearchSourcePath = nil
-            restoredSelectionID = row.id
+        if pendingSearchSourcePath != nil, searchNavigationOwner !== currentReadModel() {
+            clearSearchNavigation()
+        }
+        if let sourcePath = pendingSearchSourcePath, meetingsModel.loadState == .loaded,
+           snapshot?.filters == meetingsModel.filters {
+            if let row = snapshot?.visibleRows.first(where: {
+                ($0.meetingRelativePath as NSString).deletingLastPathComponent == (sourcePath as NSString).deletingLastPathComponent
+            }) {
+                pendingSearchSourcePath = nil
+                restoredSelectionID = row.id
+            } else {
+                clearSearchNavigation()
+                searchNavigationMessage = "Search source is no longer available. Search again."
+                status.stringValue = searchNavigationMessage!
+            }
         }
         if let id = restoredSelectionID, snapshot?.visibleRows.contains(where: { $0.id == id }) == true {
             restoredSelectionID = nil
             let shouldOpenSelection = restoredSearchSelectionNeedsOpen
+            let searchRequest = searchNavigationID
             restoredSearchSelectionNeedsOpen = false
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.featureIsVisible,
+                      !shouldOpenSelection || (self.searchNavigationID == searchRequest && self.searchNavigationOwner === self.currentReadModel()),
                       let index = self.rows.firstIndex(where: { $0.id == id }) else { return }
                 self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
                 self.show(row: index)
-                if shouldOpenSelection { self.onOpenSelection() }
+                if shouldOpenSelection {
+                    if let detail = self.displayedDetail, detail.row.id == id { self.renderDetail(detail) }
+                    self.onOpenSelection()
+                }
             }
         }
         isApplyingFeatureState = true
@@ -1382,6 +1412,7 @@ final class MeetingManagementView: NSView {
                 default: selectPage(.summary)
                 }
             }
+            if let searchNavigationMessage { status.stringValue = searchNavigationMessage }
             presentationMetrics?.recordViewUpdate()
     }
 

@@ -181,6 +181,7 @@ final class SearchResultsView: NSView, NSTableViewDataSource, NSTableViewDelegat
         stateContainer.translatesAutoresizingMaskIntoConstraints = false
 
         semanticLabel.font = GraphiteFocusPresentation.Typography.metadata
+        semanticLabel.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).textSecondary
         semanticLabel.translatesAutoresizingMaskIntoConstraints = false
         semanticLabel.setAccessibilityIdentifier("search-semantic-status")
         addSubview(semanticLabel)

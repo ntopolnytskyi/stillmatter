@@ -25,6 +25,15 @@ final class MeetingSearchHostedTests: XCTestCase {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentViewController = shell
         defer { window.contentViewController = nil; window.orderOut(nil) }
+        let archiveMenu = NSMenuItem(title: "Include Archived in Search", action: #selector(ShellViewController.toggleArchivedSearch(_:)), keyEquivalent: "")
+        XCTAssertTrue(shell.validateMenuItem(archiveMenu))
+        XCTAssertEqual(archiveMenu.state, .off)
+        shell.toggleArchivedSearch(nil)
+        XCTAssertTrue(shell.validateMenuItem(archiveMenu))
+        XCTAssertEqual(archiveMenu.state, .on)
+        state.state.select(.settings)
+        XCTAssertFalse(shell.validateMenuItem(archiveMenu))
+        state.state.select(.meetings)
         let started = expectation(description: "Old query started")
         let released = expectation(description: "Old query released")
         let gate = DispatchSemaphore(value: 0)
@@ -52,6 +61,40 @@ final class MeetingSearchHostedTests: XCTestCase {
         state.state.searchText = "error"
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in shell.searchResultsView.renderedState == "failed" }, evaluatedWith: shell)], timeout: 5)
         XCTAssertEqual(state.state.searchText, "error")
+    }
+
+    @MainActor
+    func testRepeatedSearchResultsOpenTheirOwningMeetingTabs() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("search-routes-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace"), support = root.appendingPathComponent("support")
+        let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: support)
+        let path = "Meetings/call/meeting.md"
+        _ = try vault.writeMarkdown(Data("---\ntitle: Search target\ncapture_session_id: call\n---\n# Search target\n".utf8), relativePath: path, expectedVersion: nil)
+        func service() -> MeetingManagementService { MeetingManagementService(vault: vault) }
+        let read = MeetingReadModel(workspaceID: workspace.path, sourceFactory: { MeetingManagementReadSource(serviceProvider: service) })
+        let view = MeetingManagementView(readModelProvider: { read }, mutationExecutorProvider: { nil },
+            playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in })
+        defer { view.refresh(isVisible: false); read.stop() }
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil }, evaluatedWith: view)], timeout: 10)
+        let cases: [(String, MeetingDetailPage)] = [("my-notes.md", .notes), ("action-items.md", .actionItems),
+            ("open-items.md", .openItems), ("summary.md", .summary), ("transcript.json", .transcript)]
+        for (filename, page) in cases {
+            view.focusSearchResult(SearchResult(kind: .markdown, sourcePath: "Meetings/call/" + filename, title: "Source", body: "Match"))
+            await fulfillment(of: [expectation(for: NSPredicate { _, _ in
+                view.displayedDetail?.row.meetingRelativePath == path && view.meetingsModel.detail.page == page
+            }, evaluatedWith: view)], timeout: 5)
+        }
+        view.focusSearchResult(SearchResult(kind: .markdown, sourcePath: "Meetings/missing/my-notes.md", title: "Missing", body: "Old hit"))
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.status.stringValue.contains("no longer available") }, evaluatedWith: view)], timeout: 5)
+        view.refresh(isVisible: false)
+        _ = try vault.writeMarkdown(Data("---\ntitle: Later meeting\ncapture_session_id: missing\n---\n# Later meeting\n".utf8), relativePath: "Meetings/missing/meeting.md", expectedVersion: nil)
+        read.invalidate(.rescanRequired(reason: "A different Meeting appears after failed navigation"))
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.meetingsModel.availableRows.count == 2 }, evaluatedWith: view)], timeout: 5)
+        XCTAssertEqual(view.displayedDetail?.row.meetingRelativePath, path)
+        XCTAssertNotEqual(view.meetingsModel.detail.page, .notes)
     }
 
     @MainActor

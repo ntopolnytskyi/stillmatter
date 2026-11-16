@@ -1020,6 +1020,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         navigateMenu.addItem(NSMenuItem.separator())
         navigateMenu.addItem(makeMenuItem(title: "Focus Search", action: #selector(focusAreaSearch(_:)), keyEquivalent: "f"))
+        navigateMenu.addItem(responderMenuItem(title: "Include Archived in Search", action: #selector(ShellViewController.toggleArchivedSearch(_:)), keyEquivalent: ""))
         navigateMenuItem.submenu = navigateMenu
         mainMenu.addItem(navigateMenuItem)
 
