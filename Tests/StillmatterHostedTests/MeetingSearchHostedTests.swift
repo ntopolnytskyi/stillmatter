@@ -101,6 +101,10 @@ final class MeetingSearchHostedTests: XCTestCase {
         view.focusSearchResult(SearchResult(kind: .transcript, sourcePath: "Meetings/call/transcript.json",
             title: "Transcript", body: "Target wording", transcriptStartSeconds: 12, transcriptEndSeconds: 14))
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.timelineNavigation.jump?.segmentID == "overlap-target" }, evaluatedWith: view)], timeout: 5)
+        view.focusSearchResult(SearchResult(kind: .transcript, sourcePath: "Meetings/call/transcript.json",
+            title: "Removed utterance", body: "Removed wording", transcriptStartSeconds: 12, transcriptEndSeconds: 14))
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.status.stringValue.contains("utterance changed") }, evaluatedWith: view)], timeout: 5)
+        XCTAssertNil(view.timelineNavigation.jump)
         view.focusSearchResult(SearchResult(kind: .markdown, sourcePath: "Meetings/missing/my-notes.md", title: "Missing", body: "Old hit"))
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.status.stringValue.contains("no longer available") }, evaluatedWith: view)], timeout: 5)
         view.refresh(isVisible: false)

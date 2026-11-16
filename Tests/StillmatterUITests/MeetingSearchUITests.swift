@@ -35,6 +35,8 @@ extension StillmatterFlowsUITests {
         waitForExpectations(timeout: 10)
         let notesTab = app.radioButtons["My Notes"]
         XCTAssertTrue(notesTab.waitForExistence(timeout: 10), app.debugDescription)
+        expectation(for: NSPredicate(format: "value == 1"), evaluatedWith: notesTab)
+        waitForExpectations(timeout: 10)
         XCTAssertEqual(notesTab.value as? Int, 1)
         XCTAssertFalse(app.buttons["meeting-overview-edit-notes"].isEnabled)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "ArchiveSearchNeedle retained notes")).firstMatch.exists)
@@ -47,6 +49,7 @@ extension StillmatterFlowsUITests {
         try seedMeeting(transcript: true)
         openFixtureMeeting()
         let summary = meetingURL.deletingLastPathComponent().appendingPathComponent("summary.md")
+        let originalSummary = try Data(contentsOf: summary)
         try "# Summary\n\nFreshSearchNeedle original.\n".write(to: summary, atomically: true, encoding: .utf8)
         app.buttons["sidebar-meetings"].click()
         app.typeKey("f", modifierFlags: .command)
@@ -64,6 +67,9 @@ extension StillmatterFlowsUITests {
         let status = app.staticTexts["search-semantic-status"]
         XCTAssertTrue((status.value as? String)?.contains("Keyword results only") == true)
         XCTAssertEqual(search.value as? String, "FreshSearchNeedle")
+        // Restore the required canonical Summary before testing an independent
+        // Transcript route; missing artifacts correctly require explicit repair.
+        try originalSummary.write(to: summary, options: .atomic)
         let textSource = meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.txt")
         let jsonSource = meetingURL.deletingLastPathComponent().appendingPathComponent("transcript.json")
         let beforeJSON = try Data(contentsOf: jsonSource)
@@ -75,6 +81,8 @@ extension StillmatterFlowsUITests {
         search.typeKey(.downArrow, modifierFlags: [])
         app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(app.radioButtons["Transcript"].waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "value == 1"), evaluatedWith: app.radioButtons["Transcript"])
+        waitForExpectations(timeout: 10)
         XCTAssertEqual(app.radioButtons["Transcript"].value as? Int, 1)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "FreshTranscriptTextNeedle")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertEqual(try String(contentsOf: textSource), text)
@@ -92,6 +100,8 @@ extension StillmatterFlowsUITests {
         app.typeKey(.return, modifierFlags: [])
         let transcriptTab = app.radioButtons["Transcript"]
         XCTAssertTrue(transcriptTab.waitForExistence(timeout: 10), app.debugDescription)
+        expectation(for: NSPredicate(format: "value == 1"), evaluatedWith: transcriptTab)
+        waitForExpectations(timeout: 10)
         XCTAssertEqual(transcriptTab.value as? Int, 1)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Synthetic searchable moment 119")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertEqual(search.value as? String, "Synthetic searchable moment 119")

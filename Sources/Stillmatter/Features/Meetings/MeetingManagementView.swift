@@ -233,6 +233,7 @@ final class MeetingManagementView: NSView {
     }
 
     func focusSearchResult(_ result: SearchResult) {
+        currentReadModel()?.invalidate(.workspaceFilesChanged(paths: [result.sourcePath]))
         pendingSearchResult = result
         queryField.stringValue = ""
         projectFilter.selectItem(at: 0)
@@ -987,7 +988,9 @@ final class MeetingManagementView: NSView {
                 self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
                 self.show(row: index)
                 if shouldOpenSelection {
-                    if let detail = self.displayedDetail, detail.row.id == id { self.renderDetail(detail) }
+                    if self.meetingsModel.selectedMeetingID == id {
+                        self.meetingsModel.detail.refreshSelectedDetail()
+                    }
                     self.onOpenSelection()
                 }
             }
@@ -1082,6 +1085,7 @@ final class MeetingManagementView: NSView {
         case .loading:
             status.stringValue = "Loading Meeting detail…"
         case let .unavailable(message), let .failed(message):
+            if searchNavigationID != nil { clearSearchNavigation() }
             if textEditPanel.isOpen { textEditPanel.showError(message + " Your text is still here.", conflict: true) }
             status.stringValue = meetingsModel.detail.isShowingStaleDetail
                 ? "\(message) Showing stale detail for this Meeting."
@@ -1144,7 +1148,7 @@ final class MeetingManagementView: NSView {
         let response = presentConfirmationAlert(alert)
         let decision: MeetingSelectionDecision = response == .alertFirstButtonReturn ? .save
             : response == .alertSecondButtonReturn ? .discard : .cancel
-        if decision == .cancel { clearReviewNavigation() }
+        if decision == .cancel { clearReviewNavigation(); clearSearchNavigation() }
         meetingsModel.resolvePendingSelection(decision) { [weak self] result in
             guard let self, case let .failure(error) = result else { return }
             self.clearReviewNavigation()
@@ -1415,6 +1419,9 @@ final class MeetingManagementView: NSView {
                         if let seek = segment.seekSeconds, meetingsModel.detail.playbackState.isAvailable {
                             meetingsModel.detail.seekPlayback(to: seek)
                         }
+                    } else if result.transcriptStartSeconds != nil {
+                        timelineNavigation.clear()
+                        searchNavigationMessage = "The searched utterance changed or is no longer retained. Search again."
                     }
                 default: selectPage(.summary)
                 }

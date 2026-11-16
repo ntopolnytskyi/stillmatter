@@ -144,7 +144,6 @@ public final class SearchIndex {
     public func update(relativePath: String) throws {
         lock.lock()
         defer { lock.unlock() }
-        if refreshErrors["rebuild"] != nil { try rebuild(); return }
         let normalizedPath = Self.normalize(relativePath)
         let directory = (normalizedPath as NSString).deletingLastPathComponent
         let paired = ["transcript.json", "transcript.txt", "meeting-artifacts.json"].contains((normalizedPath as NSString).lastPathComponent)
@@ -166,6 +165,9 @@ public final class SearchIndex {
                 }
             }
             refreshErrors.removeValue(forKey: key)
+            // Keep an old source error visible to Search without rejecting unrelated
+            // canonical publication. Repair attempts retain their own rebuild error.
+            if refreshErrors["rebuild"] != nil { try? rebuild() }
         } catch {
             refreshErrors[key] = error
             throw error
