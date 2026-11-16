@@ -64,6 +64,8 @@ extension StillmatterFlowsUITests {
         XCTAssertTrue(meetings.staticTexts["UI fixture meeting"].waitForExistence(timeout: 10))
         XCTAssertTrue(meetings.staticTexts["Target UI meeting"].waitForExistence(timeout: 10))
         meetings.staticTexts["UI fixture meeting"].click()
+        expectation(for: NSPredicate(format: "value == %@", "UI fixture meeting"), evaluatedWith: app.staticTexts["meeting-detail"])
+        waitForExpectations(timeout: 10)
         XCTAssertEqual(app.staticTexts["meeting-detail"].value as? String, "UI fixture meeting")
         app.typeKey("f", modifierFlags: .command)
         let search = app.searchFields["Search"]
@@ -76,6 +78,8 @@ extension StillmatterFlowsUITests {
         app.typeKey(.return, modifierFlags: [])
         waitForArea("Meetings")
         XCTAssertTrue(app.staticTexts["meeting-detail"].waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "value == %@", "Target UI meeting"), evaluatedWith: app.staticTexts["meeting-detail"])
+        waitForExpectations(timeout: 10)
         XCTAssertEqual(app.staticTexts["meeting-detail"].value as? String, "Target UI meeting")
         XCTAssertTrue(meetings.staticTexts["Target UI meeting"].exists)
         XCTAssertEqual(search.value as? String, "Ticket07TargetSummaryMarker", "Opening a result keeps the global query available")

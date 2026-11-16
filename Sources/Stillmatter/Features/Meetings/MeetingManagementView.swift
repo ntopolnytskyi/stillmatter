@@ -1044,6 +1044,9 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderBrowserLoadState(_ state: MeetingDetailLoadState) {
+        // A completed refresh may retain an equal snapshot and publish no snapshot
+        // change. Pending search routes still need to resume after loading.
+        if searchNavigationID != nil, case .loaded = state { scheduleSnapshotRender() }
         if reviewNavigationID != nil {
             switch state {
             case .failed, .unavailable: failReviewNavigation()

@@ -96,6 +96,12 @@ final class MeetingSearchHostedTests: XCTestCase {
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.meetingsModel.availableRows.count == 2 }, evaluatedWith: view)], timeout: 5)
         XCTAssertEqual(view.displayedDetail?.row.meetingRelativePath, path)
         XCTAssertNotEqual(view.meetingsModel.detail.page, .notes)
+        view.refresh(isVisible: false)
+        view.refresh(isVisible: true)
+        view.focusSearchResult(SearchResult(kind: .markdown, sourcePath: "Meetings/missing/my-notes.md", title: "Second Meeting", body: "Match"))
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in
+            view.displayedDetail?.row.meetingRelativePath == "Meetings/missing/meeting.md" && view.meetingsModel.detail.page == .notes
+        }, evaluatedWith: view)], timeout: 5)
         let otherVault = WorkspaceVault(workspaceRootURL: root.appendingPathComponent("other-workspace"), appSupportRootURL: root.appendingPathComponent("other-support"))
         _ = try otherVault.writeMarkdown(Data("---\ntitle: Other workspace\ncapture_session_id: call\n---\n# Other workspace\n".utf8), relativePath: path, expectedVersion: nil)
         let otherRead = MeetingReadModel(workspaceID: "other", sourceFactory: { MeetingManagementReadSource(serviceProvider: { MeetingManagementService(vault: otherVault) }) })
