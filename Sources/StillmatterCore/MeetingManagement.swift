@@ -439,7 +439,21 @@ public final class MeetingManagementService {
               let version = selected.doorwayVersion else {
             throw MeetingManagementError.retryRejected("Stop recording and finish processing before removing this Meeting.")
         }
-        try vault.trashMeeting(relativePath: selected.row.meetingRelativePath, expectedVersion: version)
+        let path = selected.row.meetingRelativePath
+        let session = Self.fields(selected.doorwayText).sessionID
+        let owner = vault.rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let removeFiles = { try self.vault.trashMeeting(relativePath: path, expectedVersion: version) }
+        if let jobs {
+            let removedJobIDs = try jobs.removeInactiveJobs(belongsToMeeting: {
+                (!self.enforceWorkspaceOwner || $0.manifest.workspaceOwner == owner) && Self.owns($0, session: session, path: path)
+            }, removingFiles: removeFiles)
+            for id in removedJobIDs { try inbox?.removeItem(id: "job:\(id)") }
+        } else {
+            try removeFiles()
+        }
+        let directory = (path as NSString).deletingLastPathComponent
+        try inbox?.removeMeetingReferences(in: directory)
+        try index?.removeDirectory(relativePath: directory)
         onMeetingChanged([selected.row.meetingRelativePath])
     }
 
@@ -741,7 +755,9 @@ public final class MeetingManagementService {
         }
         let primaryJob = presentedJobs.first ?? row.job
         if let workflow = owned.first(where: { $0.manifest.type == MeetingWorkflowJob.type }), workflow.status != .succeeded {
-            return MeetingBrowserDetail(row: row, doorwayText: "", job: primaryJob, jobs: presentedJobs)
+            let inactive = workflow.status == .failed || workflow.status == .dismissed
+            return MeetingBrowserDetail(row: row, doorwayText: inactive ? text : "", doorwayVersion: inactive ? source.version : nil,
+                                        job: primaryJob, jobs: presentedJobs)
         }
         let usesLegacyArtifacts = try legacyWriterIsActive(for: row)
         let canonical = try usesLegacyArtifacts

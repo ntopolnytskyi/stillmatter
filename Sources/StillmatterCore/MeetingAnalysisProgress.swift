@@ -39,11 +39,10 @@ struct MeetingAnalysisProgress {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         let chunks = try split(transcript, encoder: encoder)
+        var requests = 0
         if chunks.count == 1 {
-            let result = try worker.run(manifest: workflow, suppliedContext: MeetingAnalysisContext(
-                transcript: String(decoding: try encoder.encode(chunks[0]), as: UTF8.self), myNotes: notes), cancellation: cancellation)
-            try validate(result, chunks[0])
-            return result
+            return try generateValidated(workflow: workflow, transcript: chunks[0], notes: notes, encoder: encoder,
+                worker: worker, cancellation: cancellation, requests: &requests, validate: validate)
         }
         let context = MeetingAnalysisContext(transcript: String(decoding: try encoder.encode(transcript), as: UTF8.self), myNotes: notes)
         var identity = try encoder.encode(context)
@@ -52,7 +51,6 @@ struct MeetingAnalysisProgress {
         let key = SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
         let directory = root.appendingPathComponent(key, isDirectory: true)
         var results: [JobStageResult] = []
-        var requests = 0
         for (index, chunk) in chunks.enumerated() {
             guard !cancellation.isCancelled else { throw JobsError.executionCancelled }
             try worker.requireTransferApproval()
@@ -69,10 +67,8 @@ struct MeetingAnalysisProgress {
             guard requests < budget.requestsPerAttempt else {
                 throw MeetingSummaryError.invalidExtraction("Analysis checkpointed \(results.count) of \(chunks.count) parts. Request budget reached; Retry resumes remaining parts.")
             }
-            requests += 1
-            let result = try worker.run(manifest: workflow, suppliedContext: MeetingAnalysisContext(
-                transcript: String(decoding: try encoder.encode(chunk), as: UTF8.self), myNotes: notes), cancellation: cancellation)
-            try validate(result, chunk)
+            let result = try generateValidated(workflow: workflow, transcript: chunk, notes: notes, encoder: encoder,
+                worker: worker, cancellation: cancellation, requests: &requests, validate: validate)
             try cancellation.performIfActive {
                 try worker.requireTransferApproval()
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -98,10 +94,37 @@ struct MeetingAnalysisProgress {
             }
         }
         let evidence = document(transcript, segments: transcript.segments.filter { citedIDs.contains($0.id) })
-        let result = try worker.run(manifest: workflow, suppliedContext: MeetingAnalysisContext(
-            transcript: String(decoding: try encoder.encode(evidence), as: UTF8.self), myNotes: notes), cancellation: cancellation)
-        try validate(result, evidence)
-        return result
+        return try generateValidated(workflow: workflow, transcript: evidence, notes: notes, encoder: encoder,
+            worker: worker, cancellation: cancellation, requests: &requests, validate: validate)
+    }
+
+    /// One correction for citation formatting, charged to the same per-attempt request budget.
+    /// Generated prose never becomes approved evidence or bypasses the publication validator.
+    private func generateValidated(workflow: PiWorkflowManifest, transcript: TranscriptDocument, notes: String?,
+                                   encoder: JSONEncoder, worker: PiCodexWorker, cancellation: JobExecutionCancellation,
+                                   requests: inout Int,
+                                   validate: (JobStageResult, TranscriptDocument) throws -> Void) throws -> JobStageResult {
+        let context = MeetingAnalysisContext(transcript: String(decoding: try encoder.encode(transcript), as: UTF8.self), myNotes: notes)
+        requests += 1
+        let result = try worker.run(manifest: workflow, suppliedContext: context, cancellation: cancellation)
+        do {
+            try validate(result, transcript)
+            return result
+        } catch let error as MeetingSummaryError {
+            guard case .invalidSummaryCitation = error, requests < budget.requestsPerAttempt else { throw error }
+            let correction = PiWorkflowManifest(version: workflow.version, task: workflow.task + "\n\n" + """
+                Citation correction: the previous attempt failed app validation.
+                \(error.description)
+                Regenerate both complete artifacts from the original approved evidence below. Every Summary paragraph and bullet must cite at least one exact segment ID in separate brackets, for example [segment-00001]. Use only IDs present in the supplied Transcript; do not invent IDs or append citations to unsupported claims. Omit unsupported claims instead. Check all Summary paragraphs before returning.
+                """, primarySources: workflow.primarySources, relatedContext: workflow.relatedContext,
+                expectedOutputs: workflow.expectedOutputs, forbiddenMutations: workflow.forbiddenMutations,
+                timeoutSeconds: workflow.timeoutSeconds)
+            requests += 1
+            let corrected = try worker.run(manifest: correction, suppliedContext: context, cancellation: cancellation)
+            try validate(corrected, transcript)
+            return JobStageResult(artifacts: corrected.artifacts,
+                logMessages: corrected.logMessages + ["Summary citation correction passed validation."])
+        }
     }
 
     private func split(_ transcript: TranscriptDocument, encoder: JSONEncoder) throws -> [TranscriptDocument] {

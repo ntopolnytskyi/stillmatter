@@ -189,6 +189,80 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("Todos/todo.md")), "# Todos\n")
     }
 
+    func testRemoveFailedWorkflowCleansJobsInboxAndSearchWithoutRemovingOtherMeetings() throws {
+        let fixture = try Fixture()
+        let path = "Meetings/failed/meeting.md"
+        try fixture.write(path, "---\ntitle: DisposableEvidence\ncapture_session_id: failed\n---\n# DisposableEvidence\n")
+        let databaseURL = fixture.root.appendingPathComponent("Support/operational.sqlite")
+        let inbox = try TasksInbox(databaseURL: databaseURL)
+        let store = try JobStore(databaseURL: databaseURL, inbox: inbox)
+        let manifest = JobManifest(type: MeetingWorkflowJob.type, title: "Failed summary", executionClass: .heavy,
+            stages: [.init(id: MeetingSummaryJob.stageID, title: "Summary")],
+            sourceArtifacts: [.init(relativePath: path, role: "meeting-doorway")],
+            metadata: ["capture_session_id": "failed"], maxAutomaticRetries: 0).owned(by: fixture.root)
+        let scheduler = JobScheduler(store: store, executor: FailingMeetingExecutor())
+        defer { scheduler.stop() }
+        _ = try scheduler.enqueue(id: "failed-summary", manifest: manifest)
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline && (try? store.job(id: "failed-summary"))?.status != .failed {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(try store.job(id: "failed-summary")?.status, .failed)
+        let scoped = try inbox.scoped(to: fixture.root)
+        try scoped.queueProposal(id: "proposal", title: "Pending", sourceRef: "[[Meetings/failed/summary#My action items|ref]]")
+        try scoped.saveProposalDraft(id: "proposal", title: "Edited", comment: "Draft")
+        try scoped.queueProposal(id: "dismissed", title: "Rejected", sourceRef: "[[Meetings/failed/summary|ref]]")
+        try scoped.setProposalReviewState(id: "dismissed", state: .dismissed)
+        XCTAssertTrue(try scoped.isProposalDismissed(suppressionKey: "dismissed"))
+        try fixture.write("Meetings/other/meeting.md", "# Other\n")
+        let unrelated = JobManifest(type: "other", title: "Other", executionClass: .heavy,
+            stages: [.init(id: "other", title: "Other")],
+            sourceArtifacts: [.init(relativePath: "Meetings/other/meeting.md", role: "meeting-doorway")])
+        _ = try store.enqueue(id: "unrelated", manifest: unrelated)
+        let otherWorkspace = fixture.root.appendingPathComponent("OtherWorkspace")
+        _ = try store.enqueue(id: "other-workspace", manifest: manifest.owned(by: otherWorkspace))
+        let index = try SearchIndex(databaseURL: fixture.root.appendingPathComponent("Support/search.sqlite"), workspaceRootURL: fixture.root)
+        try index.rebuild()
+        XCTAssertFalse(try index.search("DisposableEvidence").isEmpty)
+        let service = MeetingManagementService(vault: fixture.vault, jobStore: store, inbox: scoped, searchIndex: index, enforceWorkspaceOwner: true)
+        XCTAssertNotNil(try service.detail(for: "failed").doorwayVersion)
+        try service.remove(meetingID: "failed")
+        XCTAssertNil(try store.job(id: "failed-summary"))
+        XCTAssertNotNil(try store.job(id: "unrelated"))
+        XCTAssertNotNil(try store.job(id: "other-workspace"))
+        XCTAssertTrue(try scoped.items().isEmpty)
+        XCTAssertNil(try scoped.proposalDraft(id: "proposal"))
+        XCTAssertNil(try scoped.proposalReviewState(id: "proposal"))
+        XCTAssertFalse(try scoped.isProposalDismissed(suppressionKey: "dismissed"))
+        XCTAssertTrue(try index.search("DisposableEvidence").isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("Meetings/failed").path))
+        var connection: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &connection), SQLITE_OK)
+        defer { sqlite3_close(connection) }
+        for table in ["jobs", "job_stages", "job_logs"] {
+            var statement: OpaquePointer?
+            let column = table == "jobs" ? "id" : "job_id"
+            XCTAssertEqual(sqlite3_prepare_v2(connection, "SELECT COUNT(*) FROM \(table) WHERE \(column) = 'failed-summary'", -1, &statement, nil), SQLITE_OK)
+            XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+            XCTAssertEqual(sqlite3_column_int(statement, 0), 0)
+            sqlite3_finalize(statement)
+        }
+    }
+
+    func testRemoveRejectsActiveProcessingAndPreservesFilesAndJobs() throws {
+        let fixture = try Fixture()
+        let path = "Meetings/active/meeting.md"
+        try fixture.write(path, "---\ncapture_session_id: active\n---\n# Active\n")
+        let store = try JobStore(databaseURL: fixture.root.appendingPathComponent("Support/jobs.sqlite"))
+        let manifest = JobManifest(type: MeetingWorkflowJob.type, title: "Active", executionClass: .heavy,
+            stages: [.init(id: "summary", title: "Summary")], metadata: ["capture_session_id": "active"])
+        _ = try store.enqueue(id: "active-job", manifest: manifest)
+        let service = MeetingManagementService(vault: fixture.vault, jobStore: store)
+        XCTAssertThrowsError(try service.remove(meetingID: "active"))
+        XCTAssertNotNil(try fixture.vault.versionOfMarkdown(relativePath: path))
+        XCTAssertEqual(try store.job(id: "active-job")?.status, .queued)
+    }
+
     func testArchivePersistsWithoutTouchingMeetingArtifactsOrProcessing() throws {
         let fixture = try Fixture()
         let path = "Meetings/legacy/meeting.md"

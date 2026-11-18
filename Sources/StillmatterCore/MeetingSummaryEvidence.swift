@@ -7,8 +7,12 @@ enum MeetingSummaryEvidence {
         var collecting = false
         var body: [String] = []
         for line in lines {
-            if line == "# Summary" || line == "## Summary" { collecting = true; continue }
-            if collecting, ["## Decisions", "## My action items", "## Other action items", "## Open questions"].contains(line) { break }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let heading = trimmed.hasPrefix("#")
+                ? String(trimmed.drop(while: { $0 == "#" || $0.isWhitespace })).trimmingCharacters(in: .whitespaces)
+                : nil
+            if heading == "Summary" { collecting = true; continue }
+            if collecting, let heading, ["Decisions", "My action items", "Other action items", "Open questions"].contains(heading) { break }
             if collecting { body.append(line) }
         }
         return body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -29,7 +33,7 @@ enum MeetingSummaryEvidence {
             paragraph.hasPrefix("- ") || paragraph.hasPrefix("* ") ? paragraph.components(separatedBy: .newlines) : [paragraph]
         }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !paragraphs.isEmpty else { throw MeetingSummaryError.invalidExtraction("Summary narrative is missing.") }
-        for paragraph in paragraphs {
+        for (index, paragraph) in paragraphs.enumerated() {
             if paragraph.hasPrefix("#"), !paragraph.contains("\n") { continue }
             let matches = expression.matches(in: paragraph, range: NSRange(paragraph.startIndex..., in: paragraph))
             let ids = Set(matches.compactMap { match -> String? in
@@ -37,7 +41,7 @@ enum MeetingSummaryEvidence {
                 return String(paragraph[range])
             })
             guard !ids.isEmpty, ids.isSubset(of: known) else {
-                throw MeetingSummaryError.invalidExtraction("Every Summary paragraph must cite known Transcript segment IDs in brackets.")
+                throw MeetingSummaryError.invalidSummaryCitation(paragraph: index + 1, missing: ids.isEmpty)
             }
             try validateQuotes(in: paragraph, sources: transcript.segments.filter { ids.contains($0.id) }.map(\.text))
             all.formUnion(ids)

@@ -80,6 +80,7 @@ public enum MeetingSummaryError: Error, Equatable, CustomStringConvertible {
     case missingMetadata(String)
     case missingArtifact(String)
     case invalidExtraction(String)
+    case invalidSummaryCitation(paragraph: Int, missing: Bool)
 
     public var description: String {
         switch self {
@@ -87,6 +88,8 @@ public enum MeetingSummaryError: Error, Equatable, CustomStringConvertible {
         case let .missingMetadata(key): return "Meeting summary job is missing metadata: \(key)"
         case let .missingArtifact(path): return "Meeting summary workflow did not return: \(path)"
         case let .invalidExtraction(reason): return "Invalid meeting summary extraction: \(reason)"
+        case let .invalidSummaryCitation(paragraph, missing):
+            return "Invalid meeting summary extraction: Every Summary paragraph must cite known Transcript segment IDs in brackets. Paragraph \(paragraph) \(missing ? "has no citation" : "contains an unrecognized citation")."
         }
     }
 }
@@ -120,6 +123,7 @@ public enum MeetingSummaryJob {
             The Markdown must use exactly these headings: Summary, Decisions, My action items, Other action items, Open questions.
             Use '-' when a section has no supported outcome. Cite every extracted outcome with one or more transcript segment IDs and exact start/end seconds from transcript.json; do not invent evidence.
             Cite every Summary paragraph with bracketed segment IDs, e.g. [segment-00001]. For an empty Transcript the Summary narrative must be exactly: No speech was detected.
+            Use # Summary followed by ## Decisions, ## My action items, ## Other action items, and ## Open questions. Each Summary paragraph or bullet must end with at least one citation. Put each exact ID in its own brackets, e.g. [segment-00001] [segment-00002]; do not add timestamps inside those brackets. Never use an uncited '-' placeholder inside Summary when speech was detected.
             Reconcile the entire supplied evidence chronologically: later explicit corrections supersede earlier decisions, and repeated commitments produce one outcome with combined citations.
             The extraction JSON must have schema_version=1, meeting and transcript matching the manifest paths, and arrays named decisions, my_action_items, other_action_items, and open_questions. Every array item must contain a stable id, concise text, and citations with segment_id, start_seconds, and end_seconds.
             For a silent/empty Transcript, return no invented outcomes and say no speech was detected. Unknown owners and due dates must remain unspecified in the text; never assign an unknown owner to Me.

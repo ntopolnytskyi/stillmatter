@@ -465,6 +465,29 @@ public final class JobStore {
         }
     }
 
+    /// Serializes the active-work check with removal, including across database connections.
+    func removeInactiveJobs(belongsToMeeting: (JobRecord) -> Bool, removingFiles: () throws -> Void) throws -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        var removed: [JobRecord] = []
+        try database.transaction {
+            removed = try jobsUnlocked().filter(belongsToMeeting)
+            guard !removed.contains(where: { $0.status == .queued || $0.status == .running }) else {
+                throw JobsError.invalidManifest("Stop recording and finish processing before removing this Meeting.")
+            }
+            try removingFiles()
+            for job in removed {
+                // Foreign keys cascade to stage state and logs.
+                try database.run("DELETE FROM jobs WHERE id = ?", bindings: [.text(job.id)])
+            }
+        }
+        for job in removed {
+            try inboxFor(job)?.removeItem(id: inboxID(jobID: job.id))
+            notifyChange(job)
+        }
+        return removed.map(\.id)
+    }
+
     /// Repoint persisted inactive Job manifests after a canonical Meeting move.
     public func rewriteMeetingReferences(from oldDirectory: String, to newDirectory: String, workspaceRootURL: URL? = nil) throws {
         lock.lock()

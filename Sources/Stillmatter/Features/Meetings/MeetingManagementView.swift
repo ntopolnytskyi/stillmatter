@@ -2565,7 +2565,17 @@ final class MeetingManagementView: NSView {
                 explanation.setAccessibilityLabel("Retry unavailable: \(reason)")
                 row.addArrangedSubview(explanation)
             }
-            row.addArrangedSubview(button)
+            let actions = NSStackView()
+            actions.orientation = .horizontal
+            actions.spacing = GraphiteFocusPresentation.Space.compact
+            actions.addArrangedSubview(button)
+            let remove = NSButton(title: "Remove…", target: self, action: #selector(confirmRemove))
+            remove.setAccessibilityIdentifier("meeting-failed-remove")
+            remove.setAccessibilityLabel("Remove failed Meeting")
+            remove.isEnabled = detail.row.captureState == .stopped &&
+                !detail.jobs.contains(where: { $0.status == .queued || $0.status == .running }) && !meetingsModel.isDirty
+            actions.addArrangedSubview(remove)
+            row.addArrangedSubview(actions)
             retryRows.addArrangedSubview(row)
         }
     }
@@ -2602,6 +2612,7 @@ final class MeetingManagementView: NSView {
         menu.addItem(regenerate)
         let remove = NSMenuItem(title: "Remove…", action: #selector(confirmRemove), keyEquivalent: "")
         remove.target = self
+        remove.setAccessibilityIdentifier("meeting-remove")
         remove.isEnabled = displayedDetail?.row.captureState == .stopped &&
             displayedDetail?.jobs.contains(where: { $0.status == .queued || $0.status == .running }) == false && !meetingsModel.isDirty
         menu.addItem(remove)
@@ -2616,7 +2627,7 @@ final class MeetingManagementView: NSView {
         }
         let alert = NSAlert()
         alert.messageText = "Remove this Meeting?"
-        alert.informativeText = "Move the Meeting folder to Trash. External recording files and already accepted Todos are not removed."
+        alert.informativeText = "Move the Meeting folder to Trash and delete its processing history and Inbox entries. External recording files and already accepted Todos are not removed."
         alert.addButton(withTitle: "Move to Trash")
         alert.addButton(withTitle: "Cancel")
         guard presentConfirmationAlert(alert) == .alertFirstButtonReturn else { return }

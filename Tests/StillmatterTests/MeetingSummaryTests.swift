@@ -681,6 +681,95 @@ final class MeetingSummaryTests: XCTestCase {
         }
     }
 
+    func testCitedSummaryAcceptsOutcomeHeadingLevelsWithoutTreatingEmptySectionsAsNarrative() throws {
+        for level in [1, 2, 3] {
+            let fixture = try MeetingSummaryFixture()
+            let empty = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+                decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+            let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+            let executor = try fixture.executor(extraction: empty, transform: { _, response in
+                var object = try JSONSerialization.jsonObject(with: Data(response.utf8)) as! [String: Any]
+                var artifacts = object["artifacts"] as! [[String: String]]
+                artifacts[0]["content"] = MeetingSummaryEvidence.render(narrative: "Launch planning. [segment-00001]", extraction: empty)
+                    .replacingOccurrences(of: "## ", with: String(repeating: "#", count: level) + " ")
+                object["artifacts"] = artifacts
+                return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+            })
+            _ = try execute(executor, manifest: manifest)
+            let summary = try fixture.contents(fixture.summaryPath)
+            XCTAssertEqual(MeetingSummaryEvidence.narrative(in: summary), "Launch planning. [segment-00001]")
+        }
+    }
+
+    func testUncitedSummaryGetsValidationFeedbackBeforePublication() throws {
+        let fixture = try MeetingSummaryFixture()
+        let empty = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        let uncited = "The speaker committed to sending the launch plan."
+        let executor = try fixture.executor(extraction: empty, narrative: uncited, transform: { prompt, response in
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceURL.appendingPathComponent(fixture.summaryPath).path))
+            guard prompt.contains("Citation correction") else { return response }
+            XCTAssertTrue(prompt.contains("Every Summary paragraph must cite known Transcript segment IDs in brackets."))
+            XCTAssertTrue(prompt.contains("I will send the launch plan."))
+            XCTAssertFalse(prompt.contains(uncited), "Rejected model prose must not become source context")
+            return response.replacingOccurrences(of: uncited, with: uncited + " [segment-00001]")
+        })
+        _ = try execute(executor, manifest: manifest)
+        XCTAssertEqual(fixture.latestPiRunner?.prompts.count, 2)
+        XCTAssertTrue(try fixture.contents(fixture.summaryPath).contains(uncited + " [segment-00001]"))
+    }
+
+    func testCitationCorrectionIsBoundedAndNeverPublishesAnInvalidResponse() throws {
+        for limit in [1, 8] {
+            let fixture = try MeetingSummaryFixture()
+            let empty = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+                decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+            let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+            let executor = try fixture.executor(extraction: empty, narrative: "The speaker will send the plan.",
+                budget: .init(requestsPerAttempt: limit))
+            XCTAssertThrowsError(try execute(executor, manifest: manifest)) { error in
+                XCTAssertEqual(error as? MeetingSummaryError, .invalidSummaryCitation(paragraph: 1, missing: true))
+            }
+            XCTAssertEqual(fixture.latestPiRunner?.prompts.count, min(limit, 2))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceURL.appendingPathComponent(fixture.summaryPath).path))
+            XCTAssertTrue(try fixture.inbox.items().isEmpty)
+        }
+    }
+
+    func testChunkAndReconciliationCitationCorrectionsUseTheSameRequestBudget() throws {
+        let segments = (0..<2).map { index in TranscriptSegment(id: "segment-\(index)", startSeconds: Double(index * 3600),
+            endSeconds: Double(index * 3600 + 3), text: "We decided to ship the launch plan. " + String(repeating: "Evidence. ", count: 50),
+            language: .english, track: .microphone, speaker: "Me") }
+        let fixture = try MeetingSummaryFixture(segments: segments)
+        let empty = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
+            decisions: [], myActionItems: [], otherActionItems: [], openQuestions: [])
+        let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)
+        var seen: [String] = []
+        let transform: (String, String) throws -> String = { prompt, response in
+            let context = try JSONSerialization.jsonObject(with: Data(prompt.components(separatedBy: "Approved Meeting context:\n").last!.utf8)) as! [String: Any]
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let evidence = try decoder.decode(TranscriptDocument.self, from: Data((context["transcript"] as! String).utf8))
+            seen.append(evidence.segments.map(\.id).joined(separator: ","))
+            let citations = prompt.contains("Citation correction") ? evidence.segments.map { "[\($0.id)]" }.joined(separator: " ") : ""
+            var object = try JSONSerialization.jsonObject(with: Data(response.utf8)) as! [String: Any]
+            var artifacts = object["artifacts"] as! [[String: Any]]
+            artifacts[0]["content"] = MeetingSummaryEvidence.render(narrative: "Ship the launch plan. " + citations, extraction: empty)
+            object["artifacts"] = artifacts
+            return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        let executor = try fixture.executor(extraction: empty, budget: .init(chunkBytes: 1024, requestsPerAttempt: 4), transform: transform)
+        XCTAssertThrowsError(try execute(executor, manifest: manifest)) { error in
+            XCTAssertTrue(String(describing: error).contains("checkpointed all 2 parts"))
+        }
+        XCTAssertEqual(seen, ["segment-0", "segment-0", "segment-1", "segment-1"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.workspaceURL.appendingPathComponent(fixture.summaryPath).path))
+        let resumed = try fixture.executor(extraction: empty, budget: .init(chunkBytes: 1024, requestsPerAttempt: 4), transform: transform)
+        _ = try execute(resumed, manifest: manifest)
+        XCTAssertEqual(Array(seen.suffix(2)), ["segment-0,segment-1", "segment-0,segment-1"])
+        XCTAssertEqual(fixture.latestPiRunner?.prompts.count, 2)
+    }
+
     func testSummaryAndOutcomeQuotesMustMatchTheirCitedEvidence() throws {
         let fixture = try MeetingSummaryFixture()
         let manifest = try MeetingSummaryJob.manifest(transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath)

@@ -140,6 +140,15 @@ public final class SearchIndex {
         }
     }
 
+    /// Removes all derived search chunks for a deleted Meeting folder.
+    public func removeDirectory(relativePath: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        let prefix = Self.normalize(relativePath) + "/"
+        try database.run("DELETE FROM search_chunks WHERE substr(source_path, 1, ?) = ?",
+                         bindings: [.text(String(prefix.count)), .text(prefix)])
+    }
+
     /// Applies one filesystem watcher event. A missing file removes its old chunks.
     public func update(relativePath: String) throws {
         lock.lock()

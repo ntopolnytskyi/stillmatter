@@ -168,6 +168,35 @@ public final class TasksInbox {
         }
     }
 
+    public func removeMeetingReferences(in relativeDirectory: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        let prefix = relativeDirectory + "/"
+        try database.transaction {
+            var ids: Set<String> = []
+            for (table, column) in [("inbox_items", "id"), ("proposal_reviews", "proposal_id")] {
+                let entries = try database.query("SELECT \(column), source_ref FROM \(table) WHERE source_ref IS NOT NULL") {
+                    (SQLiteDatabase.text($0, column: 0), SQLiteDatabase.text($0, column: 1))
+                }
+                for (id, source) in entries where owns(id) && (source.hasPrefix(prefix) || source.contains("[[" + prefix)) {
+                    ids.insert(id)
+                }
+            }
+            for id in ids {
+                let suppressionKeys = try database.query("SELECT suppression_key FROM proposal_reviews WHERE proposal_id = ?", bindings: [.text(id)]) {
+                    SQLiteDatabase.text($0, column: 0)
+                }
+                for (table, column) in [("inbox_items", "id"), ("proposal_edits", "proposal_id"), ("proposal_reviews", "proposal_id")] {
+                    try database.run("DELETE FROM \(table) WHERE \(column) = ?", bindings: [.text(id)])
+                }
+                for suppressionKey in suppressionKeys {
+                    try database.run("DELETE FROM dismissed_proposals WHERE suppression_key = ? AND NOT EXISTS (SELECT 1 FROM proposal_reviews WHERE suppression_key = ?)",
+                                     bindings: [.text(suppressionKey), .text(suppressionKey)])
+                }
+            }
+        }
+    }
+
     public func removeItem(id: String) throws {
         lock.lock()
         defer { lock.unlock() }
