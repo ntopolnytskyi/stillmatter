@@ -34,7 +34,11 @@ The canonical queue is `Todos/todo.md` under `## Queue`, highest priority first.
 ## Development
 
 ```sh
-swift test
+make test-fast       # cached focused package tests, no instrumentation
+make test-package    # complete SwiftPM suite
+make test-hosted     # AppKit integration
+make test-e2e        # real Stillmatter.app journeys; unlocked Mac required
+make test-full BASE=<implementation-base-SHA>  # fresh coverage and 95% gates
 python3 scripts/validate-graphite-focus-contract.py --self-test
 python3 scripts/validate-graphite-focus-presentation.py --self-test
 ```
@@ -54,7 +58,7 @@ xcodebuild test \
 
 Use a new result bundle path for each run. Tests control a separate app with disposable data; keep the Mac unlocked and avoid using the keyboard or mouse during a run. See the [UI testing guide](docs/development/ui-testing.md) for coverage, isolation, and adding tests.
 
-The old Meeting UI shell scripts and native probe launchers have been removed. XCUITest covers editing, playback, navigation, keyboard search, window resizing, external-file refresh, and Action Item acceptance. The [UI testing guide](docs/development/ui-testing.md) distinguishes verified UI coverage from internal probe assertions that still need an integration test runner.
+The [testing strategy](docs/development/testing-strategy.md) defines the test pyramid, journey filters, fixture rules and coverage profiles. The [migration matrix](docs/development/test-migration-matrix.md) accounts for all original UI tests; [refactor results](docs/development/test-refactor-results.md) distinguish executed evidence, baseline failures and gaps. Control-host UI automation is a separate component profile (`make test-controls`) and does not count as real-app E2E.
 
 The interactive walkthrough shell scripts have also been removed. Their repeated build/test gates and automated checks are covered by the commands above; unique real-device, permission, audio-quality, model-output, and review-UI checks are preserved in the [manual validation checklist](docs/development/manual-validation.md).
 

@@ -1,22 +1,37 @@
 #!/usr/bin/env python3
 """Execute an isolated package, app-hosted, or native UI coverage lane."""
 import argparse
+import fcntl
 import importlib.util
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+import time
 
 spec = importlib.util.spec_from_file_location("coverage_gate", Path(__file__).with_name("coverage.py"))
 coverage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(coverage)
 
 
-def run(args, log, cwd):
+def run(args, log, cwd, native_gui=False):
     print("Running " + " ".join(str(a) for a in args), flush=True)
     with log.open("w") as stream:
-        subprocess.run(args, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
+        if native_gui:
+            # Separate evidence roots may build concurrently; foreground automation must not.
+            lock_path = Path(tempfile.gettempdir()) / "works.stillmatter.native-tests.lock"
+            with lock_path.open("a") as lock:
+                print("Waiting for exclusive native GUI test access", flush=True)
+                waiting = time.monotonic()
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                wait_seconds = round(time.monotonic() - waiting, 3)
+                coverage.save_json(log.with_suffix(".lock.json"), {"wait_seconds": wait_seconds})
+                print(f"Native GUI lock acquired after {wait_seconds}s", flush=True)
+                subprocess.run(args, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
+        else:
+            subprocess.run(args, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
 
 
 def package_counts(log):
@@ -83,10 +98,10 @@ def main(argv=None):
             test_args = ["xcodebuild", "test", "-project", str(root / "Stillmatter.xcodeproj"), "-scheme", scheme,
                          "-configuration", "Release", "-destination", "platform=macOS", "-derivedDataPath", str(derived),
                          "-resultBundlePath", str(bundle), "-enableCodeCoverage", "YES", "SWIFT_OPTIMIZATION_LEVEL=-Onone"]
-            if args.controls:
+            if args.lane == "native":
                 test_args += ["-parallel-testing-enabled", "NO"]
             test_args += [f"-only-testing:{name}" for name in args.only_testing]
-            run(test_args, output / "tests.log", root)
+            run(test_args, output / "tests.log", root, native_gui=args.lane == "native")
             summary = json.loads(coverage.command(["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(bundle)]))
             coverage.save_json(output / "test-summary.json", summary)
             status["tests"] = xcode_counts(summary)

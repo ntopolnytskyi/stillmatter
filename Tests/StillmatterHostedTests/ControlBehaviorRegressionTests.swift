@@ -710,3 +710,83 @@ private struct NoModelAcquirer: TranscriptionModelAcquiring {
         throw CocoaError(.featureUnsupported)
     }
 }
+
+extension ControlBehaviorRegressionTests {
+    @MainActor
+    func testTranscriptionLanguagePopupPersistsWithoutLaunch() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("language-migration-\(UUID().uuidString)")
+        let suite = "works.stillmatter.language-migration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let store = SettingsStore(userDefaults: defaults)
+        let service = MeetingCaptureService(vault: WorkspaceVault(workspaceRootURL: root.appendingPathComponent("workspace"),
+            appSupportRootURL: root.appendingPathComponent("support")), preflight: { .readyForTesting })
+        let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { root.appendingPathComponent("workspace") },
+            teamsDetectionProvider: { nil }, onTranscriptionLanguageChanged: { store.settings.transcriptionLanguage = $0 },
+            jobRecordsProvider: { [] }, onOpenSettings: {})
+        view.refresh(isVisible: true)
+        let popup = try XCTUnwrap(descendants(of: view).compactMap { $0 as? NSPopUpButton }.first {
+            $0.accessibilityIdentifier() == "recording-language"
+        })
+        XCTAssertEqual(popup.itemTitles, ["Auto (mixed-language quality unverified)", "English", "Ukrainian"])
+        for (title, expected) in [("English", TranscriptLanguage.english), ("Ukrainian", .ukrainian),
+                                   ("Auto (mixed-language quality unverified)", .automatic)] {
+            popup.selectItem(withTitle: title)
+            XCTAssertTrue(popup.sendAction(popup.action, to: popup.target))
+            XCTAssertEqual(service.transcriptionLanguage, expected)
+            XCTAssertEqual(SettingsStore(userDefaults: defaults).settings.transcriptionLanguage, expected)
+            view.refresh(isVisible: true)
+            XCTAssertEqual(popup.titleOfSelectedItem, title)
+        }
+    }
+
+    @MainActor
+    func testSourceScopeAndLossRetainMicrophoneAndCanonicalScope() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("source-migration-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        let factory = SyntheticSystemAudioStreamFactory()
+        let backend = MacSystemAudioTrackRecorder(streamFactory: factory)
+        let system = SystemAudioTrackRecordingCoordinator(mediaRootURL: root.appendingPathComponent("media"), backend: backend)
+        let mic = ControlMicRecorder(mediaRoot: root.appendingPathComponent("media"))
+        let service = MeetingCaptureService(vault: WorkspaceVault(workspaceRootURL: workspace,
+            appSupportRootURL: root.appendingPathComponent("support")), micRecorder: mic,
+            systemAudioRecorder: system, preflight: { .readyForTesting })
+        let view = CaptureRecordingView(serviceProvider: { service }, rootURLProvider: { workspace },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {})
+        view.refresh(isVisible: true)
+        let popup = try XCTUnwrap(descendants(of: view).compactMap { $0 as? NSPopUpButton }.first {
+            $0.accessibilityIdentifier() == "recording-source"
+        })
+        popup.selectItem(withTitle: "Google Meet")
+        XCTAssertTrue(popup.sendAction(popup.action, to: popup.target))
+        view.startButton.performClick(nil)
+        let session = try XCTUnwrap(service.snapshot.meetingRelativePath)
+        XCTAssertEqual(service.snapshot.source, .meet)
+        XCTAssertEqual(factory.scopes, [.allSystemAudio])
+        XCTAssertFalse(popup.isEnabled)
+        let stream = try XCTUnwrap(factory.streams.last)
+        stream.deliver(try syntheticSystemSample(0.125))
+        stream.fail(NSError(domain: "Synthetic source disconnected", code: 1))
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in
+            service.snapshot.systemAudioRecording?.status == .failed
+        }, evaluatedWith: service)], timeout: 5)
+        for _ in 0..<2 {
+            view.refresh(isVisible: true)
+            let scope = try XCTUnwrap(descendants(of: view).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityIdentifier() == "recording-audio-scope"
+            })
+            XCTAssertTrue(scope.stringValue.contains("microphone capture continues"))
+            XCTAssertTrue(scope.stringValue.contains("ALL SYSTEM AUDIO"))
+            XCTAssertTrue(scope.stringValue.contains("Synthetic source disconnected"))
+            XCTAssertTrue(view.stopButton.isEnabled)
+            XCTAssertEqual(service.snapshot.state, .recording)
+            XCTAssertEqual(service.snapshot.micRecording?.captureSessionID, mic.activeMetadata?.captureSessionID)
+        }
+        let markdown = try String(contentsOf: workspace.appendingPathComponent(session))
+        XCTAssertTrue(markdown.contains("meeting_source: meet"))
+        XCTAssertTrue(markdown.contains("audio_scope: allSystemAudio"))
+        // Cleanup stops only the synthetic sources; no hardware or permission access.
+        _ = try? service.stopManual()
+    }
+}

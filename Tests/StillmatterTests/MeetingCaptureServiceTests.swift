@@ -662,6 +662,36 @@ final class MeetingCaptureServiceTests: XCTestCase {
         XCTAssertTrue(try String(contentsOf: fixture.workspaceRoot.appendingPathComponent(second.meetingRelativePath)).contains("B remains active"))
     }
 
+    func testPriorFinalizationFailureCannotReplaceCurrentReleaseFailure() throws {
+        let fixture = try CaptureFixture()
+        let mic = SpyMicRecorder(mediaRoot: fixture.root.appendingPathComponent("Media"))
+        let finalizer = BlockingBundleFinalizer(blockFirstCall: true, failFirstCall: true)
+        let service = fixture.service(micRecorder: mic, bundleFinalizer: finalizer)
+        let first = try service.startManual(titleHint: "Prior session")
+        let finished = DispatchSemaphore(value: 0)
+        service.stopManualAsync { result in
+            if case .success = result { XCTFail("Prior finalization must fail") }
+            finished.signal()
+        }
+        XCTAssertEqual(finalizer.entered.wait(timeout: .now() + 5), .success)
+        defer { finalizer.resume.signal() }
+        let second = try service.startManual(titleHint: "Current session")
+        mic.stopError = NSError(domain: "Current source release failure", code: 42)
+        XCTAssertThrowsError(try service.stopManual())
+        let currentFailure = try XCTUnwrap(service.snapshot.failureMessage)
+        XCTAssertEqual(service.snapshot.state, .failed)
+        finalizer.resume.signal()
+        XCTAssertTrue(waitForMainCallback(finished))
+        XCTAssertEqual(service.snapshot.state, .failed)
+        XCTAssertEqual(service.snapshot.failureMessage, currentFailure)
+        XCTAssertEqual(service.snapshot.meetingRelativePath, second.meetingRelativePath)
+        XCTAssertTrue(service.snapshot.priorCaptureFinalizations.contains { item in
+            guard item.meetingRelativePath == first.meetingRelativePath else { return false }
+            if case .failed = item.state { return true }
+            return false
+        })
+    }
+
     private func waitForMainCallback(_ semaphore: DispatchSemaphore, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

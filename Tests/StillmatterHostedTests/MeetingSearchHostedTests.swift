@@ -6,6 +6,79 @@ import StillmatterPresentation
 
 final class MeetingSearchHostedTests: XCTestCase {
     @MainActor
+    func testSearchKeyboardDismissalTodoRouteAndArchiveSessionState() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("search-keyboard-migration-\(UUID().uuidString)")
+        let suite = "works.stillmatter.search-keyboard.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        let file = workspace.appendingPathComponent("Todos/todo.md")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "## Queue\n- [ ] Search target\n".write(to: file, atomically: true, encoding: .utf8)
+        let index = try SearchIndex(databaseURL: root.appendingPathComponent("search.sqlite"), workspaceRootURL: workspace)
+        let settings = SettingsStore(userDefaults: defaults)
+        settings.settings.stillmatterRootURL = workspace
+        let state = ShellStateStore(state: ShellState(selectedTab: .meetings))
+        let installer = TranscriptionComponentInstaller(paths: .init(applicationSupportURL: root.appendingPathComponent("support")), acquirer: SearchNoAcquirer())
+        func shell() -> ShellViewController {
+            ShellViewController(stateStore: state, settingsStore: settings, tasksInbox: nil,
+                searchIndexProvider: { index }, captureServiceProvider: { nil }, teamsDetectionProvider: { nil },
+                teamsRecordingDiagnosticProvider: { "" }, onManualCapture: {}, jobRecordsProvider: { [] }, jobStatusProvider: { "Idle" },
+                transcriptionComponentInstaller: installer, onRebuildIndex: { $0(.success(())) })
+        }
+        let controller = shell()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentViewController = controller
+        window.contentView?.layoutSubtreeIfNeeded()
+        defer { window.contentViewController = nil; window.orderOut(nil) }
+        controller.searchRunner = { _, _, _ in [
+            .init(kind: .todo, sourcePath: "Todos/todo.md", title: "Search target", body: "Search target"),
+            .init(kind: .todo, sourcePath: "Todos/todo.md", title: "Second result", body: "Second result")
+        ] }
+        controller.navigationButtons[.today]?.performClick(nil)
+        XCTAssertEqual(state.state.selectedTab, .today)
+        controller.focusAreaSearch(nil)
+        XCTAssertTrue(controller.searchControlHasFocus(controller.searchField))
+        state.state.searchText = "Search target"
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in
+            controller.searchResultsView.tableView.numberOfRows == 2
+        }, evaluatedWith: controller)], timeout: 5)
+        controller.searchKindPopup.selectItem(withTitle: "Todo Item")
+        XCTAssertTrue(controller.searchKindPopup.sendAction(controller.searchKindPopup.action, to: controller.searchKindPopup.target))
+        XCTAssertEqual(state.state.searchText, "Search target")
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in
+            !controller.searchResultsView.isHidden && controller.searchResultsView.renderedState == "results"
+        }, evaluatedWith: controller)], timeout: 5)
+        XCTAssertTrue(controller.control(controller.searchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.moveDown(_:))))
+        let table = controller.searchResultsView.tableView
+        XCTAssertEqual(table.selectedRow, 0)
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        let escape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        table.keyDown(with: escape)
+        XCTAssertFalse(controller.isSearchPresented)
+        XCTAssertEqual(state.state.searchText, "Search target")
+        controller.focusAreaSearch(nil)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in !controller.searchResultsView.isHidden && table.numberOfRows == 2 }, evaluatedWith: controller)], timeout: 5)
+        XCTAssertTrue(controller.searchResultsView.focusResults())
+        let enter = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+        table.keyDown(with: enter)
+        XCTAssertEqual(state.state.selectedTab, .tasks)
+        XCTAssertFalse(controller.isSearchPresented)
+        XCTAssertEqual(state.state.searchText, "Search target")
+        let archive = NSMenuItem(title: "Include Archived in Search", action: #selector(ShellViewController.toggleArchivedSearch(_:)), keyEquivalent: "")
+        controller.toggleArchivedSearch(nil)
+        XCTAssertTrue(controller.validateMenuItem(archive))
+        XCTAssertEqual(archive.state, .on)
+        let reopened = shell()
+        window.contentViewController = reopened
+        window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertTrue(reopened.validateMenuItem(archive))
+        XCTAssertEqual(archive.state, .off, "Archive opt-in is session-local")
+    }
+
+    @MainActor
     func testSlowOldQueryAndWorkspaceCannotReplaceNewResultsAndErrorsRemainVisible() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("search-hosted-\(UUID().uuidString)")
         let suite = "works.stillmatter.search-hosted.\(UUID().uuidString)"

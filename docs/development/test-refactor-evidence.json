@@ -1,0 +1,435 @@
+{
+  "baseline_head": "355668f38d2dbc5b5fb0b957d13a7e65975353d0",
+  "collection_complete": true,
+  "environment": {
+    "after_os": "ProductName:\t\tmacOS\nProductVersion:\t\t15.8.3\nBuildVersion:\t\t24H241",
+    "toolchain": "Apple Swift 6.2.4; Xcode 26.3 (17C529); x86_64"
+  },
+  "runs": [
+    {
+      "label": "Baseline Debug package",
+      "log": "/tmp/stillmatter-refactor-baseline/package-authorized.log",
+      "tests": {
+        "total": 576,
+        "passed": 569,
+        "failed": 1,
+        "skipped": 6
+      },
+      "seconds": 448.47,
+      "status": null,
+      "command": null
+    },
+    {
+      "label": "Baseline Release hosted (already built)",
+      "log": "/tmp/stillmatter-refactor-baseline/hosted-authorized.log",
+      "tests": {
+        "total": 83,
+        "passed": 82,
+        "failed": 1,
+        "skipped": 0
+      },
+      "seconds": 166.07,
+      "status": null,
+      "command": null
+    },
+    {
+      "label": "Baseline real-app UI (already built)",
+      "log": "/tmp/stillmatter-refactor-baseline/native-authorized.log",
+      "tests": {
+        "total": 48,
+        "passed": 43,
+        "failed": 5,
+        "skipped": 0
+      },
+      "seconds": 2324.69,
+      "status": null,
+      "command": null
+    },
+    {
+      "label": "Baseline control-host UI (already built)",
+      "log": "/tmp/stillmatter-refactor-baseline/controls-authorized.log",
+      "tests": {
+        "total": 17,
+        "passed": 17,
+        "failed": 0,
+        "skipped": 0
+      },
+      "seconds": 217.14,
+      "status": null,
+      "command": null
+    },
+    {
+      "label": "Baseline cached fast",
+      "log": "/tmp/stillmatter-refactor-baseline/fast-authorized/tests.log",
+      "tests": {
+        "total": 82,
+        "passed": 82,
+        "failed": 0,
+        "skipped": 0
+      },
+      "seconds": 14.421,
+      "status": "passed",
+      "command": [
+        "swift",
+        "test",
+        "--filter",
+        "StillmatterPresentationTests|MeetingArtifactEdgeCaseTests|MeetingActionReviewTests|MeetingNoteTodoBridgeTests|TodoItemsTests"
+      ]
+    },
+    {
+      "label": "Refactored Debug package",
+      "log": "/tmp/stillmatter-refactor-result-package/tests.log",
+      "tests": {
+        "total": 577,
+        "passed": 571,
+        "failed": 0,
+        "skipped": 6
+      },
+      "seconds": 183.282,
+      "status": "passed",
+      "command": [
+        "swift",
+        "test"
+      ]
+    },
+    {
+      "label": "Refactored cached fast",
+      "log": "/tmp/stillmatter-refactor-result-fast/tests.log",
+      "tests": {
+        "total": 82,
+        "passed": 82,
+        "failed": 0,
+        "skipped": 0
+      },
+      "seconds": 13.676,
+      "status": "passed",
+      "command": [
+        "swift",
+        "test",
+        "--filter",
+        "StillmatterPresentationTests|MeetingArtifactEdgeCaseTests|MeetingActionReviewTests|MeetingNoteTodoBridgeTests|TodoItemsTests"
+      ]
+    },
+    {
+      "label": "Interim refactored hosted (91 tests, before review additions)",
+      "log": "/tmp/stillmatter-refactor-result-hosted/tests.log",
+      "tests": {
+        "total": 91,
+        "passed": 90,
+        "failed": 1,
+        "skipped": 0
+      },
+      "seconds": 288.059,
+      "status": "failed",
+      "command": [
+        "xcodebuild",
+        "test",
+        "-project",
+        "Stillmatter.xcodeproj",
+        "-scheme",
+        "StillmatterHostedTests",
+        "-configuration",
+        "Release",
+        "-destination",
+        "platform=macOS",
+        "-derivedDataPath",
+        "/Users/nazar/projects/stillmatter/.build/test-derived",
+        "-resultBundlePath",
+        "/private/tmp/stillmatter-refactor-result-hosted/results.xcresult",
+        "-enableCodeCoverage",
+        "NO",
+        "-parallel-testing-enabled",
+        "NO",
+        "ONLY_ACTIVE_ARCH=YES"
+      ]
+    },
+    {
+      "label": "Refactored real-app UI (corrected fixtures)",
+      "log": "/tmp/stillmatter-refactor-result-e2e-fixed.log",
+      "tests": {
+        "total": 9,
+        "passed": 8,
+        "failed": 0,
+        "skipped": 1
+      },
+      "seconds": 208.69,
+      "status": null,
+      "command": null
+    }
+  ],
+  "full_profiles": [
+    {
+      "label": "Baseline fresh full coverage profile",
+      "root": "/tmp/stillmatter-refactor-baseline/full-head",
+      "status": "failed",
+      "seconds": 2652.501,
+      "commands": [
+        {
+          "command": [
+            "/usr/local/opt/python@3.15/bin/python3.15",
+            "scripts/run-coverage.py",
+            "package",
+            "--output",
+            "/private/tmp/stillmatter-refactor-baseline/full-head/package"
+          ],
+          "log": "package.log",
+          "exit_code": 0,
+          "seconds": 212.094
+        },
+        {
+          "command": [
+            "/usr/local/opt/python@3.15/bin/python3.15",
+            "scripts/run-coverage.py",
+            "hosted",
+            "--output",
+            "/private/tmp/stillmatter-refactor-baseline/full-head/hosted"
+          ],
+          "log": "hosted.log",
+          "exit_code": 1,
+          "seconds": 266.917
+        },
+        {
+          "command": [
+            "/usr/local/opt/python@3.15/bin/python3.15",
+            "scripts/run-coverage.py",
+            "native",
+            "--output",
+            "/private/tmp/stillmatter-refactor-baseline/full-head/native"
+          ],
+          "log": "native.log",
+          "exit_code": 1,
+          "seconds": 1887.323
+        },
+        {
+          "command": [
+            "/usr/local/opt/python@3.15/bin/python3.15",
+            "scripts/run-coverage.py",
+            "native",
+            "--output",
+            "/private/tmp/stillmatter-refactor-baseline/full-head/controls",
+            "--controls"
+          ],
+          "log": "controls.log",
+          "exit_code": 0,
+          "seconds": 285.769
+        }
+      ],
+      "test_source_tree_sha256": "9ca8197ab0601a9be9506c26e35ef589a239cbcf54a1b36cb0b54eef9b19e31d",
+      "lanes": [
+        {
+          "lane": "package",
+          "seconds": 212.094,
+          "exit_code": 0,
+          "tests": {
+            "total": 576,
+            "passed": 570,
+            "failed": 0,
+            "skipped": 6
+          },
+          "native_lock_wait_seconds": null,
+          "status": "passed"
+        },
+        {
+          "lane": "hosted",
+          "seconds": 266.917,
+          "exit_code": 1,
+          "tests": {
+            "total": 83,
+            "passed": 82,
+            "failed": 1,
+            "skipped": 0
+          },
+          "native_lock_wait_seconds": null,
+          "status": "failed"
+        },
+        {
+          "lane": "native",
+          "seconds": 1887.323,
+          "exit_code": 1,
+          "tests": {
+            "total": 48,
+            "passed": 45,
+            "failed": 3,
+            "skipped": 0
+          },
+          "native_lock_wait_seconds": 24.005,
+          "status": "failed"
+        },
+        {
+          "lane": "controls",
+          "seconds": 285.769,
+          "exit_code": 0,
+          "tests": {
+            "total": 17,
+            "passed": 17,
+            "failed": 0,
+            "skipped": 0
+          },
+          "native_lock_wait_seconds": 0.0,
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "label": "Refactored fresh full coverage profile",
+      "root": "/tmp/stillmatter-refactor-result-full",
+      "status": "failed",
+      "seconds": 826.156,
+      "commands": [
+        {
+          "command": [
+            "/usr/local/opt/python@3.15/bin/python3.15",
+            "scripts/run-coverage.py",
+            "package",
+            "--output",
+            "/private/tmp/stillmatter-refactor-result-full/package"
+          ],
+          "log": "package.log",
+          "exit_code": 0,
+          "seconds": 223.612
+        },
+        {
+          "command": [
+            "/usr/local/opt/python@3.15/bin/python3.15",
+            "scripts/run-coverage.py",
+            "hosted",
+            "--output",
+            "/private/tmp/stillmatter-refactor-result-full/hosted"
+          ],
+          "log": "hosted.log",
+          "exit_code": 1,
+          "seconds": 255.284
+        },
+        {
+          "command": [
+            "/usr/local/opt/python@3.15/bin/python3.15",
+            "scripts/run-coverage.py",
+            "native",
+            "--output",
+            "/private/tmp/stillmatter-refactor-result-full/native"
+          ],
+          "log": "native.log",
+          "exit_code": 0,
+          "seconds": 260.188
+        },
+        {
+          "command": [
+            "/usr/local/opt/python@3.15/bin/python3.15",
+            "scripts/run-coverage.py",
+            "native",
+            "--output",
+            "/private/tmp/stillmatter-refactor-result-full/controls",
+            "--controls"
+          ],
+          "log": "controls.log",
+          "exit_code": 0,
+          "seconds": 86.657
+        }
+      ],
+      "test_source_tree_sha256": "30845d0a850467a242ddb639b71a774798f72bbcd7d0c7b974335e1f99675192",
+      "lanes": [
+        {
+          "lane": "package",
+          "seconds": 223.612,
+          "exit_code": 0,
+          "tests": {
+            "total": 577,
+            "passed": 571,
+            "failed": 0,
+            "skipped": 6
+          },
+          "native_lock_wait_seconds": null,
+          "status": "passed"
+        },
+        {
+          "lane": "hosted",
+          "seconds": 255.284,
+          "exit_code": 1,
+          "tests": {
+            "total": 93,
+            "passed": 92,
+            "failed": 1,
+            "skipped": 0
+          },
+          "native_lock_wait_seconds": null,
+          "status": "failed"
+        },
+        {
+          "lane": "native",
+          "seconds": 260.188,
+          "exit_code": 0,
+          "tests": {
+            "total": 9,
+            "passed": 8,
+            "failed": 0,
+            "skipped": 1
+          },
+          "native_lock_wait_seconds": null,
+          "status": "passed"
+        },
+        {
+          "lane": "controls",
+          "seconds": 86.657,
+          "exit_code": 0,
+          "tests": {
+            "total": 1,
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "native_lock_wait_seconds": 0.0,
+          "status": "passed"
+        }
+      ]
+    }
+  ],
+  "incremental_gate": {
+    "incremental": {
+      "aggregate": {
+        "covered": 0,
+        "percent": null,
+        "total": 0
+      },
+      "modules": {}
+    }
+  },
+  "whole_gate": {
+    "incremental": {
+      "aggregate": {
+        "covered": 0,
+        "percent": null,
+        "total": 0
+      },
+      "modules": {}
+    },
+    "whole": {
+      "aggregate": {
+        "covered": 20994,
+        "percent": 78.36506159014557,
+        "total": 26790
+      },
+      "modules": {
+        "Stillmatter": {
+          "covered": 8072,
+          "percent": 62.18798151001541,
+          "total": 12980
+        },
+        "StillmatterCore": {
+          "covered": 11223,
+          "percent": 94.72484807562458,
+          "total": 11848
+        },
+        "StillmatterPresentation": {
+          "covered": 1318,
+          "percent": 84.27109974424552,
+          "total": 1564
+        },
+        "StillmatterTranscriptionRuntime": {
+          "covered": 381,
+          "percent": 95.7286432160804,
+          "total": 398
+        }
+      }
+    }
+  }
+}

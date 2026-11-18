@@ -1,13 +1,12 @@
 import Foundation
 import XCTest
 import AVFoundation
-import CryptoKit
+import StillmatterCore
 
-/// UI seams verified against the isolated native app: icon-rail navigation and workspace views.
+/// Named end-to-end outcomes against the real Stillmatter.app, never the control host.
 final class StillmatterFlowsUITests: XCTestCase {
     var app: XCUIApplication!
     var fixtureRoot: URL!
-
     override func setUpWithError() throws {
         continueAfterFailure = false
         fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent("stillmatter-ui-\(UUID().uuidString)", isDirectory: true)
@@ -24,30 +23,194 @@ final class StillmatterFlowsUITests: XCTestCase {
         app.launchEnvironment["STILLMATTER_VALIDATION_APPLICATION_SUPPORT_ROOT"] = support.path
         app.launchEnvironment["STILLMATTER_VALIDATION_PRESERVE_SETTINGS"] = "1"
         app.launchEnvironment["STILLMATTER_VALIDATION_SETTINGS_SNAPSHOT_PATH"] = fixtureRoot.appendingPathComponent("settings.json").path
-        app.launch()
-        // macOS may restore a stale UI-test bundle after an interrupted run.
-        let restore = app.dialogs.buttons["Don’t Reopen"].firstMatch
-        if restore.waitForExistence(timeout: 3) { restore.click() }
-        XCTAssertTrue(app.windows["Stillmatter"].waitForExistence(timeout: 15), app.debugDescription)
     }
 
     override func tearDownWithError() throws {
         if let app, (testRun?.failureCount ?? 0) > 0 {
-            attachMeetingScreenshot("Failure")
-            let tree = XCTAttachment(string: app.debugDescription)
-            tree.name = "Accessibility tree"
-            tree.lifetime = .keepAlways
-            add(tree)
+            if app.state == .runningForeground || app.state == .runningBackground {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Failure screenshot"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                attach(app.debugDescription, named: "Accessibility tree")
+            }
+            attachFixtureState()
         }
         app?.terminate()
         if let fixtureRoot {
-            let suite = "works.stillmatter.validation.\(fixtureRoot.lastPathComponent)"
-            UserDefaults.standard.removePersistentDomain(forName: suite)
+            UserDefaults.standard.removePersistentDomain(forName: "works.stillmatter.validation.\(fixtureRoot.lastPathComponent)")
+            try FileManager.default.removeItem(at: fixtureRoot)
         }
-        if let fixtureRoot { try FileManager.default.removeItem(at: fixtureRoot) }
     }
 
-    func testImportPickerCancelInvalidAudioAndPersistedOrdinaryMeeting() throws {
+    func testE2E01RecordingToMeetingRequiresSafeRealAppCapture() throws {
+        throw XCTSkip("Real-app synthetic capture is unavailable. No permission prompts or hardware access allowed. Synthetic capture and durable live notes are covered by ControlBehaviorRegressionTests; see testing-strategy.md for manual acceptance.")
+    }
+
+    func testE2E02MeetingNotesSurviveRestart() throws {
+        try seedMeeting()
+        openFixtureMeeting()
+        openEditor("notes")
+        replaceEditorText("Notes saved through the real app")
+        editor.typeKey(.return, modifierFlags: .command)
+        waitForEditorToClose()
+        let canonical = try notesText()
+        XCTAssertTrue(canonical.contains("Notes saved through the real app"))
+        XCTAssertFalse(try meetingText().contains("Notes saved through the real app"))
+        relaunch()
+        openFixtureMeeting()
+        openEditor("notes")
+        XCTAssertEqual(editor.value as? String, "Notes saved through the real app")
+        XCTAssertEqual(try notesText(), canonical)
+        // The same editing journey can leave its reopened reader without saving another draft.
+        replaceEditorText("Discard this reopened draft")
+        editor.typeKey(.escape, modifierFlags: [])
+        waitForEditorToClose()
+        XCTAssertEqual(try notesText(), canonical)
+    }
+
+    func testE2E03TranscriptTimestampSeeksSyntheticMedia() throws {
+        let source = try seedPlayableTranscript()
+        let transcript = try Data(contentsOf: source.transcript)
+        let audio = try Data(contentsOf: source.audio)
+        relaunch()
+        app.buttons["sidebar-meetings"].click()
+        let row = app.tables["Meetings"].staticTexts["Playable meeting"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+        app.radioButtons["Transcript"].click()
+        let picker = app.popUpButtons["meeting-transcript-view"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        picker.click()
+        app.menuItems["Grouped by speaker"].click()
+        let timestamp = app.buttons["transcript-time-early"]
+        expectation(for: NSPredicate(format: "exists == true AND enabled == true"), evaluatedWith: timestamp)
+        waitForExpectations(timeout: 10)
+        timestamp.click()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Play Meeting audio"].exists, "Seeking remains paused")
+        XCTAssertEqual(try Data(contentsOf: source.transcript), transcript)
+        XCTAssertEqual(try Data(contentsOf: source.audio), audio)
+    }
+
+    func testE2E04ApproveActionCreatesOneCanonicalTodoAfterRestart() throws {
+        try seedMeeting(transcript: true, myActionItem: "My generated task")
+        openFixtureMeeting()
+        app.radioButtons["Action Items"].click()
+        let approve = app.buttons["meeting-actions-accept-mine"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 10))
+        let source = meetingURL.deletingLastPathComponent().appendingPathComponent("action-items.md")
+        let before = try String(contentsOf: source)
+        let item = try XCTUnwrap(TodoItemParser().parse(markdown: before, relativePath: "Meetings/ui-fixture/action-items.md").first)
+        approve.click()
+        expectation(for: NSPredicate(format: "enabled == false"), evaluatedWith: approve)
+        waitForExpectations(timeout: 10)
+        let queue = fixtureRoot.appendingPathComponent("workspace/Todos/todo.md")
+        let reference = "[[item:\(item.id)"
+        XCTAssertEqual(try String(contentsOf: queue).components(separatedBy: reference).count - 1, 1)
+        let canonical = try String(contentsOf: source)
+        XCTAssertTrue(canonical.contains(item.id))
+        XCTAssertTrue(canonical.contains("approved"))
+        relaunch()
+        openFixtureMeeting()
+        app.radioButtons["Action Items"].click()
+        XCTAssertTrue(app.popUpButtons["meeting-item-status-" + item.id].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["meeting-actions-accept-mine"].isEnabled)
+        app.buttons["sidebar-tasks"].click()
+        XCTAssertTrue(app.checkBoxes["task-complete-" + item.id].waitForExistence(timeout: 10))
+        XCTAssertEqual(try String(contentsOf: queue).components(separatedBy: reference).count - 1, 1)
+        XCTAssertEqual(try String(contentsOf: source), canonical, "Relaunch does not replace the source identity")
+    }
+
+    func testE2E05CompleteCanonicalTodo() throws {
+        let queue = try seedPersonalQueue()
+        relaunch()
+        app.buttons["sidebar-today"].click()
+        let today = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "today-todo-")).firstMatch
+        XCTAssertTrue(today.waitForExistence(timeout: 15))
+        today.click()
+        let complete = app.checkBoxes["Complete Personal task"]
+        XCTAssertTrue(complete.waitForExistence(timeout: 10))
+        complete.click()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: complete)
+        waitForExpectations(timeout: 10)
+        let notes = fixtureRoot.appendingPathComponent("workspace/Meetings/task/my-notes.md")
+        XCTAssertTrue(try String(contentsOf: notes).contains("- [x] Personal task"))
+        XCTAssertEqual(try String(contentsOf: queue).components(separatedBy: "[[item:ee935d20-e388-4ccf-b6bd-1f5dc785fd01").count - 1, 1)
+        app.buttons["sidebar-today"].click()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "today-todo-"))
+        expectation(for: NSPredicate { _, _ in rows.count == 2 }, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.buttons["today-todo-ee935d20-e388-4ccf-b6bd-1f5dc785fd01"].exists)
+    }
+
+    func testE2E06GlobalSearchOpensMeetingAndEscapeKeepsQuery() throws {
+        try seedMeeting()
+        app.buttons["sidebar-meetings"].click()
+        app.typeKey("f", modifierFlags: .command)
+        let search = app.searchFields["Search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.typeText("Original summary") // No click: Command-F must transfer focus.
+        let results = app.tables["Search results"]
+        XCTAssertTrue(results.tableRows.firstMatch.waitForExistence(timeout: 15))
+        search.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
+        let detail = app.staticTexts["meeting-detail"]
+        expectation(for: NSPredicate(format: "value == %@", "UI fixture meeting"), evaluatedWith: detail)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(app.radioButtons["Summary"].value as? Int, 1)
+        app.typeKey("f", modifierFlags: .command)
+        XCTAssertTrue(results.waitForExistence(timeout: 10))
+        app.typeKey(.escape, modifierFlags: [])
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: results)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(search.value as? String, "Original summary")
+        XCTAssertEqual(detail.value as? String, "UI fixture meeting")
+    }
+
+    func testE2E07ExternalMarkdownRefreshesOpenMeeting() throws {
+        try seedMeeting()
+        openFixtureMeeting()
+        let external = try meetingText().replacingOccurrences(of: "UI fixture meeting", with: "Externally renamed fixture")
+        try external.write(to: meetingURL, atomically: true, encoding: .utf8)
+        let row = app.tables["Meetings"].staticTexts["Externally renamed fixture"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        expectation(for: NSPredicate(format: "value == %@", "Externally renamed fixture"), evaluatedWith: app.staticTexts["meeting-detail"])
+        waitForExpectations(timeout: 15)
+        XCTAssertEqual(try meetingText(), external)
+    }
+
+    func testE2E08ArchiveReopensReadOnlyAfterRestart() throws {
+        try seedMeeting(transcript: true)
+        openFixtureMeeting()
+        let notes = try notesText()
+        let archive = app.buttons["meeting-archive"]
+        XCTAssertTrue(archive.waitForExistence(timeout: 10))
+        XCTAssertTrue(archive.isEnabled)
+        archive.click()
+        let marker = meetingURL.deletingLastPathComponent().appendingPathComponent("archive.json")
+        expectation(for: NSPredicate { _, _ in FileManager.default.fileExists(atPath: marker.path) }, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: marker)) as? [String: Any])
+        XCTAssertEqual(object["archived"] as? Bool, true)
+        relaunch()
+        app.buttons["sidebar-meetings"].click()
+        app.buttons["Recorded"].click()
+        app.buttons["Show Meeting filters"].click()
+        app.popUpButtons["Meeting archive filter"].click()
+        app.menuItems["Archived Meetings"].click()
+        let row = app.tables["Meetings"].staticTexts["UI fixture meeting"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+        XCTAssertTrue(app.buttons["meeting-edit-summary"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["meeting-edit-summary"].isEnabled)
+        app.radioButtons["My Notes"].click()
+        XCTAssertFalse(app.buttons["meeting-edit-notes"].isEnabled)
+        XCTAssertFalse(app.buttons["meeting-overview-edit-notes"].isEnabled)
+        XCTAssertEqual(try notesText(), notes)
+    }
+
+    func testE2E09ImportCreatesDurableMeeting() throws {
         let original = fixtureRoot.appendingPathComponent("Imported sample.wav")
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
         do {
@@ -58,354 +221,56 @@ final class StillmatterFlowsUITests: XCTestCase {
             try writer.write(from: buffer)
         }
         let bytes = try Data(contentsOf: original)
+        relaunch()
+        app.buttons["sidebar-meetings"].click()
         let button = app.buttons["meetings-import"]
         XCTAssertTrue(button.waitForExistence(timeout: 10))
         button.click()
-        XCTAssertTrue(app.windows["open-panel"].waitForExistence(timeout: 5))
-        app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
-        let corrupt = fixtureRoot.appendingPathComponent("Broken.wav")
-        try Data("broken".utf8).write(to: corrupt)
-        func choose(_ url: URL) {
-            button.click()
-            app.typeKey("g", modifierFlags: [.command, .shift])
-            let location = app.sheets.textFields.firstMatch
-            XCTAssertTrue(location.waitForExistence(timeout: 5), app.debugDescription)
-            location.typeText(url.path)
-            app.typeKey(.return, modifierFlags: [])
-            let confirm = app.windows["open-panel"].buttons["Import"].firstMatch
-            XCTAssertTrue(confirm.waitForExistence(timeout: 5), app.debugDescription)
-            confirm.click()
-        }
-        choose(corrupt)
-        let status = app.staticTexts["meetings-import-status"]
-        XCTAssertTrue(status.waitForExistence(timeout: 10))
-        let failed = NSPredicate { _, _ in status.label.contains("no supported audio") }
-        expectation(for: failed, evaluatedWith: nil)
-        waitForExpectations(timeout: 15)
-        choose(original)
-        expectation(for: NSPredicate { _, _ in status.label.contains("Imported Imported sample.wav") }, evaluatedWith: nil)
-        waitForExpectations(timeout: 20)
-        XCTAssertEqual(try Data(contentsOf: original), bytes)
-        let importedRow = app.tables["Meetings"].staticTexts["Imported sample"].firstMatch
-        XCTAssertTrue(importedRow.waitForExistence(timeout: 10), app.debugDescription)
-        importedRow.click()
-        let tabs = app.radioGroups["meeting-page-selector"]
-        XCTAssertTrue(tabs.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertEqual(tabs.radioButtons.count, 5)
-        for title in ["Summary", "Action Items", "Open Items", "My Notes", "Transcript"] {
-            XCTAssertTrue(tabs.radioButtons[title].exists)
-        }
-        tabs.radioButtons["Transcript"].click()
-        XCTAssertEqual(tabs.radioButtons["Transcript"].value as? Int, 1)
-        XCTAssertTrue(app.staticTexts["No Transcript available."].waitForExistence(timeout: 5))
-        app.typeKey(.leftArrow, modifierFlags: [.command, .option])
-        XCTAssertEqual(tabs.radioButtons["My Notes"].value as? Int, 1)
-        app.terminate()
-        let workspace = fixtureRoot.appendingPathComponent("workspace").resolvingSymlinksInPath()
-        let namespace = SHA256.hash(data: Data(workspace.path.utf8)).map { String(format: "%02x", $0) }.joined()
-        let interrupted = fixtureRoot.appendingPathComponent("media/Imports/\(namespace)/import-corrupt-recovery")
-        try FileManager.default.createDirectory(at: interrupted, withIntermediateDirectories: true)
-        try Data("damaged preparation journal".utf8).write(to: interrupted.appendingPathComponent("import-intent.json"))
-        app.launch()
-        XCTAssertTrue(app.staticTexts["An interrupted import needs attention"].waitForExistence(timeout: 10))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        let location = app.sheets.textFields.firstMatch
+        XCTAssertTrue(location.waitForExistence(timeout: 5))
+        location.typeText(original.path)
         app.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(app.tables["Meetings"].staticTexts["Imported sample"].firstMatch.waitForExistence(timeout: 15))
-        XCTAssertEqual(app.tables["Meetings"].cells.count, 1)
+        let confirm = app.windows["open-panel"].buttons["Import"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.click()
+        let row = app.tables["Meetings"].staticTexts["Imported sample"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 20))
+        row.click()
+        XCTAssertTrue(app.radioButtons["My Notes"].waitForExistence(timeout: 10))
+        let meetings = fixtureRoot.appendingPathComponent("workspace/Meetings")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: meetings, includingPropertiesForKeys: nil))
+        let doorways = files.compactMap { $0 as? URL }.filter { $0.lastPathComponent == "meeting.md" }
+        XCTAssertEqual(doorways.count, 1)
+        let canonical = try XCTUnwrap(doorways.first)
+        XCTAssertTrue(try String(contentsOf: canonical).contains("Imported sample"))
+        XCTAssertEqual(try Data(contentsOf: original), bytes)
+        relaunch()
+        app.buttons["sidebar-meetings"].click()
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.click()
+        XCTAssertTrue(app.staticTexts["meeting-detail"].waitForExistence(timeout: 10))
         XCTAssertEqual(try Data(contentsOf: original), bytes)
     }
 
-    func testPlayableRecordingHasFullWidthSeekControl() throws {
-        app.terminate()
-        let directory = fixtureRoot.appendingPathComponent("workspace/Meetings/audio")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let oldMedia = fixtureRoot.appendingPathComponent("workspace/OldMedia/audio")
-        try FileManager.default.createDirectory(at: oldMedia, withIntermediateDirectories: true)
-        let audio = oldMedia.appendingPathComponent("mic.caf")
-        let metadata = oldMedia.appendingPathComponent("mic.json")
-        let bundle = oldMedia.appendingPathComponent("recording-bundle.json")
-        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
-        do {
-            let writer = try AVAudioFile(forWriting: audio, settings: format.settings)
-            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000))
-            buffer.frameLength = 48_000
-            for frame in 0..<48_000 { buffer.floatChannelData?[0][frame] = Float(sin(Double(frame) * 0.1)) * 0.1 }
-            for _ in 0..<8 { try writer.write(from: buffer) }
-        }
-        try Data("{}".utf8).write(to: metadata)
-        let hash = SHA256.hash(data: try Data(contentsOf: audio)).map { String(format: "%02x", $0) }.joined()
-        let track: [String: Any] = ["role": "microphone", "status": "partial", "preferredAudioFilePath": audio.path,
-            "recoveryFilePath": audio.path, "finalFilePath": oldMedia.appendingPathComponent("missing.m4a").path,
-            "metadataFilePath": metadata.path, "recoveryFileExists": true, "finalFileExists": false,
-            "metadataFileExists": true, "recoveryFileSHA256": hash, "durationSeconds": 8.0,
-            "codec": "caf", "sampleRate": 48_000.0, "channelCount": 1, "diagnostics": []]
-        let systemAudio = oldMedia.appendingPathComponent("system.caf")
-        let systemMetadata = oldMedia.appendingPathComponent("system.json")
-        do {
-            let writer = try AVAudioFile(forWriting: systemAudio, settings: format.settings)
-            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000))
-            buffer.frameLength = 48_000
-            for frame in 0..<48_000 { buffer.floatChannelData?[0][frame] = Float(sin(Double(frame) * 0.3)) * 0.4 }
-            for _ in 0..<8 { try writer.write(from: buffer) }
-        }
-        try Data("{}".utf8).write(to: systemMetadata)
-        var systemTrack = track
-        systemTrack["role"] = "system-audio"
-        systemTrack["preferredAudioFilePath"] = systemAudio.path
-        systemTrack["recoveryFilePath"] = systemAudio.path
-        systemTrack["finalFilePath"] = oldMedia.appendingPathComponent("missing-system.m4a").path
-        systemTrack["metadataFilePath"] = systemMetadata.path
-        systemTrack["recoveryFileSHA256"] = SHA256.hash(data: try Data(contentsOf: systemAudio)).map { String(format: "%02x", $0) }.joined()
-        let sidecar: [String: Any] = ["schemaVersion": 1, "captureSessionID": "audio",
-            "meetingRelativePath": "Meetings/audio/meeting.md", "bundleFilePath": bundle.path,
-            "finalizedAt": "2026-10-07T17:35:00Z", "reason": "recovery", "state": "partial",
-            "mic": track, "system": systemTrack, "diagnostics": []]
-        try JSONSerialization.data(withJSONObject: sidecar).write(to: bundle)
-        try Data("---\ntitle: Playable meeting\ncapture_session_id: audio\nrecording_bundle: \(bundle.path)\n---\n# Playable meeting\n".utf8)
-            .write(to: directory.appendingPathComponent("meeting.md"))
-        let transcript: [String: Any] = ["schema_version": 1, "capture_session_id": "audio",
-            "meeting_relative_path": "Meetings/audio/meeting.md", "language": "en", "detected_languages": ["en"],
-            "engine": "fixture", "model": "fixture", "generated_at": "2026-01-01T00:00:00Z",
-            "audio_sources": [], "diagnostics": [], "segments": [
-                ["id": "early", "start": 2.0, "end": 3.0, "text": "Early synthetic speech", "language": "en", "track": "microphone", "speaker": "Me"],
-                ["id": "late", "start": 6.0, "end": 7.0, "text": "Later synthetic speech", "language": "en", "track": "system-audio", "speaker": "Guest"]]]
-        let transcriptURL = directory.appendingPathComponent("transcript.json")
-        try JSONSerialization.data(withJSONObject: transcript).write(to: transcriptURL)
-        // Use the public serialized extraction format, with all four marker categories.
-        let evidence: [String: Any] = ["segment_id": "early", "start_seconds": 2.0, "end_seconds": 3.0]
-        let outcome: [String: Any] = ["id": "marker", "text": "Fixture annotation", "citations": [evidence]]
-        let extraction: [String: Any] = ["schema_version": 1, "meeting": "Meetings/audio/meeting.md", "transcript": "Meetings/audio/transcript.json",
-            "decisions": [outcome], "my_action_items": [outcome], "other_action_items": [], "open_questions": [outcome]]
-        try JSONSerialization.data(withJSONObject: extraction).write(to: directory.appendingPathComponent("summary-extraction.json"))
-        let transcriptBefore = try Data(contentsOf: transcriptURL)
-        let newMedia = fixtureRoot.appendingPathComponent("workspace/RecordingMedia/2026")
-        try FileManager.default.createDirectory(at: newMedia, withIntermediateDirectories: true)
-        try FileManager.default.moveItem(at: oldMedia, to: newMedia.appendingPathComponent("audio"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: bundle.path))
-        app.launchEnvironment["STILLMATTER_VALIDATION_RECORDING_MEDIA_ROOT"] = newMedia.deletingLastPathComponent().path
-        app.launch()
-        XCTAssertTrue(app.windows["Stillmatter"].waitForExistence(timeout: 15))
-        app.buttons["sidebar-meetings"].click()
-        let recording = app.tables["Meetings"].staticTexts["Playable meeting"].firstMatch
-        XCTAssertTrue(recording.waitForExistence(timeout: 10))
-        recording.click()
-        app.radioButtons["Transcript"].click()
-        let slider = app.sliders["Meeting audio position"]
-        XCTAssertTrue(slider.waitForExistence(timeout: 10))
-        XCTAssertTrue(slider.isEnabled)
-        XCTAssertGreaterThan(slider.frame.width, 250, "The seek track must not collapse inside the audio stack")
-        attachMeetingScreenshot("Native playable recording before seek")
-        slider.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).click()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "0:06 / 0:08")).firstMatch.waitForExistence(timeout: 5),
-                      "Clicking three quarters of the track must seek the selected recording")
-        attachMeetingScreenshot("Native playable recording after seek")
-        let beforeArrow = String(describing: try XCTUnwrap(slider.value))
-        slider.typeKey(.rightArrow, modifierFlags: [])
-        let movedForward = NSPredicate { _, _ in slider.value.map { String(describing: $0) } != beforeArrow }
-        expectation(for: movedForward, evaluatedWith: slider)
-        waitForExpectations(timeout: 5)
-        let afterRight = String(describing: try XCTUnwrap(slider.value))
-        slider.typeKey(.leftArrow, modifierFlags: [])
-        let movedBack = NSPredicate { _, _ in slider.value.map { String(describing: $0) } != afterRight }
-        expectation(for: movedBack, evaluatedWith: slider)
-        waitForExpectations(timeout: 5)
-        XCTAssertEqual(String(describing: try XCTUnwrap(slider.value)), beforeArrow)
-        XCTAssertTrue(app.buttons["Play Meeting audio"].exists, "Seeking must preserve paused playback")
-        let markers = app.menuButtons["meeting-playback-markers"]
-        XCTAssertTrue(markers.isEnabled)
-        markers.click()
-        app.typeKey("q", modifierFlags: [])
-        app.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Play Meeting audio"].exists)
-        let actions = app.menuButtons["transcript-actions-early"]
-        actions.click()
-        app.typeKey("j", modifierFlags: [])
-        app.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(app.buttons["Play Meeting audio"].exists)
-
-        app.buttons["Play Meeting audio"].click()
-        slider.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).click()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5),
-                      "Seeking while playing must move the playhead rather than resetting it")
-        XCTAssertTrue(app.buttons["Pause Meeting audio"].waitForExistence(timeout: 5))
-        slider.typeKey(.rightArrow, modifierFlags: [])
-        XCTAssertTrue(app.buttons["Pause Meeting audio"].exists, "Keyboard seeking must preserve playing intent")
-        app.buttons["Pause Meeting audio"].click()
-        let retainedMic = newMedia.appendingPathComponent("audio/mic.caf")
-        let retainedSystem = newMedia.appendingPathComponent("audio/system.caf")
-        let micBefore = try Data(contentsOf: retainedMic)
-        let systemBefore = try Data(contentsOf: retainedSystem)
-        let doorway = directory.appendingPathComponent("meeting.md")
-        let doorwayBefore = try Data(contentsOf: doorway)
-        let tracks = app.popUpButtons["meeting-playback-track"]
-        let speed = app.popUpButtons["meeting-playback-speed"]
-        XCTAssertFalse(tracks.exists, "Track-isolation selection has been removed")
-        XCTAssertFalse(app.buttons["meeting-playback-forward"].exists)
-        XCTAssertFalse(app.buttons["meeting-playback-backward"].exists)
-        speed.click()
-        app.menuItems["2×"].click()
-        XCTAssertEqual(speed.value as? String, "2×")
-        slider.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).click()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:00 / 0:08")).firstMatch.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["meeting-playback-next-marker"].exists)
-        XCTAssertFalse(app.buttons["meeting-playback-previous-marker"].exists)
-        XCTAssertFalse(app.staticTexts["S Speech · D Decisions · A Actions · Q Questions"].exists)
-        XCTAssertEqual(try Data(contentsOf: transcriptURL), transcriptBefore)
-        // Native button clicks need not move keyboard focus from the Listing.
-        // These shortcuts are scoped to the Transcript controls, so focus the slider.
-        slider.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).click()
-        slider.typeKey("p", modifierFlags: .option)
-        XCTAssertTrue(app.buttons["Pause Meeting audio"].waitForExistence(timeout: 5))
-        app.buttons["Pause Meeting audio"].click()
-        app.buttons["transcript-time-early"].click()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:02 / 0:08")).firstMatch.waitForExistence(timeout: 5))
-        for tab in ["Summary", "Action Items", "Open Items", "My Notes"] {
-            app.radioButtons[tab].click()
-            XCTAssertFalse(speed.exists, "Player must only appear in Transcript")
-        }
-        app.radioButtons["Transcript"].click()
-        XCTAssertFalse(tracks.exists)
-        XCTAssertEqual(speed.value as? String, "2×")
-        let find = app.searchFields["meeting-transcript-search"]
-        find.click()
-        find.typeKey("p", modifierFlags: .option)
-        XCTAssertTrue(app.buttons["Play Meeting audio"].exists, "Text input must not start playback")
-        XCTAssertFalse(tracks.exists)
-        XCTAssertEqual(try Data(contentsOf: retainedMic), micBefore)
-        XCTAssertEqual(try Data(contentsOf: retainedSystem), systemBefore)
-        XCTAssertEqual(try Data(contentsOf: doorway), doorwayBefore)
-        let refreshedDoorway = Data(String(decoding: doorwayBefore, as: UTF8.self).replacingOccurrences(of: "Playable meeting", with: "Refreshed meeting").utf8)
-        try refreshedDoorway.write(to: doorway)
-        XCTAssertTrue(app.tables["Meetings"].staticTexts["Refreshed meeting"].firstMatch.waitForExistence(timeout: 10))
-        XCTAssertFalse(tracks.exists)
-        XCTAssertEqual(speed.value as? String, "2×")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:02 / 0:08")).firstMatch.exists,
-                      "Unrelated document refresh preserves the paused source position")
-
-        // Another Meeting must clear the previous transport, including queued callbacks.
-        app.terminate()
-        let micClock = """
-        {"audioClockSpans":[
-          {"hostStart":10,"hostEnd":11,"startFrame":0,"endFrame":48000,"sampleRate":48000,"generation":1},
-          {"hostStart":13,"hostEnd":20,"startFrame":48000,"endFrame":384000,"sampleRate":48000,"generation":2}
-        ]}
-        """
-        let systemClock = """
-        {"audioClockSpans":[
-          {"hostStart":10,"hostEnd":18,"startFrame":0,"endFrame":384000,"sampleRate":48000,"generation":1}
-        ]}
-        """
-        try Data(micClock.utf8).write(to: newMedia.appendingPathComponent("audio/mic.json"))
-        try Data(systemClock.utf8).write(to: newMedia.appendingPathComponent("audio/system.json"))
-        let missing = fixtureRoot.appendingPathComponent("workspace/Meetings/missing")
-        try FileManager.default.createDirectory(at: missing, withIntermediateDirectories: true)
-        try Data("---\ntitle: Missing evidence\n---\n# Missing evidence\n".utf8).write(to: missing.appendingPathComponent("meeting.md"))
-        app.launch()
-        XCTAssertTrue(app.windows["Stillmatter"].waitForExistence(timeout: 15))
-        app.buttons["sidebar-meetings"].click()
-        let first = app.tables["Meetings"].staticTexts["Refreshed meeting"].firstMatch
-        XCTAssertTrue(first.waitForExistence(timeout: 10))
-        first.click()
-        app.radioButtons["Transcript"].click()
-        let afterGap = app.buttons["transcript-time-early"]
-        expectation(for: NSPredicate(format: "exists == true AND enabled == true"), evaluatedWith: afterGap)
-        waitForExpectations(timeout: 10)
-        afterGap.click()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", "0:04 / 0:10")).firstMatch.waitForExistence(timeout: 5),
-                      "The file timestamp at two seconds maps to Meeting time four seconds after the capture gap")
-        XCTAssertEqual(try Data(contentsOf: transcriptURL), transcriptBefore)
-        XCTAssertEqual(try Data(contentsOf: retainedMic), micBefore)
-        speed.click()
-        let slowPlayback = app.menuItems.matching(NSPredicate(format: "title MATCHES %@", "0[.,]5×")).firstMatch
-        XCTAssertTrue(slowPlayback.waitForExistence(timeout: 5))
-        slowPlayback.click()
-        app.buttons["transcript-correct-early"].click()
-        let speakerName = app.textFields["meeting-speaker-name"]
-        XCTAssertTrue(speakerName.waitForExistence(timeout: 5))
-        let audition = app.buttons["meeting-speaker-audition"]
-        XCTAssertTrue(audition.isEnabled)
-        audition.click()
-        XCTAssertTrue(app.buttons["Pause Meeting audio"].waitForExistence(timeout: 5), "Audition seeks and plays the existing source")
-        speakerName.click(); speakerName.typeKey(.escape, modifierFlags: [])
-        XCTAssertFalse(speakerName.exists)
-        XCTAssertTrue(app.buttons["Pause Meeting audio"].waitForExistence(timeout: 5))
-        app.buttons["Pause Meeting audio"].click()
-        XCTAssertTrue(app.buttons["Play Meeting audio"].waitForExistence(timeout: 5))
-        app.buttons["Play Meeting audio"].click()
-        let second = app.tables["Meetings"].staticTexts["Missing evidence"].firstMatch
-        XCTAssertTrue(second.waitForExistence(timeout: 10))
-        second.click()
-        app.radioButtons["Transcript"].click()
-        XCTAssertFalse(app.sliders["Meeting audio position"].exists)
-        XCTAssertFalse(app.buttons["Play Meeting audio"].exists)
-        XCTAssertFalse(tracks.exists)
-        XCTAssertFalse(speed.exists)
-        XCTAssertFalse(app.buttons["meeting-playback-forward"].exists)
-        XCTAssertFalse(app.buttons["meeting-playback-backward"].exists)
-        XCTAssertFalse(app.buttons["meeting-playback-next-marker"].exists)
-        XCTAssertFalse(app.buttons["meeting-playback-previous-marker"].exists)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Recording Bundle unavailable")).firstMatch.exists)
-
-        // Purging a retained required track must disable playback after reload.
-        app.terminate()
-        try FileManager.default.removeItem(at: retainedMic)
-        app.launch()
-        XCTAssertTrue(app.windows["Stillmatter"].waitForExistence(timeout: 15))
-        app.buttons["sidebar-meetings"].click()
-        XCTAssertTrue(first.waitForExistence(timeout: 10))
-        first.click()
-        app.radioButtons["Transcript"].click()
-        XCTAssertFalse(app.sliders["Meeting audio position"].exists)
-        XCTAssertFalse(app.buttons["Play Meeting audio"].exists)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "missing")).firstMatch.exists)
-        XCTAssertEqual(try Data(contentsOf: retainedSystem), systemBefore)
-        XCTAssertEqual(try Data(contentsOf: doorway), refreshedDoorway)
-    }
-
-    func testTranscriptionLanguageSelectionPersistsAcrossNativeAppRestart() throws {
-        app.buttons["sidebar-recording"].click()
-        let language = app.popUpButtons["recording-language"]
-        XCTAssertTrue(language.waitForExistence(timeout: 10), app.debugDescription)
-        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: language)
-        waitForExpectations(timeout: 10)
-        XCTAssertEqual(language.value as? String, "Auto (mixed-language quality unverified)")
-
-        language.click()
-        let english = app.menuItems["English"]
-        XCTAssertTrue(english.waitForExistence(timeout: 5), app.debugDescription)
-        english.click()
-        XCTAssertEqual(language.value as? String, "English")
-        XCTAssertEqual(try settingsSnapshotLanguage(), "en", "The application SettingsStore should observe the selected language")
-
-        app.terminate()
-        app.launchEnvironment["STILLMATTER_VALIDATION_RECORDING_MEDIA_ROOT"] = fixtureRoot.appendingPathComponent("media").path
-        app.launchEnvironment["STILLMATTER_VALIDATION_WORKSPACE_ROOT"] = fixtureRoot.appendingPathComponent("workspace").path
-        app.launchEnvironment["STILLMATTER_VALIDATION_APPLICATION_SUPPORT_ROOT"] = fixtureRoot.appendingPathComponent("support").path
-        app.launchEnvironment["STILLMATTER_VALIDATION_PRESERVE_SETTINGS"] = "1"
-        app.launchEnvironment["STILLMATTER_VALIDATION_SETTINGS_SNAPSHOT_PATH"] = fixtureRoot.appendingPathComponent("settings.json").path
-        app.launch()
-        XCTAssertTrue(app.windows["Stillmatter"].waitForExistence(timeout: 15), app.debugDescription)
-        app.buttons["sidebar-recording"].click()
-        let reopenedLanguage = app.popUpButtons["recording-language"]
-        XCTAssertTrue(reopenedLanguage.waitForExistence(timeout: 10))
-        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: reopenedLanguage)
-        waitForExpectations(timeout: 10)
-        XCTAssertEqual(try settingsSnapshotLanguage(), "en", "The application should reload the persisted transcription language")
-        XCTAssertEqual(reopenedLanguage.value as? String, "English")
-    }
-
-    private func settingsSnapshotLanguage() throws -> String? {
-        let data = try Data(contentsOf: fixtureRoot.appendingPathComponent("settings.json"))
-        let settings = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        return settings["transcriptionLanguage"] as? String
-    }
-
-    func attachMeetingScreenshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+    private func attach(_ text: String, named name: String) {
+        let attachment = XCTAttachment(string: text)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
     }
 
+    private func attachFixtureState() {
+        guard let fixtureRoot, let enumerator = FileManager.default.enumerator(at: fixtureRoot,
+            includingPropertiesForKeys: [.isRegularFileKey]) else { return }
+        let files = enumerator.compactMap { $0 as? URL }.prefix(256)
+        var snapshot = ""
+        for file in files {
+            snapshot += "\n\(file.path.replacingOccurrences(of: fixtureRoot.path, with: "<fixture>"))\n"
+            if ["md", "json", "log"].contains(file.pathExtension), let data = try? Data(contentsOf: file) {
+                snapshot += String(decoding: data.prefix(16_384), as: UTF8.self) + "\n"
+            }
+        }
+        attach(snapshot, named: "Disposable fixture state and logs")
+    }
 }
