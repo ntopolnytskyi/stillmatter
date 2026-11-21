@@ -81,26 +81,6 @@ public final class MeetingNoteTodoBridge {
         }
     }
 
-    /// Reassigns a note-authored item. Owners other than Me stay in the Meeting and
-    /// are removed from the personal queue projection.
-    @discardableResult
-    public func reassign(itemID: String, to owner: String,
-                         expectedQueueVersion: WorkspaceFileVersion) throws -> WorkspaceFileVersion {
-        let normalizedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedOwner.isEmpty else { throw TodoItemMutationError.invalidOwner(owner) }
-        guard let item = try canonicalItem(itemID) else { throw TodoItemMutationError.itemNotFound(itemID) }
-        return try update(item: item, expectedQueueVersion: expectedQueueVersion) { line, metadata in
-            let reassigned = MeetingItemMetadata(v: metadata.v, id: metadata.id, owner: normalizedOwner,
-                review: metadata.review, origin: metadata.origin, legacyID: metadata.legacyID, citations: metadata.citations)
-            let parsed = TodoMarkdownCheckbox.parse(line)
-            guard let parsed else { throw TodoItemMutationError.itemNotFound(itemID) }
-            let ending = line.hasSuffix("\r") ? "\r" : ""
-            let body = Self.removingMetadata(parsed.text)
-            return (Self.checkboxPrefix(in: line) + body + " <!-- sm-item:" + Self.encode(reassigned) + " -->" + ending,
-                    normalizedOwner == "me")
-        }
-    }
-
     /// Removes Todo references whose canonical checkbox no longer exists. This
     /// never rewrites a Meeting file; a later external restoration can be adopted
     /// again at an explicit save boundary.

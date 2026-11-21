@@ -117,60 +117,44 @@ final class MeetingPlaybackHostedTests: XCTestCase {
     }
 
     @MainActor
-    func testWaveformCombinesCollocatedAnnotations() {
-        let view = MeetingManagementView(readModelProvider: { nil }, mutationExecutorProvider: { nil },
-            playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in })
-        view.waveform.maxValue = 100
-        view.waveform.markerLabels = [(10, "S"), (10, "D"), (10, "A"), (10, "Q"), (99, "Q")]
-        XCTAssertEqual(view.waveform.renderedMarkerLabels.map(\.symbols), ["SDAQ", "Q"], "Collocated outcomes remain visible alongside speech")
-        view.waveform.maxValue = 200
-        XCTAssertEqual(view.waveform.renderedMarkerLabels.map(\.symbols), ["SDAQ", "Q"])
-    }
-
-    @MainActor
-    func testTimelineAnnotationsValidateSourcesAndWaveformSeeks() async throws {
+    func testWaveformSeekingAndOutcomeSourceNavigation() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appendingPathComponent("workspace")
-        let folder = workspace.appendingPathComponent("Meetings/markers")
+        let folder = workspace.appendingPathComponent("Meetings/source-navigation")
         let media = root.appendingPathComponent("media")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
         let mic = try audio(media.appendingPathComponent("mic.caf"), amplitude: 0.1)
         let metadata = media.appendingPathComponent("mic.json")
         try Data("{}".utf8).write(to: metadata)
-        let meeting = "Meetings/markers/meeting.md"
+        let meeting = "Meetings/source-navigation/meeting.md"
         let bundle = try RecordingBundleFinalizer().finalize(mic: MicTrackRecordingMetadata(
-            captureSessionID: "markers", meetingRelativePath: meeting, recoveryFilePath: mic.path,
+            captureSessionID: "source-navigation", meetingRelativePath: meeting, recoveryFilePath: mic.path,
             finalFilePath: media.appendingPathComponent("missing.m4a").path, metadataFilePath: metadata.path,
             startedAt: Date(), status: .partial, durationSeconds: 2, codec: "caf", sampleRate: 8_000, channelCount: 1),
             system: nil, reason: .recovery)
-        try Data("---\ntitle: Markers\ncapture_session_id: markers\nrecording_bundle: \(bundle.bundleFilePath)\n---\n# Markers\n".utf8)
+        try Data("---\ntitle: Source navigation\ncapture_session_id: source-navigation\nrecording_bundle: \(bundle.bundleFilePath)\n---\n# Source navigation\n".utf8)
             .write(to: folder.appendingPathComponent("meeting.md"))
         let segments = (0..<205).map { index in
             TranscriptSegment(id: "prefix-\(index)", startSeconds: Double(index) / 250, endSeconds: Double(index) / 250 + 0.001,
                 text: "Earlier phrase \(index)", language: .english, track: .microphone, speaker: "Me")
         } + [TranscriptSegment(id: "one", startSeconds: 0.25, endSeconds: 0.5, text: "First", language: .english, track: .microphone, speaker: "Me"),
-                        TranscriptSegment(id: "two", startSeconds: 1.25, endSeconds: 1.5, text: "Second", language: .english, track: .microphone, speaker: "Me"),
-                        TranscriptSegment(id: "outside", startSeconds: 50, endSeconds: 51, text: "Unavailable", language: .english, track: .microphone, speaker: "Me")]
-        let transcript = TranscriptDocument(schemaVersion: 1, captureSessionID: "markers", meetingRelativePath: meeting,
+                        TranscriptSegment(id: "two", startSeconds: 1.25, endSeconds: 1.5, text: "Second", language: .english, track: .microphone, speaker: "Me")]
+        let transcript = TranscriptDocument(schemaVersion: 1, captureSessionID: "source-navigation", meetingRelativePath: meeting,
             language: .english, detectedLanguages: [.english], engine: "fixture", model: "fixture", generatedAt: Date(),
             audioSources: [], segments: segments, diagnostics: [])
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(transcript).write(to: folder.appendingPathComponent("transcript.json"))
-        let valid = MeetingOutcomeCitation(segmentID: "one", startSeconds: 0.25, endSeconds: 0.5)
-        let invalid = MeetingOutcomeCitation(segmentID: "unknown", startSeconds: 0.25, endSeconds: 0.5)
-        let outcome = MeetingOutcome(id: "decision", text: "Decide", citations: [.init(segmentID: "two", startSeconds: 1.25, endSeconds: 1.5), invalid])
-        let extraction = MeetingSummaryExtraction(meeting: meeting, transcript: "Meetings/markers/transcript.json",
-            decisions: [outcome], myActionItems: [MeetingOutcome(id: "mine", text: "Do", citations: [valid])],
-            otherActionItems: [MeetingOutcome(id: "other", text: "Review", citations: [valid])],
-            openQuestions: [MeetingOutcome(id: "question", text: "Why?", citations: [valid])])
+        let outcome = MeetingOutcome(id: "decision", text: "Decide", citations: [.init(segmentID: "two", startSeconds: 1.25, endSeconds: 1.5)])
+        let extraction = MeetingSummaryExtraction(meeting: meeting, transcript: "Meetings/source-navigation/transcript.json",
+            decisions: [outcome], myActionItems: [], otherActionItems: [], openQuestions: [])
         try encoder.encode(extraction).write(to: folder.appendingPathComponent("summary-extraction.json"))
         let vault = WorkspaceVault(workspaceRootURL: workspace, appSupportRootURL: root.appendingPathComponent("support"))
         let service = MeetingManagementService(vault: vault)
-        let canonical = try service.detail(for: "markers")
-        XCTAssertEqual(canonical.transcript.count, 208)
+        let canonical = try service.detail(for: "source-navigation")
+        XCTAssertEqual(canonical.transcript.count, 207)
         XCTAssertEqual(canonical.playback.capability, .microphoneOnly, canonical.playback.message)
         let readModel = MeetingReadModel(workspaceID: UUID().uuidString) { MeetingManagementReadSource(serviceProvider: { service }) }
         let controller = MeetingAudioPlaybackController()
@@ -186,8 +170,6 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         await fulfillment(of: [loaded], timeout: 5)
         XCTAssertEqual(controller.state.track, .both, "Playback includes every available track without a selection control")
         XCTAssertTrue(view.playbackSpeed.isEnabled)
-        XCTAssertEqual(Set(view.waveform.markerLabels.map(\.symbol)), ["S", "D", "A", "Q"])
-        XCTAssertEqual(view.waveform.markerLabels.count, 211, "Invalid citations and outside-recording speech do not become markers")
         view.openTimeline()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -200,28 +182,15 @@ final class MeetingPlaybackHostedTests: XCTestCase {
         view.waveform.doubleValue = 0.25
         view.waveform.sendAction(view.waveform.action, to: view.waveform.target)
         XCTAssertEqual(controller.state.position, 0.25)
-        XCTAssertTrue(view.markerPicker.isEnabled)
-        let markers = try XCTUnwrap(view.markerPicker.menu).items.dropFirst()
-        XCTAssertEqual(markers.count, 211)
-        for item in markers.filter({ $0.title.hasSuffix("one") || $0.title.hasSuffix("two") }) {
-            view.selectPlaybackMarker(item)
-            XCTAssertEqual(view.timelineNavigation.jump?.segmentID, item.title.hasSuffix("two") ? "two" : "one")
-            XCTAssertEqual(controller.state.position, item.title.hasSuffix("two") ? 1.25 : 0.25, accuracy: 0.001)
-            XCTAssertFalse(controller.state.isPlaying)
-        }
-        controller.play()
-        view.selectPlaybackMarker(try XCTUnwrap(markers.first))
-        XCTAssertTrue(controller.state.isPlaying)
-        controller.pause()
         func find<T: NSView>(_ id: String, in parent: NSView) throws -> T {
             if parent.accessibilityIdentifier() == id, let result = parent as? T { return result }
             for child in parent.subviews { if let result: T = try? find(id, in: child) { return result } }
-            throw NSError(domain: "Missing marker control", code: 1)
+            throw NSError(domain: "Missing playback control", code: 1)
         }
         let decisionID = try XCTUnwrap(MeetingOutcomeDocument.entries(in: canonical.summary!.decisions, defaultKind: .decision).first?.id)
         let source: NSButton = try find("meeting-outcome-source-" + decisionID + "-0", in: view)
         source.performClick(nil)
-        XCTAssertEqual(view.selectedID, "markers")
+        XCTAssertEqual(view.selectedID, "source-navigation")
         XCTAssertEqual(view.meetingsModel.detail.page, .transcript)
         XCTAssertEqual(view.timelineNavigation.jump?.segmentID, "two")
         XCTAssertEqual(controller.state.position, 1.25, accuracy: 0.001)

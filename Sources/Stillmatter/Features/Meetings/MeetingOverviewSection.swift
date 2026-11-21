@@ -12,8 +12,6 @@ struct MeetingOverviewSection: View {
     let expand: () -> Void
     let edit: () -> Void
     let copy: () -> Void
-    let canReassignNoteTask: Bool
-    let reassignNoteTask: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: GraphiteFocusPresentation.Space.flush) {
@@ -22,11 +20,6 @@ struct MeetingOverviewSection: View {
                 Spacer()
                 Button("Edit", action: edit).disabled(!canEdit)
                     .accessibilityIdentifier(editIdentifier)
-                if title == "My notes" {
-                    Button("Reassign task", action: reassignNoteTask)
-                        .disabled(!canReassignNoteTask)
-                        .accessibilityIdentifier("meeting-note-task-reassign")
-                }
                 Menu("More") {
                     Button("Open source document", action: expand).disabled(!canEdit)
                     Button("Copy", action: copy).disabled(content.isEmpty)

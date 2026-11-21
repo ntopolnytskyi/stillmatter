@@ -9,10 +9,6 @@ import StillmatterPresentation
 /// Meeting detail canvas. `browserView` is hosted independently in the shell's content-list region.
 final class MeetingManagementView: NSView {
     let browserView = NSView()
-    private let importServiceProvider: () -> MeetingImportService?
-    private lazy var importControls = MeetingImportControls(controls: controls, serviceProvider: importServiceProvider) { [weak self] in
-        self?.meetingsModel.refresh()
-    }
     private let calendarSnapshot: (Date) -> CalendarMeetingSnapshot
     private let controls: GraphiteFocusControls
 
@@ -161,9 +157,6 @@ final class MeetingManagementView: NSView {
     let waveform = MeetingWaveformView()
     let audioTime = NSTextField(labelWithString: "0:00 / 0:00")
     lazy var playbackSpeed = controls.popup(identifier: "meeting-playback-speed")
-    private let linkedItemPanel = MeetingTextEditPanel()
-    lazy var markerPicker = controls.popup(identifier: "meeting-playback-markers")
-    private var playbackMarkers: [(citation: MeetingCitation, seconds: Double, symbol: String)] = []
     private var audioTimeWidth: NSLayoutConstraint?
     private var waveformWidth: NSLayoutConstraint?
     var audioPlayer: MeetingAudioPlayer? { (currentPlaybackTransport() as? MeetingAudioPlaybackController)?.activePlayer }
@@ -190,11 +183,9 @@ final class MeetingManagementView: NSView {
         presentationMetrics: MeetingPresentationMetrics? = nil,
         calendarSnapshot: @escaping (Date) -> CalendarMeetingSnapshot = { CalendarMeetingProvider().snapshot(on: $0) },
         readTranscriptView: @escaping () -> TranscriptReadingView = { .timestamps },
-        saveTranscriptView: @escaping (TranscriptReadingView) -> Void = { _ in },
-        importServiceProvider: @escaping () -> MeetingImportService? = { nil }
+        saveTranscriptView: @escaping (TranscriptReadingView) -> Void = { _ in }
     ) {
         self.calendarSnapshot = calendarSnapshot
-        self.importServiceProvider = importServiceProvider
         self.readModelProvider = readModelProvider
         self.mutationExecutorProvider = mutationExecutorProvider
         self.playbackTransportProvider = playbackTransportProvider
@@ -453,7 +444,7 @@ final class MeetingManagementView: NSView {
         updateQueueButtons()
         queue.orientation = .horizontal
         queue.spacing = GraphiteFocusPresentation.Space.primitive
-        let filters = NSStackView(views: [header, importControls, searchRow, queue, advancedFilters])
+        let filters = NSStackView(views: [header, searchRow, queue, advancedFilters])
         filters.orientation = .vertical
         filters.alignment = .leading
         filters.spacing = GraphiteFocusPresentation.Space.compact
@@ -532,7 +523,7 @@ final class MeetingManagementView: NSView {
         waveform.target = self
         waveform.action = #selector(seekAudio(_:))
         waveform.setAccessibilityLabel("Meeting audio position")
-        waveform.toolTip = "Click or drag to seek Meeting audio. S: Speech · D: Decisions · A: Actions · Q: Questions"
+        waveform.toolTip = "Click or drag to seek Meeting audio."
         playButton.isEnabled = false
         waveform.isEnabled = false
         waveform.translatesAutoresizingMaskIntoConstraints = false
@@ -560,17 +551,7 @@ final class MeetingManagementView: NSView {
         playbackSpeed.target = self
         playbackSpeed.action = #selector(changePlaybackSpeed)
         playbackSpeed.toolTip = "Playback speed"
-        markerPicker.pullsDown = true
-        markerPicker.setAccessibilityLabel("Timeline markers: Speech, Decisions, Actions, Questions")
-        let legend = NSTextField(labelWithString: "S: Speech · D: Decisions · A: Actions · Q: Questions")
-        let legendText = NSMutableAttributedString(string: legend.stringValue)
-        for (symbol, title) in [("S", "S: Speech"), ("D", "D: Decisions"), ("A", "A: Actions"), ("Q", "Q: Questions")] {
-            legendText.addAttribute(.foregroundColor, value: MeetingWaveformCell.markerColor(symbol, colors: presentationColors), range: (legend.stringValue as NSString).range(of: title))
-        }
-        legend.attributedStringValue = legendText
-        legend.setAccessibilityIdentifier("meeting-playback-legend")
-        legend.font = GraphiteFocusPresentation.Typography.metadata
-        let audioSection = NSStackView(views: [audioStatus, transport, markerPicker, legend])
+        let audioSection = NSStackView(views: [audioStatus, transport])
         audioSection.orientation = .vertical
         audioSection.alignment = .leading
         audioSection.spacing = GraphiteFocusPresentation.Space.compact
@@ -629,7 +610,7 @@ final class MeetingManagementView: NSView {
         pinnedAudio.alignment = .leading
         pinnedAudio.spacing = GraphiteFocusPresentation.Space.compact
         pinnedAudio.isHidden = true
-        pinnedAudio.addArrangedSubview(section("Meeting audio", body: audioSection))
+        pinnedAudio.addArrangedSubview(section("Meeting audio", body: audioSection, showsHeading: false))
         pageSelector.target = self
         pageSelector.action = #selector(selectDetailPage(_:))
         pageSelector.selectedSegment = 0
@@ -791,15 +772,15 @@ final class MeetingManagementView: NSView {
 
     private func textSection(_ title: String) -> NSView {
         let card = MeetingOverviewHostingView(rootView: MeetingOverviewSection(title: title, editIdentifier: title == "Summary" ? "meeting-overview-edit-summary" : "meeting-overview-edit-notes", content: "", unavailable: "Content unavailable.",
-            canEdit: false, expand: {}, edit: {}, copy: {}, canReassignNoteTask: false, reassignNoteTask: {}))
+            canEdit: false, expand: {}, edit: {}, copy: {}))
         card.translatesAutoresizingMaskIntoConstraints = false
         if title == "Summary" { summaryOverviewSection = card }
         else { notesOverviewSection = card }
         return card
     }
 
-    private func section(_ title: String, body: NSView) -> NSView {
-        let stack = NSStackView(views: [sectionHeading(title), body])
+    private func section(_ title: String, body: NSView, showsHeading: Bool = true) -> NSView {
+        let stack = NSStackView(views: showsHeading ? [sectionHeading(title), body] : [body])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = GraphiteFocusPresentation.Space.compact
@@ -1620,9 +1601,9 @@ final class MeetingManagementView: NSView {
 
     private func showUnavailableOverviewSections() {
         summaryOverviewSection?.update(MeetingOverviewSection(title: "Summary", editIdentifier: "meeting-overview-edit-summary", content: "", unavailable: "No meeting selected.",
-            canEdit: false, expand: {}, edit: {}, copy: {}, canReassignNoteTask: false, reassignNoteTask: {}))
+            canEdit: false, expand: {}, edit: {}, copy: {}))
         notesOverviewSection?.update(MeetingOverviewSection(title: "My notes", editIdentifier: "meeting-overview-edit-notes", content: "", unavailable: "No meeting selected.",
-            canEdit: false, expand: {}, edit: {}, copy: {}, canReassignNoteTask: false, reassignNoteTask: {}))
+            canEdit: false, expand: {}, edit: {}, copy: {}))
     }
 
     private func beginSummaryEditing() { beginTextEditing(.summary) }
@@ -1752,53 +1733,12 @@ final class MeetingManagementView: NSView {
             canEdit: detail.summaryVersion != nil && !detail.row.isArchived,
             expand: { [weak self] in self?.expandSummary() },
             edit: { [weak self] in self?.beginSummaryEditing() },
-            copy: { [weak self] in self?.copySummary() }, canReassignNoteTask: false, reassignNoteTask: {}))
+            copy: { [weak self] in self?.copySummary() }))
         notesOverviewSection?.update(MeetingOverviewSection(title: "My notes", editIdentifier: "meeting-overview-edit-notes", content: detail.humanNotes.trimmingCharacters(in: .newlines),
             unavailable: "No notes yet. Choose Edit to add notes.", canEdit: detail.notesVersion != nil && !detail.row.isArchived,
             expand: { [weak self] in self?.expandNotes() },
             edit: { [weak self] in self?.beginNotesEditing() },
-            copy: { [weak self] in self?.copyNotes() },
-            canReassignNoteTask: noteTaskItems(in: detail).isEmpty == false && !detail.row.isArchived,
-            reassignNoteTask: { [weak self] in self?.presentNoteTaskReassignment(for: detail) }))
-    }
-
-    private func noteTaskItems(in detail: MeetingBrowserDetail) -> [TodoItem] {
-        TodoItemParser().parse(markdown: detail.humanNotes,
-            relativePath: (detail.row.meetingRelativePath as NSString).deletingLastPathComponent + "/my-notes.md")
-            .filter { UUID(uuidString: $0.id) != nil }
-    }
-
-    private func presentNoteTaskReassignment(for detail: MeetingBrowserDetail) {
-        guard window != nil, !detail.row.isArchived, selectedID == detail.row.id else { return }
-        let items = noteTaskItems(in: detail)
-        guard !items.isEmpty else { return }
-        let selector = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 28), pullsDown: false)
-        for item in items { selector.addItem(withTitle: item.title); selector.lastItem?.representedObject = item.id }
-        let owner = NSTextField(string: "")
-        owner.placeholderString = "Person ID (for example person-alex)"
-        owner.setAccessibilityIdentifier("meeting-note-task-owner")
-        owner.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
-        let controls = NSStackView(views: [selector, owner])
-        controls.orientation = .vertical
-        controls.spacing = GraphiteFocusPresentation.Space.compact
-        let alert = NSAlert()
-        alert.messageText = "Reassign note-authored task"
-        alert.informativeText = "The task stays in My Notes and leaves your personal Todo queue. Enter the Person ID to assign it to."
-        alert.accessoryView = controls
-        alert.addButton(withTitle: "Reassign")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let itemID = selector.selectedItem?.representedObject as? String else { return }
-        meetingsModel.detail.reassignNoteTask(itemID: itemID, owner: owner.stringValue) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success:
-                self.status.stringValue = "Task reassigned. It remains in My Notes."
-                self.meetingsModel.detail.refreshSelectedDetail()
-            case let .failure(error):
-                self.status.stringValue = "Could not reassign task: \(error.localizedDescription)"
-            }
-        }
+            copy: { [weak self] in self?.copyNotes() }))
     }
 
     @objc private func copyOutcome(_ sender: NSButton) {
@@ -1824,9 +1764,6 @@ final class MeetingManagementView: NSView {
     }
 
     private func clearEvidence(preserveTranscriptReader: Bool = false) {
-        playbackMarkers = []
-        waveform.markerLabels = []
-        markerPicker.removeAllItems(); markerPicker.isEnabled = false
         if !preserveTranscriptReader {
             timelineRows.arrangedSubviews.forEach { timelineRows.removeArrangedSubview($0); $0.removeFromSuperview() }
         }
@@ -1850,7 +1787,6 @@ final class MeetingManagementView: NSView {
 
     func renderEvidence(_ detail: MeetingBrowserDetail) {
         clearEvidence(preserveTranscriptReader: true)
-        renderPlaybackMarkers(detail)
         if detail.transcript.isEmpty {
             transcriptRows.addArrangedSubview(NSTextField(wrappingLabelWithString: "No timestamped Transcript is available. Check Processing & source files for an available source or failed Job."))
         }
@@ -1906,48 +1842,6 @@ final class MeetingManagementView: NSView {
         renderTimeline(detail)
         renderOutcomes(detail)
         updateActiveSegment(at: meetingsModel.detail.playbackState.position)
-    }
-
-    private func renderPlaybackMarkers(_ detail: MeetingBrowserDetail) {
-        let duration = meetingsModel.detail.playbackState.duration
-        playbackMarkers = detail.transcript.compactMap { segment in
-            guard let seconds = segment.seekSeconds, seconds.isFinite, seconds >= 0, seconds <= duration else { return nil }
-            return (MeetingCitation(segmentID: segment.id, startSeconds: segment.startSeconds,
-                endSeconds: segment.endSeconds, seekSeconds: seconds), seconds, "S")
-        }
-        let groups: [(String, [MeetingCitation])] = [
-            ("D", detail.decisions.flatMap(\.citations)),
-            ("A", (detail.myActionItems + detail.otherActionItems).flatMap(\.citations)),
-            ("Q", detail.openQuestions.flatMap(\.citations))
-        ]
-        for (symbol, citations) in groups {
-            for citation in citations where detail.transcript.contains(where: citation.matches) {
-                guard let seconds = citation.validatedSeekSeconds(playbackDuration: duration) else { continue }
-                playbackMarkers.append((citation, seconds, symbol))
-            }
-        }
-        playbackMarkers.sort { $0.seconds < $1.seconds }
-        waveform.markerLabels = playbackMarkers.map { ($0.seconds, $0.symbol) }
-        markerPicker.removeAllItems()
-        markerPicker.addItem(withTitle: "Timeline markers…")
-        markerPicker.menu?.autoenablesItems = false
-        for marker in playbackMarkers {
-            let names = ["S": "Speech", "D": "Decision", "A": "Action", "Q": "Question"]
-            let item = NSMenuItem(title: "\(names[marker.symbol] ?? marker.symbol) · \(timeLabel(marker.citation.startSeconds)) · \(marker.citation.segmentID)", action: #selector(selectPlaybackMarker(_:)), keyEquivalent: "")
-            item.target = self; item.representedObject = OutcomeSourceTarget(meetingID: detail.row.id, citation: marker.citation, kind: .transcript)
-            item.isEnabled = meetingsModel.detail.playbackState.isAvailable
-            markerPicker.menu?.addItem(item)
-        }
-        markerPicker.isEnabled = !playbackMarkers.isEmpty && meetingsModel.detail.playbackState.isAvailable
-    }
-
-    @objc func selectPlaybackMarker(_ sender: NSMenuItem) {
-        guard let target = sender.representedObject as? OutcomeSourceTarget,
-              let detail = displayedDetail, selectedID == target.meetingID, audioSource == detail.playback,
-              meetingsModel.detail.playbackState.isAvailable, detail.transcript.contains(where: target.citation.matches),
-              let seconds = target.citation.validatedSeekSeconds(playbackDuration: meetingsModel.detail.playbackState.duration) else { return }
-        timelineNavigation.show(seconds: target.citation.startSeconds, segmentID: target.citation.segmentID, kind: .transcript)
-        meetingsModel.detail.seekPlayback(to: seconds)
     }
 
     private func renderOutcomes(_ detail: MeetingBrowserDetail) {
@@ -2399,38 +2293,7 @@ final class MeetingManagementView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: dismissal)
     }
 
-    private func presentLinkedItem(_ phrase: TranscriptReaderPhrase, kind: TranscriptLinkedItem.Kind) {
-        guard let detail = displayedDetail, !detail.row.isArchived, !meetingsModel.isDirty,
-              let source = detail.transcript.first(where: { $0.id == phrase.sourceSegmentID }),
-              let version = kind == .note ? detail.notesVersion : detail.summaryVersion, let window else { return }
-        var draft = TranscriptLinkedItem(kind: kind, text: source.text, source: source)
-        let meetingID = detail.row.id
-        let context = detail.row.title + (kind == .action ? " · Assign an owner and approve in Action Items after saving." : " · User-authored, linked to Transcript.")
-        linkedItemPanel.present(over: window, field: "linked " + kind.rawValue, meeting: context, text: draft.text,
-            onChange: { draft.text = $0 }, onSave: { [weak self] text in
-                guard let self, self.selectedID == meetingID else { return }
-                draft.text = text
-                self.linkedItemPanel.setSaving(true)
-                self.meetingsModel.detail.createTranscriptItem(draft, baseVersion: version) { [weak self] result in
-                    guard let self else { return }
-                    switch result {
-                    case .success:
-                        self.linkedItemPanel.finish()
-                        self.window?.makeFirstResponder(self.transcriptReader.search)
-                    case let .failure(error):
-                        self.linkedItemPanel.showError("Save failed: " + error.localizedDescription + " Your draft is retained. Cancel and reopen to use the latest source or file.", conflict: false)
-                    }
-                }
-            }, onCancel: { [weak self] in
-                self?.linkedItemPanel.finish()
-                self?.window?.makeFirstResponder(self?.transcriptReader.search)
-            }, onReload: {})
-    }
-
     private func renderTimeline(_ detail: MeetingBrowserDetail) {
-        transcriptReader.configureLinkedItems(enabled: !detail.row.isArchived && !meetingsModel.isDirty) { [weak self] phrase, kind in
-            self?.presentLinkedItem(phrase, kind: kind)
-        }
         transcriptReader.configureCorrection(enabled: !detail.row.isArchived && !meetingsModel.isDirty,
             outdated: detail.analysisOutdated, reviewRequired: detail.speakerReviewRequired, review: detail.speakerCorrectionReview,
             correct: { [weak self] segmentID, name, completion in

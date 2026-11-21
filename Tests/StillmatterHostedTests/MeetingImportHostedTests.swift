@@ -14,10 +14,15 @@ final class MeetingImportHostedTests: XCTestCase {
         let jobs = try JobStore(databaseURL: root.appendingPathComponent("jobs.sqlite"))
         let service = MeetingImportService(vault: vault, mediaRootURL: root.appendingPathComponent("media"), jobStore: jobs)
         var callbacks = 0
-        let controls = MeetingImportControls(controls: GraphiteFocusControls(), serviceProvider: { service }, onImported: { callbacks += 1 })
+        let recording = CaptureRecordingView(serviceProvider: { nil }, rootURLProvider: { root },
+            teamsDetectionProvider: { nil }, jobRecordsProvider: { [] }, onOpenSettings: {},
+            importServiceProvider: { service }, onImported: { callbacks += 1 })
+        let controls = recording.importControls
+        XCTAssertTrue(controls.isDescendant(of: recording.contentStack))
+        XCTAssertEqual(controls.importButton.accessibilityIdentifier(), "recording-import")
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
         let unrelatedEditor = NSTextField(string: "Keep editing")
-        window.contentView = NSStackView(views: [controls, unrelatedEditor])
+        window.contentView = NSStackView(views: [recording, unrelatedEditor])
         defer { window.orderOut(nil) }
         let unavailable = MeetingImportControls(controls: GraphiteFocusControls(), serviceProvider: { nil }, onImported: {})
         unavailable.chooseFile()

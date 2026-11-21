@@ -3,34 +3,8 @@ import AppKit
 /// Draws the waveform inside a native slider, retaining its mouse, keyboard, focus and accessibility behavior.
 final class MeetingWaveformCell: NSSliderCell {
     var levels: [CGFloat] = [] { didSet { controlView?.needsDisplay = true } }
-    var markerLabels: [(seconds: Double, symbol: String)] = [] { didSet { groupMarkers() } }
-    private(set) var renderedMarkerLabels: [(fraction: Double, symbols: String)] = []
-    override var maxValue: Double {
-        didSet { if oldValue != maxValue { groupMarkers() } }
-    }
-
-    private func groupMarkers() {
-        var buckets: [Int: Set<String>] = [:]
-        for marker in markerLabels where marker.seconds.isFinite && marker.seconds >= 0 && marker.seconds <= maxValue {
-            let bucket = min(63, Int(marker.seconds / max(maxValue, 1) * 64))
-            buckets[bucket, default: []].insert(marker.symbol)
-        }
-        renderedMarkerLabels = buckets.keys.sorted().map { bucket in
-            (Double(bucket) / 64, ["S", "D", "A", "Q"].filter { buckets[bucket, default: []].contains($0) }.joined())
-        }
-        controlView?.needsDisplay = true
-    }
     var colors: GraphiteFocusPresentation.Colors = .init(environment: .system(window: nil)) {
         didSet { controlView?.needsDisplay = true }
-    }
-
-    static func markerColor(_ symbol: String, colors: GraphiteFocusPresentation.Colors) -> NSColor {
-        switch symbol {
-        case "D": return colors.success
-        case "A": return colors.accent
-        case "Q": return colors.attention
-        default: return colors.informational
-        }
     }
 
     override func drawBar(inside rect: NSRect, flipped: Bool) {
@@ -50,15 +24,6 @@ final class MeetingWaveformCell: NSSliderCell {
             (CGFloat(index) / CGFloat(samples.count) < fraction ? colors.accent : colors.textMetadata)
                 .withAlphaComponent(isEnabled ? 1 : 0.5).setFill()
             NSBezierPath(roundedRect: bar, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
-        }
-        // Grouping happens only when markers or duration change. Every category in a
-        // dense bucket remains visible; ticks draw at most 64 cached groups.
-        for marker in renderedMarkerLabels {
-            let x = bounds.minX + CGFloat(marker.fraction) * bounds.width
-            for (lane, symbol) in ["S", "D", "A", "Q"].enumerated() where marker.symbols.contains(symbol) {
-                (symbol as NSString).draw(at: NSPoint(x: x, y: bounds.maxY - 10 - CGFloat(lane) * 10),
-                    withAttributes: [.font: GraphiteFocusPresentation.Typography.metadata, .foregroundColor: Self.markerColor(symbol, colors: colors)])
-            }
         }
     }
 

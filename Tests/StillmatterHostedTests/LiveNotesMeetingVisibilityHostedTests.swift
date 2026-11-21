@@ -43,7 +43,7 @@ final class LiveNotesMeetingVisibilityHostedTests: XCTestCase {
         await fulfillment(of: [refreshed], timeout: 5)
         XCTAssertFalse(processingView.status.isHidden)
         let processingElements = visibleElements(in: processingView)
-        XCTAssertTrue(processingElements.contains { $0.contains("Processing is in progress") })
+        XCTAssertTrue(processingView.status.stringValue.contains("Processing is in progress"))
         XCTAssertFalse(processingElements.contains { $0.contains("Notes from Recording") || $0 == "Meeting audio" })
 
         let later = MeetingManagementService(vault: vault)
@@ -54,7 +54,8 @@ final class LiveNotesMeetingVisibilityHostedTests: XCTestCase {
         laterView.openTimeline()
         XCTAssertFalse(laterView.pinnedAudio.isHidden, "Transcript owns the audio controls")
         let laterElements = visibleElements(in: laterView)
-        XCTAssertTrue(laterElements.contains("Meeting audio"), "Visible elements: \(laterElements)")
+        XCTAssertFalse(laterElements.contains("Meeting audio"))
+        XCTAssertFalse(laterView.audioStatus.isHidden, "Unavailable audio still shows its status without a heading")
         XCTAssertEqual(laterView.displayedDetail?.humanNotes.trimmingCharacters(in: .newlines), "Notes from Recording")
     }
 

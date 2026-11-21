@@ -94,7 +94,6 @@ public enum MeetingMutationState: Equatable {
 }
 
 public enum MeetingMutation {
-    case createTranscriptItem(meetingID: String, draft: TranscriptLinkedItem, baseVersion: WorkspaceFileVersion)
     case saveOutcome(meetingID: String, entry: MeetingOutcomeEntry, delete: Bool, baseVersion: WorkspaceFileVersion)
     case mutateTags(meetingID: String, mutation: ItemTagMutation)
     case reviewMeetingItems(meetingID: String, items: [MeetingReviewItem], accept: Bool)
@@ -103,7 +102,6 @@ public enum MeetingMutation {
     case saveSummary(meetingID: String, sections: MeetingSummarySections, baseVersion: WorkspaceFileVersion)
     case saveActionDraft(id: String, title: String, comment: String)
     case reviewAction(id: String, accept: Bool)
-    case reassignNoteTask(meetingID: String, itemID: String, owner: String)
     case archive(meetingID: String)
     case associateCalendar(meetingID: String, event: CalendarMeeting?, resetTitle: Bool, baseVersion: WorkspaceFileVersion)
     case rename(meetingID: String, title: String, baseVersion: WorkspaceFileVersion)
@@ -338,16 +336,6 @@ public final class MeetingDetailModel: ObservableObject {
         }
     }
 
-    public func createTranscriptItem(_ draft: TranscriptLinkedItem, baseVersion: WorkspaceFileVersion,
-                                     completion: @escaping (Result<Void, Error>) -> Void) {
-        guard let detail else { completion(.failure(MeetingManagementError.unavailable)); return }
-        perform(.createTranscriptItem(meetingID: detail.row.id, draft: draft, baseVersion: baseVersion),
-                progress: "Saving linked item…", completion: completion) { [weak self] output in
-            guard case let .detail(saved) = output else { throw MeetingManagementError.unavailable }
-            self?.apply(saved)
-        }
-    }
-
     public func beginOutcome(_ entry: MeetingOutcomeEntry) {
         guard !hasDirtyDrafts, let detail, !detail.row.isArchived, let version = detail.summaryVersion else { return }
         outcomeDraft = MeetingOutcomeDraft(entry: entry, baseVersion: version)
@@ -441,13 +429,6 @@ public final class MeetingDetailModel: ObservableObject {
                              completion: ((Result<Void, Error>) -> Void)? = nil) {
         perform(.reviewAction(id: id, accept: accept), progress: accept ? "Accepting Action Item…" : "Dismissing Action Item…",
                 completion: completion)
-    }
-
-    public func reassignNoteTask(itemID: String, owner: String,
-                                 completion: ((Result<Void, Error>) -> Void)? = nil) {
-        guard let detail else { completion?(.failure(MeetingManagementError.unavailable)); return }
-        perform(.reassignNoteTask(meetingID: detail.row.id, itemID: itemID, owner: owner),
-                progress: "Reassigning note-authored task…", completion: completion)
     }
 
     public func archive(completion: ((Result<Void, Error>) -> Void)? = nil) {

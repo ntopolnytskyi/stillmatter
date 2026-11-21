@@ -47,17 +47,13 @@ final class MeetingNoteTodoBridgeTests: XCTestCase {
         XCTAssertEqual(reopened.allIndexed.filter { $0.id == item.id }.count, 1)
     }
 
-    func testReassignmentRemovesNoteTaskFromPersonalQueueAndSourceRemovalHidesIt() throws {
+    func testSourceRemovalHidesNoteTaskFromPersonalQueue() throws {
         let fixture = try NoteTodoFixture()
         defer { fixture.remove() }
-        try fixture.write("Meetings/one/my-notes.md", "- [ ] Reassign this\n")
+        try fixture.write("Meetings/one/my-notes.md", "- [ ] Remove this\n")
         let bridge = MeetingNoteTodoBridge(vault: fixture.vault)
         try bridge.adoptSavedNotes(at: "Meetings/one/my-notes.md")
-        let item = try XCTUnwrap(fixture.index.loadTaskViews(today: "2026-01-01").queue.first)
-
-        try bridge.reassign(itemID: item.id, to: "person-alex", expectedQueueVersion: fixture.queueVersion())
-        XCTAssertTrue(try fixture.index.loadTaskViews(today: "2026-01-01").queue.isEmpty)
-        XCTAssertTrue(try fixture.read("Meetings/one/my-notes.md").contains("owner\":\"person-alex\""))
+        XCTAssertEqual(try fixture.index.loadTaskViews(today: "2026-01-01").queue.count, 1)
 
         try fixture.write("Meetings/one/my-notes.md", "The source checkbox was removed.\n")
         XCTAssertTrue(try fixture.index.loadTaskViews(today: "2026-01-01").queue.isEmpty)

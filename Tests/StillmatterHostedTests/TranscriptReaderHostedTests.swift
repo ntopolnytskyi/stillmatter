@@ -47,11 +47,12 @@ final class TranscriptReaderHostedTests: XCTestCase {
         reader.setActivePhrase(nil)
         let afterTick: NSTextField = try find("transcript-text-one", in: reader)
         XCTAssertTrue(beforeTick === afterTick)
-        let menu = try XCTUnwrap(afterTick.menu)
-        for (index, expected) in ["Budget budget", "Me 00:00:42 Budget budget", "Me"].enumerated() {
-            reader.copyValue(menu.items[index])
-            XCTAssertEqual(NSPasteboard.general.string(forType: .string), expected)
-        }
+        let copy: NSButton = try find("transcript-copy-one", in: reader)
+        copy.performClick(nil)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Budget budget")
+        let copyTimestamp: NSButton = try find("transcript-copy-timestamp-one", in: reader)
+        copyTimestamp.performClick(nil)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Me 00:00:42 Budget budget")
         reader.load(meetingID: "other", phrases: [], hasAudio: false, seek: { _ in })
         XCTAssertEqual(reader.feedback.stringValue, "No Transcript available.")
         XCTAssertFalse(reader.nextPage.isEnabled)
@@ -79,9 +80,11 @@ final class TranscriptReaderHostedTests: XCTestCase {
         reader.search.stringValue = "phrase"
         reader.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: reader.search))
         reader.nextPage.performClick(nil)
-        XCTAssertEqual(reader.feedback.stringValue, "Results 101–200 of 205")
+        XCTAssertEqual(reader.state.page, 1)
+        XCTAssertTrue(reader.feedback.isHidden)
         reader.previousPage.performClick(nil)
-        XCTAssertEqual(reader.feedback.stringValue, "Results 1–100 of 205")
+        XCTAssertEqual(reader.state.page, 0)
+        XCTAssertTrue(reader.feedback.isHidden)
         let item = NSMenuItem(title: "Me", action: nil, keyEquivalent: "")
         item.representedObject = "Me"
         reader.selectSpeaker(item)
@@ -241,6 +244,22 @@ final class TranscriptReaderHostedTests: XCTestCase {
                                    text: "A paragraph of the conversation to read while the controls stay visible.", seekSeconds: Double($0 * 8))
         }, hasAudio: true, seek: { _ in })
         window.contentView?.layoutSubtreeIfNeeded()
+        for width in [1100.0, 720.0] {
+            window.setContentSize(NSSize(width: width, height: 700))
+            reader.layoutSubtreeIfNeeded()
+            let text: NSTextField = try find("transcript-text-s0", in: reader)
+            let copy: NSButton = try find("transcript-copy-s0", in: reader)
+            let timestamp: NSButton = try find("transcript-copy-timestamp-s0", in: reader)
+            let row: NSStackView = try find("transcript-row-s0", in: reader)
+            XCTAssertGreaterThan(text.bounds.width, 0)
+            let copyFrame = copy.alignmentRect(forFrame: copy.convert(copy.bounds, to: row))
+            let timestampFrame = timestamp.alignmentRect(forFrame: timestamp.convert(timestamp.bounds, to: row))
+            XCTAssertGreaterThan(copyFrame.minX, 0)
+            XCTAssertGreaterThanOrEqual(timestampFrame.minX, copyFrame.maxX)
+            XCTAssertEqual(timestampFrame.maxX, row.bounds.width - row.edgeInsets.right, accuracy: 1)
+        }
+        window.setContentSize(NSSize(width: 1100, height: 700))
+        reader.layoutSubtreeIfNeeded()
         let headingBefore = reader.heading.convert(reader.heading.bounds, to: nil)
         let filtersBefore = try XCTUnwrap(reader.kindButtons[.transcript]).convert(reader.kindButtons[.transcript]!.bounds, to: nil)
         let document = try XCTUnwrap(reader.itemsScroll.documentView)
@@ -264,34 +283,63 @@ final class TranscriptReaderHostedTests: XCTestCase {
     }
 
     @MainActor
-    func testLinkedCreationAndJumpMenusHaveKeyboardControlsAndUnavailableStates() throws {
+    func testRowCopyButtonsReplaceActionsAndWorkWithoutAudio() throws {
         let reader = TranscriptReaderView(controls: GraphiteFocusControls())
-        let phrase = TranscriptReaderPhrase(id: "late", seconds: 7200, speaker: "Guest", text: "Send report", seekSeconds: 7202)
-        var created: [String] = []
-        var sought: TranscriptReaderPhrase?
-        reader.configureLinkedItems(enabled: true) { phrase, kind in created.append(phrase.sourceSegmentID + ":" + kind.rawValue) }
-        reader.load(meetingID: "one", phrases: [phrase], hasAudio: true, seek: { sought = $0 })
+        let phrase = TranscriptReaderPhrase(id: "late", seconds: 7200, speaker: "Guest", text: "Send report", seekSeconds: nil)
+        reader.load(meetingID: "one", phrases: [phrase], hasAudio: false, seek: { _ in XCTFail("Missing audio") })
         reader.state.reveal(id: "late"); reader.moveNextMatch()
         let text: NSTextField = try find("transcript-text-late", in: reader)
-        XCTAssertEqual(text.menu?.items.map(\.title), ["Copy text", "Copy with timestamp", "Copy speaker", "Add Action Item…", "Add Decision…", "Add note…", "Jump to moment"])
-        let actions: NSPopUpButton = try find("transcript-actions-late", in: reader)
-        XCTAssertEqual(actions.menu?.items.dropFirst().map(\.title), text.menu?.items.map(\.title))
-        let menu = try XCTUnwrap(text.menu)
-        for item in menu.items[3...5] { reader.createLinkedItem(item) }
-        XCTAssertEqual(created, ["late:Action Item", "late:Decision", "late:note"])
-        reader.jumpToMoment(menu.items[6])
-        XCTAssertEqual(reader.state.selectedID, "late"); XCTAssertEqual(sought?.seekSeconds, 7202)
-        reader.configureLinkedItems(enabled: false) { _, _ in XCTFail("Disabled creation") }
-        let disabled: NSTextField = try find("transcript-text-late", in: reader)
-        XCTAssertTrue(disabled.menu!.items[3...5].allSatisfy { !$0.isEnabled })
-        reader.createLinkedItem(menu.items[3])
-        reader.load(meetingID: "one", phrases: [phrase], hasAudio: false, seek: { _ in XCTFail("Missing audio") })
-        let missing: NSTextField = try find("transcript-text-late", in: reader)
-        XCTAssertFalse(try XCTUnwrap(missing.menu?.items.last).isEnabled)
-        reader.jumpToMoment(menu.items[6])
-        reader.load(meetingID: "one", phrases: [], hasAudio: false, seek: { _ in XCTFail("Missing source") })
-        reader.createLinkedItem(menu.items[3])
-        reader.jumpToMoment(menu.items[6])
+        XCTAssertNil(text.menu)
+        XCTAssertThrowsError(try find("transcript-actions-late", in: reader) as NSPopUpButton)
+        let copy: NSButton = try find("transcript-copy-late", in: reader)
+        let timestamp: NSButton = try find("transcript-copy-timestamp-late", in: reader)
+        XCTAssertEqual(copy.title, "Copy")
+        XCTAssertEqual(timestamp.title, "Copy w Timestamp")
+        XCTAssertTrue(copy.isEnabled)
+        XCTAssertTrue(timestamp.isEnabled)
+        copy.performClick(nil)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Send report")
+        timestamp.performClick(nil)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Guest 02:00:00 Send report")
+        let row: NSStackView = try find("transcript-row-late", in: reader)
+        XCTAssertTrue(copy.isDescendant(of: row))
+        XCTAssertTrue(copy.superview === timestamp.superview)
+    }
+
+    @MainActor
+    func testHourJumpIsInHeaderAndOnlyVisibleForMeetingsLongerThanAnHour() throws {
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls())
+        let phrase = TranscriptReaderPhrase(id: "one", seconds: 0, speaker: "Me", text: "Hello", seekSeconds: 0)
+        for duration in [1800.0, 3600.0, 3601.0, 1800.0] {
+            reader.load(meetingID: "one", phrases: [phrase], hasAudio: true, duration: duration, seek: { _ in })
+            let jump: NSStackView = try find("meeting-transcript-jump", in: reader)
+            XCTAssertTrue(jump.superview === reader.heading.superview)
+            XCTAssertTrue(reader.hourPicker.superview === jump)
+            XCTAssertEqual(jump.isHidden, duration <= 3600)
+        }
+    }
+
+    @MainActor
+    func testActionHeaderShowsSpeakerAndMetadataChipsWithCleanCopyText() throws {
+        let phrase = TranscriptReaderPhrase(id: "action", seconds: 17, speaker: "Me",
+            text: "Drop many features. #ai-gen done: 2026-11-18", seekSeconds: 17,
+            kind: .action, context: "My action · accepted")
+        XCTAssertEqual(phrase.text, "Drop many features.")
+        XCTAssertEqual(phrase.chips, ["#ai-gen", "accepted", "done:2026-11-18"])
+        let reader = TranscriptReaderView(controls: GraphiteFocusControls())
+        reader.load(meetingID: "meeting", phrases: [phrase], hasAudio: true, seek: { _ in })
+        let speaker: NSTextField = try find("transcript-speaker-action", in: reader)
+        XCTAssertEqual(speaker.stringValue, "Me")
+        for (index, value) in phrase.chips.enumerated() {
+            let chip: NSTextField = try find("transcript-chip-action-\(index)", in: reader)
+            XCTAssertEqual(chip.stringValue, value)
+            XCTAssertTrue(chip.superview === speaker.superview)
+        }
+        let text: NSTextField = try find("transcript-text-action", in: reader)
+        XCTAssertEqual(text.stringValue, "Drop many features.")
+        let copy: NSButton = try find("transcript-copy-action", in: reader)
+        copy.performClick(nil)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Drop many features.")
     }
 
     @MainActor

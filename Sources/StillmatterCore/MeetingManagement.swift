@@ -181,16 +181,6 @@ public final class MeetingManagementService {
         if let meetingPath { onMeetingChanged([meetingPath]) }
     }
 
-    public func reassignNoteTask(itemID: String, owner: String, meetingID: String) throws {
-        let detail = try editableActionMeeting(meetingID)
-        let notesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
-        let matching = TodoItemParser().parse(markdown: detail.humanNotes, relativePath: notesPath).contains { $0.id == itemID }
-        guard matching else { throw TodoItemMutationError.itemNotFound(itemID) }
-        let queue = try vault.readMarkdown(relativePath: TodoItemIndex.mainTodoRelativePath)
-        try MeetingNoteTodoBridge(vault: vault).reassign(itemID: itemID, to: owner, expectedQueueVersion: queue.version)
-        onMeetingChanged([detail.row.meetingRelativePath])
-    }
-
     public func reviewAction(id: String, accept: Bool) throws {
         guard inbox != nil else { throw MeetingManagementError.unavailable }
         let meetingPath = proposalMeetingPath(id: id)

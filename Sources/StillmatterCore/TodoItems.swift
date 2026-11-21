@@ -232,7 +232,6 @@ public enum TodoItemMutationError: Error, Equatable, LocalizedError {
     case duplicateIdentity(String)
     case invalidReference(String)
     case invalidCanonicalMetadata(String)
-    case invalidOwner(String)
     case staleCanonicalItem(String)
 
     public var errorDescription: String? {
@@ -241,7 +240,6 @@ public enum TodoItemMutationError: Error, Equatable, LocalizedError {
         case let .duplicateIdentity(id): return "Multiple checkboxes or queue references use Todo identity \(id). Keep one canonical checkbox and one queue reference, then reload."
         case let .invalidReference(line): return "Invalid Todo reference: \(line). Restore its item UUID and reload."
         case let .invalidCanonicalMetadata(path): return "Malformed Action Item identity metadata in \(path). Repair its sm-item comment before reloading Todo."
-        case let .invalidOwner(owner): return "Todo owner \(owner) is empty. Choose a Person before reassigning this item."
         case let .staleCanonicalItem(id): return "Todo \(id) changed in its canonical file. Your source is preserved; reload before editing it."
         }
     }

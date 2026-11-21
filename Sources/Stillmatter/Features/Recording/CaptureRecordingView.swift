@@ -31,6 +31,10 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
     private let onOpenSettings: () -> Void
     private let confirmDestructiveAction: @MainActor (String, String, String) -> Bool
 
+    private let importServiceProvider: () -> MeetingImportService?
+    private let onImported: () -> Void
+    lazy var importControls = MeetingImportControls(controls: controls, serviceProvider: importServiceProvider, onImported: onImported)
+
     private let controls: GraphiteFocusControls
 
     let contentStack = NSStackView()
@@ -85,6 +89,8 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
         onTranscriptionLanguageChanged: @escaping (TranscriptLanguage) -> Void = { _ in },
         jobRecordsProvider: @escaping () -> [JobRecord],
         onOpenSettings: @escaping () -> Void,
+        importServiceProvider: @escaping () -> MeetingImportService? = { nil },
+        onImported: @escaping () -> Void = {},
         confirmDestructiveAction: @escaping @MainActor (String, String, String) -> Bool = { title, detail, action in
             let alert = NSAlert()
             alert.messageText = title
@@ -95,6 +101,8 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
             return alert.runModal() == .alertSecondButtonReturn
         }
     ) {
+        self.importServiceProvider = importServiceProvider
+        self.onImported = onImported
         self.controls = controls
         startButton = controls.button("Start Capture", identifier: "recording-start")
         stopButton = controls.button("Stop Capture", identifier: "recording-stop")
@@ -335,6 +343,7 @@ final class CaptureRecordingView: NSView, NSTextViewDelegate {
 
         configureStatePanel()
         addFullWidth(statePanel, to: contentStack)
+        addFullWidth(importControls, to: contentStack)
         addFullWidth(makeCaptureControls(), to: contentStack)
         addFullWidth(makePreflightSection(), to: contentStack)
         let liveNotes = makeLiveNotesSection()

@@ -28,7 +28,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
     let splitView = NSSplitView()
     let statusBar = NSView()
     private let statusBarContent = NSStackView()
-    let workspaceSplitView = NSSplitView()
+    let workspaceSplitView = WorkspaceSplitView()
     private var workspaceContainer = NSView()
     let sidebarContainer = NSView()
     let contentListContainer = NSView()
@@ -61,7 +61,9 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             self.settingsStore.settings = settings
         },
         jobRecordsProvider: jobRecordsProvider,
-        onOpenSettings: { [weak self] in self?.stateStore.state.select(.settings) }
+        onOpenSettings: { [weak self] in self?.stateStore.state.select(.settings) },
+        importServiceProvider: meetingImportServiceProvider,
+        onImported: { [weak self] in self?.meetingManagementView.meetingsModel.refresh() }
     )
     lazy var meetingManagementView: MeetingManagementView = {
         let workspace = MeetingManagementView(
@@ -78,8 +80,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
                 var settings = self.settingsStore.settings
                 settings.transcriptReadingView = view
                 self.settingsStore.settings = settings
-            },
-            importServiceProvider: meetingImportServiceProvider
+            }
         )
         workspace.setOnOpenSelection { [weak self] in
             guard let self, self.stateStore.state.selectedTab == .meetings else { return }
@@ -1207,6 +1208,7 @@ final class ShellViewController: NSViewController, NSSplitViewDelegate, NSToolba
             region.isHidden = !desired.contains(where: { $0 === region })
         }
         split.adjustSubviews()
+        split.needsDisplay = true
     }
 
     func prepareForWindowResize(to width: CGFloat) {

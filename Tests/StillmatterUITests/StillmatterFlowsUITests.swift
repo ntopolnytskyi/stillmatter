@@ -222,8 +222,8 @@ final class StillmatterFlowsUITests: XCTestCase {
         }
         let bytes = try Data(contentsOf: original)
         relaunch()
-        app.buttons["sidebar-meetings"].click()
-        let button = app.buttons["meetings-import"]
+        app.buttons["sidebar-recording"].click()
+        let button = app.buttons["recording-import"]
         XCTAssertTrue(button.waitForExistence(timeout: 10))
         button.click()
         app.typeKey("g", modifierFlags: [.command, .shift])
@@ -234,6 +234,7 @@ final class StillmatterFlowsUITests: XCTestCase {
         let confirm = app.windows["open-panel"].buttons["Import"].firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
         confirm.click()
+        app.buttons["sidebar-meetings"].click()
         let row = app.tables["Meetings"].staticTexts["Imported sample"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 20))
         row.click()
