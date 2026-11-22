@@ -66,6 +66,8 @@ final class MeetingReprocessingHostedTests: XCTestCase {
         let archived = expectation(for: NSPredicate { _, _ in view.displayedDetail?.row.isArchived == true }, evaluatedWith: nil)
         await fulfillment(of: [archived], timeout: 5)
         XCTAssertFalse(view.reprocessButton.isEnabled)
+        XCTAssertFalse(view.renameButton.isEnabled)
+        XCTAssertFalse(view.canEditCalendar)
         XCTAssertTrue(view.reprocessButton.toolTip?.contains("Archived") == true)
         view.confirmReprocess()
         XCTAssertEqual(executor.mutations.count, 1)
@@ -134,7 +136,11 @@ final class MeetingReprocessingHostedTests: XCTestCase {
         view.filtersChanged(nil)
         view.refresh(isVisible: true)
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail?.row.isArchived == true }, evaluatedWith: nil)], timeout: 10)
-        let retry = try XCTUnwrap(view.retryRows.arrangedSubviews.compactMap { $0 as? NSStackView }.flatMap(\.arrangedSubviews).compactMap { $0 as? NSButton }.first { $0.title == "Retry" })
+        func retryButton(in view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.identifier?.rawValue == "failed" { return button }
+            return view.subviews.lazy.compactMap { retryButton(in: $0) }.first
+        }
+        let retry = try XCTUnwrap(retryButton(in: view.retryRows))
         XCTAssertFalse(retry.isEnabled)
         XCTAssertThrowsError(try service.retryFailedJob(meetingID: path, jobID: "failed"))
         XCTAssertEqual(dispatches, 0)

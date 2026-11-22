@@ -73,6 +73,25 @@ final class MeetingTextPanelMigrationHostedTests: XCTestCase {
     }
 
     @MainActor
+    func testUntouchedNotesSaveKeepsCanonicalBytesAndVersion() async throws {
+        try await withMeeting { view, window, vault, _ in
+            try self.write("\nOriginal notes\n\n", to: vault)
+            view.meetingsModel.detail.refreshSelectedDetail()
+            await self.until { view.displayedDetail?.humanNotes == "\nOriginal notes\n\n" }
+            let before = try vault.readMarkdown(relativePath: "Meetings/panel/my-notes.md")
+            view.editNotesTool.performClick(nil)
+            XCTAssertEqual(view.textEditPanel.text, "Original notes")
+            let save: NSButton = try self.control("meeting-text-save", in: XCTUnwrap(window.attachedSheet?.contentView))
+            save.performClick(nil)
+            XCTAssertFalse(view.textEditPanel.isOpen)
+            let after = try vault.readMarkdown(relativePath: "Meetings/panel/my-notes.md")
+            XCTAssertEqual(after.data, before.data)
+            XCTAssertEqual(after.version, before.version)
+            XCTAssertFalse(view.meetingsModel.detail.hasDirtyDrafts)
+        }
+    }
+
+    @MainActor
     func testCleanNotesEditorFollowsExternalChanges() async throws {
         try await withMeeting { view, _, vault, _ in
             view.editNotesTool.performClick(nil)

@@ -241,6 +241,37 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertThrowsError(try index.search("Original"))
     }
 
+    func testRebuildAndWatcherRefreshUseIdenticalCanonicalSourceRulesWithoutWritingFiles() throws {
+        for patterns in [[], ["**/transcript.txt"], ["**/meeting-artifacts.json"]] {
+            let fixture = try SearchIndexFixture()
+            try fixture.prepareCanonicalTranscript()
+            let textPath = "Meetings/call/transcript.txt"
+            let jsonPath = "Meetings/call/transcript.json"
+            let manifestPath = "Meetings/call/meeting-artifacts.json"
+            let originalText = try String(contentsOf: fixture.vaultURL.appendingPathComponent(textPath))
+            let index = try fixture.openIndex(excludedPatterns: patterns)
+            try index.rebuild()
+            try fixture.write(originalText.replacingOccurrences(of: "Original utterance", with: "Corrected utterance"), to: textPath)
+            let paths = [textPath, jsonPath, manifestPath]
+            let before = try paths.map { try Data(contentsOf: fixture.vaultURL.appendingPathComponent($0)) }
+            for event in paths {
+                try index.update(relativePath: event)
+                let refreshed = try index.search("Corrected", filter: SearchFilter(kinds: [.transcript]))
+                try index.rebuild()
+                XCTAssertEqual(try index.search("Corrected", filter: SearchFilter(kinds: [.transcript])), refreshed)
+                XCTAssertEqual(refreshed.count, patterns.isEmpty ? 1 : 0)
+                XCTAssertEqual(refreshed.first?.sourcePath, patterns.isEmpty ? textPath : nil)
+            }
+            XCTAssertEqual(try paths.map { try Data(contentsOf: fixture.vaultURL.appendingPathComponent($0)) }, before)
+            try fixture.remove(jsonPath)
+            try index.update(relativePath: jsonPath)
+            let textOnly = try index.search("Corrected", filter: SearchFilter(kinds: [.transcript]))
+            try index.rebuild()
+            XCTAssertEqual(try index.search("Corrected", filter: SearchFilter(kinds: [.transcript])), textOnly)
+            XCTAssertEqual(textOnly.count, patterns.isEmpty ? 1 : 0)
+        }
+    }
+
     func testCanonicalCompanionAndInsideWorkspaceSymlinksCannotBypassSearchExclusions() throws {
         let fixture = try SearchIndexFixture()
         try fixture.prepareCanonicalTranscript()

@@ -209,7 +209,6 @@ extension MeetingManagementView {
         GraphiteFocusPageHeader.setTitle("Untitled Meeting at 2026-10-07 17:35 — This deliberately localized-looking title continues far beyond the available header width so the Page Header title must truncate at the tail while all local actions remain visible", on: meetingTitle)
         overview.stringValue = "7 Oct 2026 at 17:35  ·  Project: Orchid"
         statusBadge.isHidden = false
-        processingProgress.isHidden = true
         processingStatus.isHidden = false
         processingStatus.setStatus("Ready", meaning: .success, colors: presentationColors)
         styleStatusBadge(meaning: .success)

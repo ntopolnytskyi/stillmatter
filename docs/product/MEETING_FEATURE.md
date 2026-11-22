@@ -32,13 +32,15 @@ The AI Meeting Workflow processes transcription and analysis in order. Acoustic 
 
 A **Job** is a container for background processing. Time-consuming actions, including actions that depend on earlier work completing, are organized as Jobs or ordered Job stages. For example, a Meeting processing Job transcribes audio before its analysis stage can use the Transcript.
 
+The [generated Meeting publication module](../../Sources/StillmatterCore/MeetingGeneratedPublication.swift) recovers interrupted file publication before capturing source versions, then owns protected Action Item reconciliation, canonical/legacy writes, Inbox reconciliation and completion cleanup. Generation and evidence validation remain in the workflow executor. Publication rechecks transfer permission and current sources inside the existing cancellation fence; file and Inbox updates remain restartable steps rather than one atomic transaction.
+
 Jobs expose stages, errors and retry state. A stage gets two automatic attempts total, then fails so other eligible work can continue. Manual Retry resumes failed work using valid checkpoints. Reprocess is a separate, confirmed operation using current settings. Jobs continue with the window closed; Quit stops execution and relaunch recovers durable work.
 
 Current analysis is bounded: whole-segment parts up to 24 KiB, My Notes up to 24 KiB, at most 256 parts and eight new requests per attempt. Each complete serialized provider prompt and each returned Summary/extraction artifact must fit 128 KiB. Dense evidence can exceed final synthesis capacity even after part processing. The stage then fails explicitly rather than truncating evidence; Retry alone cannot fix an unchanged capacity limit.
 
 ## Meeting workspace and UI
 
-Meetings uses a Listing and Workbench. The Meeting Workbench is arranged vertically: Info Bar, Tabs, then the selected Tab Content. These terms are defined in [CONTEXT.md](../../CONTEXT.md#meeting-workbench). The five Tabs are, in order:
+Meetings uses a Listing and Workbench. The Meeting Workbench is arranged vertically: Info Bar, Tabs, then the selected Tab Content. The Info Bar begins with the Meeting title, without a separate "Meeting detail" caption. Job title, status, processing stage and error are omitted from its metadata; the status badge communicates Meeting state. These terms are defined in [CONTEXT.md](../../CONTEXT.md#meeting-workbench). The five Tabs are, in order:
 
 | Tab | Current responsibility |
 |---|---|
@@ -53,6 +55,29 @@ There is no separate Decisions tab. The Transcript player belongs to Transcript,
 Recording and Processing Meetings keep their visible row/state but do not expose a partially completed content workspace. Failed processing explains the error and offers setup/Retry. Needs-attention presentation includes pending Action Item review; Ready processing does not imply all approved tasks are complete. Archive is a separate lifecycle condition.
 
 Meeting management uses one More menu with eligibility explanations. Editors expose local edit/save/cancel behavior; valid external file changes remain authoritative. Conflicting edits must not silently overwrite newer content. Archived content preserves reading, evidence navigation and retained playback while mutating controls are unavailable.
+
+Summary and My Notes editors follow fresh canonical content while clean. A dirty draft retains its text and original file version when external content changes; Reload Latest explicitly replaces it only after a successful read. Failed saves or reloads preserve the draft. My Notes hides surrounding framing newlines in its editor; saving unchanged displayed text closes without rewriting the canonical file, including after a clean external refresh. Existing Save/Discard/Cancel decisions protect unsaved edits when changing Meeting or Workspace.
+
+### Meeting status badge
+
+The Info Bar's badge is a single line of text with a semantic symbol and border; it has no progress bar or additional stage/error lines. Processing labels use stable Job stage identifiers rather than Job titles.
+
+| State | Badge text | Treatment |
+|---|---|---|
+| Recording | Live | Amber dot, text and border |
+| Transcription running | Transcribing | Blue informational symbol/text and border |
+| Analysis running | Summarizing | Blue informational symbol/text and border |
+| Waiting to run | Transcription queued / Summarization queued | Informational; distinguishes waiting from running |
+| Transcription failed | Transcription failed | Red failure symbol, text and border |
+| Analysis failed | Summarization failed | Red failure symbol, text and border |
+| Review required | Needs attention | Amber dot, text and border |
+| Ready | Ready | Violet checkmark, text and border |
+| Unavailable | Unavailable | Blue informational symbol, text and border |
+| Archived | Archived | Blue informational symbol, text and border; overrides underlying processing/failure state |
+
+When a running stage supplies a finite measured progress fraction from zero to one, append its rounded percentage on the same line, for example `Transcribing · 42%`. Current Job records do not publish measured stage percentages, so the normal production badge shows only its stage label. Queued and failed stages do not display stale percentages. Unknown legacy stages use Queued, Processing or Processing failed rather than guessing a stage. With no Meeting selected, the badge is hidden.
+
+Archive appears in the badge instead of a separate metadata marker. Detailed errors and retry guidance remain in their existing diagnostic surfaces.
 
 ### Agreed Tab Content definitions
 
@@ -106,7 +131,7 @@ The current model has known Ukrainian/English retrieval misses and no calibrated
 
 Retry resumes failed processing; confirmed Reprocess regenerates generated content with current settings. Its warning explains that generated edits can be replaced without inspectable revision history. Approved/user-authored items, their completion state, retained rejections and My Notes remain protected; prior working artifacts remain recoverable until successful publication. Archived Meetings cannot reprocess.
 
-Calendar association records event context and respects manually chosen titles. Explicit title reset is distinct from merely changing event association. Rename updates controlled Workspace and stored references without leaving an old-path alias; external links may break. Active Jobs block rename. [ADR-0001](../adr/0001-rename-meetings-without-path-aliases.md) explains the tradeoff.
+Calendar association records event context and respects manually chosen titles. Explicit title reset is distinct from merely changing event association. Rename updates controlled Workspace and stored references without leaving an old-path alias; external links may break. Active Jobs block rename. The rename command also rejects archived Meetings, including when Archive changed after the caller loaded its edit dialog. [ADR-0001](../adr/0001-rename-meetings-without-path-aliases.md) explains the tradeoff.
 
 ## Archive and removal
 
@@ -136,5 +161,13 @@ These are source and existing test entry points, not claims that tests were reru
 | Identity and approval | [action review tests](../../Tests/StillmatterTests/MeetingActionReviewTests.swift), [note task tests](../../Tests/StillmatterTests/MeetingNoteTodoBridgeTests.swift) |
 | Outcomes and attribution | [outcome editing tests](../../Tests/StillmatterTests/MeetingOutcomeEditingTests.swift), [speaker correction tests](../../Tests/StillmatterTests/MeetingSpeakerCorrectionTests.swift) |
 | Import | [import tests](../../Tests/StillmatterTests/MeetingImportTests.swift) |
-| Archive, removal and rename | [management service](../../Sources/StillmatterCore/MeetingManagement.swift), [management tests](../../Tests/StillmatterTests/MeetingManagementTests.swift) |
+| Archive, removal and rename | [Meeting management](../../Sources/StillmatterCore/MeetingManagement.swift), [rename coordination](../../Sources/StillmatterCore/MeetingRename.swift), [management tests](../../Tests/StillmatterTests/MeetingManagementTests.swift) |
 | Today integration | [dashboard loader](../../Sources/StillmatterCore/TodayDashboard.swift), [task views](../../Sources/StillmatterCore/TodoItems.swift) |
+
+Search source eligibility and authoritative Transcript selection are owned by the read-only [Search sources module](../../Sources/StillmatterCore/SearchSources.swift); full rebuilds and incremental refreshes use the same rules. SQLite persistence and ranking remain in [Search](../../Sources/StillmatterCore/SearchIndex.swift). [Search tests](../../Tests/StillmatterTests/SearchIndexTests.swift) verify exclusions, canonical authority and source preservation.
+
+The [Meeting Search navigation module](../../Sources/StillmatterPresentation/Features/Meetings/MeetingSearchNavigation.swift) owns request lifetime, Workspace ownership, browser/detail routing and Transcript match validation. The native view applies selection, Tab and playback destinations. [Presentation tests](../../Tests/StillmatterPresentationTests/MeetingSearchNavigationTests.swift) cover route ordering and stale requests; [hosted tests](../../Tests/StillmatterHostedTests/MeetingSearchHostedTests.swift) retain native wiring checks.
+
+The read-only [Meeting playback evidence module](../../Sources/StillmatterCore/MeetingPlaybackEvidence.swift) owns Recording Bundle discovery, relocation checks, current audio validation, timeline alignment, Transcript seek mapping and media artifact availability. Meeting management assembles Workspace content artifacts. Listing duration remains recorded metadata; playback duration uses decoded audio and capture gaps. Readable media artifacts do not imply valid playback, and each detail read verifies current evidence without caching across reads.
+
+[Meeting management eligibility](../../Sources/StillmatterCore/MeetingManagementEligibility.swift) owns snapshot decisions for rename, calendar association, removal, reprocessing and Archive. Native controls add dirty-draft restrictions. Commands retain fresh file/version and owned-Job checks, including atomic rename/removal/enqueue protections; displayed availability does not authorize a later mutation. Explicit removal remains available for archived Meetings.

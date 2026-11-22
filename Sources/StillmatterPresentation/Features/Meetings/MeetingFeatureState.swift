@@ -174,6 +174,7 @@ public final class MeetingDetailModel: ObservableObject {
     @Published public private(set) var notesDraft: MeetingTextDraft?
     @Published public private(set) var outcomeDraft: MeetingOutcomeDraft?
     @Published public private(set) var summaryDraft: MeetingTextDraft?
+    @Published public private(set) var textEditor: MeetingTextEditorState?
     @Published public private(set) var mutationState: MeetingMutationState = .idle
     @Published public private(set) var selectedActionProposalIDs: Set<String> = []
     @Published public private(set) var playbackState = MeetingPlaybackTransportState()
@@ -198,6 +199,7 @@ public final class MeetingDetailModel: ObservableObject {
     public func bind(readModel: MeetingReadModel?, mutationExecutor: MeetingMutationExecuting?,
                      playbackTransport: MeetingPlaybackTransport?) {
         if self.readModel !== readModel {
+            textEditor = nil
             mutationGeneration &+= 1
             mutationInFlight = false
             mutationState = .idle
@@ -226,6 +228,7 @@ public final class MeetingDetailModel: ObservableObject {
 
     public func select(_ reference: MeetingReference?) {
         guard reference != selectedReference else { return }
+        textEditor = nil
         detailRequest?.cancel()
         detailRequest = nil
         requestRevision &+= 1
@@ -281,6 +284,7 @@ public final class MeetingDetailModel: ObservableObject {
                 case let .failure(error):
                     let message = Self.message(for: error)
                     self.loadState = message.hasPrefix("Choose a workspace") ? .unavailable(message) : .failed(message)
+                    self.showTextEditorReadFailure(message)
                     completion?(.failure(error))
                 }
             }
@@ -294,10 +298,132 @@ public final class MeetingDetailModel: ObservableObject {
     public func beginEditingSummary() { summaryDraft?.beginEditing() }
     public func updateSummaryDraft(_ text: String) { summaryDraft?.update(text) }
 
+    /// The editing seam owns freshness and async progress; the native panel only renders it.
+    @discardableResult
+    public func beginTextEditing(_ field: MeetingTextField) -> MeetingTextEditorState? {
+        guard textEditor == nil, !hasDirtyDrafts, !mutationInFlight,
+              let detail, !detail.row.isArchived,
+              let draft = textDraft(for: field), draft.baseVersion != nil else { return nil }
+        if field == .notes { beginEditingNotes() } else { beginEditingSummary() }
+        let editor = MeetingTextEditorState(id: UUID(), field: field, meetingTitle: detail.row.title,
+                                           text: field.displayedText(draft.editedText))
+        textEditor = editor
+        return editor
+    }
+
+    public func updateTextEditor(id: UUID, text: String) {
+        guard var editor = textEditor, editor.id == id, !editor.isBusy,
+              let draft = textDraft(for: editor.field) else { return }
+        // Presentation-only framing newlines must not turn an untouched editor into a write.
+        let canonicalText = text == editor.field.displayedText(draft.originalText) ? draft.originalText : text
+        if editor.field == .notes { updateNotesDraft(canonicalText) }
+        else { updateSummaryDraft(canonicalText) }
+        editor.text = text
+        textEditor = editor
+        refreshTextEditor()
+    }
+
+    public func cancelTextEditing(id: UUID) {
+        guard let editor = textEditor, editor.id == id, !editor.isBusy else { return }
+        if editor.field == .notes {
+            notesDraft?.reload(originalText: detail?.humanNotes ?? "", baseVersion: detail?.notesVersion)
+        } else {
+            summaryDraft?.reload(originalText: detail?.summary?.summary ?? "", baseVersion: detail?.summaryVersion)
+        }
+        textEditor = nil
+    }
+
+    public func saveTextEditor(id: UUID, text: String,
+                               completion: ((Result<Void, Error>) -> Void)? = nil) {
+        guard let current = textEditor, current.id == id, !current.isBusy else { return }
+        updateTextEditor(id: id, text: text)
+        guard var editor = textEditor else { return }
+        guard textDraft(for: editor.field)?.isDirty == true else {
+            cancelTextEditing(id: id)
+            completion?(.success(()))
+            return
+        }
+        editor.activity = .saving
+        textEditor = editor
+        let finish: (Result<Void, Error>) -> Void = { [weak self] result in
+            guard let self, var editor = self.textEditor, editor.id == id else { return }
+            switch result {
+            case .success: self.textEditor = nil
+            case let .failure(error):
+                editor.activity = .editing
+                editor.error = "Could not save: \(error.localizedDescription). Your text is still here."
+                if case .failed(_, conflict: true) = self.mutationState { editor.canReload = true }
+                else if case .malformed = error as? MeetingManagementError { editor.canReload = true }
+                else { editor.canReload = false }
+                self.textEditor = editor
+            }
+            completion?(result)
+        }
+        if editor.field == .notes { saveNotes(completion: finish) }
+        else { saveSummary(completion: finish) }
+    }
+
+    /// Invoked only by the user's explicit Reload Latest action. Failed reads retain the draft.
+    public func reloadTextEditor(id: UUID) {
+        guard var editor = textEditor, editor.id == id, !editor.isBusy else { return }
+        editor.activity = .reloading
+        textEditor = editor
+        // Any newer canonical read may fulfill this explicit intent. A refresh that
+        // supersedes this request must not leave the editor waiting on a canceled callback.
+        refreshSelectedDetail()
+    }
+
+    private func textDraft(for field: MeetingTextField) -> MeetingTextDraft? {
+        field == .notes ? notesDraft : summaryDraft
+    }
+
+    private func refreshTextEditor() {
+        guard var editor = textEditor, editor.activity != .saving, let detail,
+              let draft = textDraft(for: editor.field) else { return }
+        let latestVersion = editor.field == .notes ? detail.notesVersion : detail.summaryVersion
+        if editor.activity == .reloading {
+            if editor.field == .notes {
+                notesDraft?.reload(originalText: detail.humanNotes, baseVersion: detail.notesVersion)
+                beginEditingNotes()
+            } else {
+                summaryDraft?.reload(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion)
+                beginEditingSummary()
+            }
+            editor.activity = .editing
+            editor.text = editor.field.displayedText(textDraft(for: editor.field)?.editedText ?? "")
+            editor.error = nil
+            editor.canReload = false
+        } else if draft.isDirty {
+            if latestVersion != draft.baseVersion {
+                editor.error = "\(editor.field.title) changed while the editor was open. Your draft is preserved. Choose Reload Latest to replace it with the saved content, or Cancel."
+                editor.canReload = true
+            }
+        } else {
+            if editor.field == .notes {
+                notesDraft?.refresh(originalText: detail.humanNotes, baseVersion: detail.notesVersion)
+            } else {
+                summaryDraft?.refresh(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion)
+            }
+            editor.text = editor.field.displayedText(textDraft(for: editor.field)?.editedText ?? "")
+            editor.error = nil
+            editor.canReload = false
+        }
+        if textEditor != editor { textEditor = editor }
+    }
+
+    private func showTextEditorReadFailure(_ message: String) {
+        guard var editor = textEditor, editor.activity != .saving else { return }
+        editor.error = (editor.activity == .reloading ? "Could not reload: " : "") + message + " Your text is still here."
+        editor.activity = .editing
+        editor.canReload = true
+        textEditor = editor
+    }
+
     public func discardDrafts() {
         // Explicit discard adopts the current canonical content, including an external
         // version that arrived while the old local draft was dirty.
         reloadDraftsAfterConfirmation()
+        textEditor = nil
     }
 
     public func reloadDraftsAfterConfirmation() {
@@ -305,6 +431,7 @@ public final class MeetingDetailModel: ObservableObject {
         guard let detail else { return }
         notesDraft?.reload(originalText: detail.humanNotes, baseVersion: detail.notesVersion)
         summaryDraft?.reload(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion)
+        refreshTextEditor()
     }
 
     public func saveNotes(completion: ((Result<Void, Error>) -> Void)? = nil) {
@@ -511,6 +638,12 @@ public final class MeetingDetailModel: ObservableObject {
     }
 
     public func stop() {
+        // Hiding Meetings retains its drafts and sheet. Canceled publication must
+        // not strand an active editor in a busy state when the feature resumes.
+        if var editor = textEditor {
+            editor.activity = .editing
+            textEditor = editor
+        }
         detailRequest?.cancel()
         detailRequest = nil
         requestRevision &+= 1
@@ -534,10 +667,12 @@ public final class MeetingDetailModel: ObservableObject {
                 case let .success(detail): self.apply(detail)
                 case .failure(.workspaceUnavailable), .failure(.stopped):
                     self.loadState = .unavailable("Meeting workspace is unavailable.")
+                    self.showTextEditorReadFailure("Meeting workspace is unavailable.")
                     self.isShowingStaleDetail = self.detail != nil
                 case let .failure(error):
                     let message = Self.message(for: error)
                     self.loadState = message.hasPrefix("Choose a workspace") ? .unavailable(message) : .failed(message)
+                    self.showTextEditorReadFailure(message)
                     self.isShowingStaleDetail = self.detail != nil
                 }
             }
@@ -552,6 +687,7 @@ public final class MeetingDetailModel: ObservableObject {
         else { notesDraft?.refresh(originalText: detail.humanNotes, baseVersion: detail.notesVersion) }
         if summaryDraft == nil { summaryDraft = MeetingTextDraft(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion) }
         else { summaryDraft?.refresh(originalText: detail.summary?.summary ?? "", baseVersion: detail.summaryVersion) }
+        refreshTextEditor()
         loadState = .loaded
         isShowingStaleDetail = false
         playbackTransport?.load(detail.playback)

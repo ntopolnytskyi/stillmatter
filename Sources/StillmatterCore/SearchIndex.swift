@@ -82,7 +82,7 @@ public final class SearchIndex {
     private let database: SearchSQLiteDatabase
     private let workspaceRootURL: URL
     private let semanticSearch: LocalSemanticSearching?
-    private let excludedPatterns: [String]
+    private let sources: SearchSources
     private let lock = NSRecursiveLock()
     private var refreshErrors: [String: Error] = [:]
 
@@ -90,7 +90,7 @@ public final class SearchIndex {
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         self.database = try SearchSQLiteDatabase(url: databaseURL)
         self.workspaceRootURL = workspaceRootURL.standardizedFileURL.resolvingSymlinksInPath()
-        self.excludedPatterns = excludedPatterns
+        self.sources = SearchSources(workspaceRootURL: self.workspaceRootURL, excludedPatterns: excludedPatterns)
         self.semanticSearch = semanticSearch
         try migrate()
     }
@@ -128,10 +128,10 @@ public final class SearchIndex {
         lock.lock()
         defer { lock.unlock() }
         do {
-            let files = try indexableFiles()
+            let paths = try sources.paths()
             try database.transaction {
                 try database.run("DELETE FROM search_chunks")
-                for file in files { try insertChunks(for: file.relativePath, fileURL: file.url) }
+                for path in paths { try insertChunks(for: path) }
             }
             refreshErrors.removeAll()
         } catch {
@@ -153,32 +153,22 @@ public final class SearchIndex {
     public func update(relativePath: String) throws {
         lock.lock()
         defer { lock.unlock() }
-        let normalizedPath = Self.normalize(relativePath)
-        let directory = (normalizedPath as NSString).deletingLastPathComponent
-        let paired = ["transcript.json", "transcript.txt", "meeting-artifacts.json"].contains((normalizedPath as NSString).lastPathComponent)
-        let paths = paired ? ["transcript.json", "transcript.txt", "transcript.vtt"].map { directory.isEmpty ? $0 : directory + "/" + $0 } : [normalizedPath]
-        let key = paired ? directory + "/transcript" : normalizedPath
+        let refresh = sources.refresh(for: relativePath)
         do {
             try database.transaction {
                 // Delete the whole pair before inserting its chosen source. A JSON
                 // event may legitimately publish chunks whose source is the text file.
-                for path in paths {
+                for path in refresh.paths {
                     try database.run("DELETE FROM search_chunks WHERE source_path = ?", bindings: [.text(path)])
                 }
-                for path in paths {
-                    let fileURL = workspaceRootURL.appendingPathComponent(path).standardizedFileURL
-                    var isDirectory: ObjCBool = false
-                    guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
-                          !isDirectory.boolValue, isIndexable(relativePath: path) else { continue }
-                    try insertChunks(for: path, fileURL: fileURL)
-                }
+                for path in refresh.paths { try insertChunks(for: path) }
             }
-            refreshErrors.removeValue(forKey: key)
+            refreshErrors.removeValue(forKey: refresh.errorKey)
             // Keep an old source error visible to Search without rejecting unrelated
             // canonical publication. Repair attempts retain their own rebuild error.
             if refreshErrors["rebuild"] != nil { try? rebuild() }
         } catch {
-            refreshErrors[key] = error
+            refreshErrors[refresh.errorKey] = error
             throw error
         }
     }
@@ -288,107 +278,16 @@ public final class SearchIndex {
         try database.run("CREATE VIRTUAL TABLE IF NOT EXISTS search_chunks USING fts5(source_path UNINDEXED, kind UNINDEXED, title, body, transcript_start UNINDEXED, transcript_end UNINDEXED)")
     }
 
-    private func indexableFiles() throws -> [(url: URL, relativePath: String)] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: workspaceRootURL,
-            includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-        var files: [(url: URL, relativePath: String)] = []
-        for case let enumeratedURL as URL in enumerator {
-            let url = enumeratedURL.resolvingSymlinksInPath()
-            guard url.path.hasPrefix(workspaceRootURL.path + "/") else { continue }
-            let relativePath = String(url.path.dropFirst(workspaceRootURL.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
-            if values.isDirectory == true && isExcluded(relativePath: relativePath, isDirectory: true, applyConfiguredPatterns: false) {
-                enumerator.skipDescendants()
-            } else if values.isRegularFile == true && isIndexable(relativePath: relativePath) {
-                files.append((url, relativePath))
-            }
-        }
-        return files.sorted { $0.relativePath < $1.relativePath }
-    }
-
-    private func isIndexable(relativePath: String) -> Bool {
-        let resolved = workspaceRootURL.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
-        guard resolved.path.hasPrefix(workspaceRootURL.path + "/") else { return false }
-        let path = relativePath.lowercased()
-        if path.hasSuffix("/transcript.vtt"),
-           ["transcript.json", "transcript.txt"].contains(where: {
-               FileManager.default.fileExists(atPath: resolved.deletingLastPathComponent().appendingPathComponent($0).path)
-           }) { return false }
-        if path.hasSuffix("/transcript.txt"),
-           FileManager.default.fileExists(atPath: resolved.deletingLastPathComponent().appendingPathComponent("transcript.json").path) { return false }
-        if path.hasPrefix("meetings/") {
-            let allowed = ["meeting.md", "summary.md", "notes.md", "my-notes.md", "action-items.md", "decisions.md", "open-items.md", "transcript.json", "transcript.txt", "transcript.vtt", "recording.localref.json"]
-            guard allowed.contains(resolved.lastPathComponent.lowercased()) else { return false }
-        }
-        let isLightweightMetadata = path.hasSuffix("/recording.localref.json") || path == "recording.localref.json"
-        guard !isExcludedSource(relativePath: relativePath, resolvedURL: resolved,
-            applyConfiguredPatterns: !isLightweightMetadata) else { return false }
-        if path.hasPrefix("meetings/"), path.hasSuffix("/transcript.txt") { return true }
-        if path.hasSuffix(".md") { return true }
-        if path.hasSuffix("/transcript.vtt") || path == "transcript.vtt" { return true }
-        if path.hasSuffix("/transcript.json") || path == "transcript.json" { return true }
-        return isLightweightMetadata
-    }
-
-    private func isExcludedSource(relativePath: String, resolvedURL: URL, applyConfiguredPatterns: Bool = true) -> Bool {
-        if isExcluded(relativePath: relativePath, isDirectory: false, applyConfiguredPatterns: applyConfiguredPatterns) { return true }
-        guard resolvedURL.path.hasPrefix(workspaceRootURL.path + "/") else { return false }
-        let actualPath = String(resolvedURL.path.dropFirst(workspaceRootURL.path.count + 1))
-        return actualPath != relativePath && isExcluded(relativePath: actualPath, isDirectory: false,
-            applyConfiguredPatterns: applyConfiguredPatterns)
-    }
-
-    private func isExcluded(relativePath: String, isDirectory: Bool, applyConfiguredPatterns: Bool = true) -> Bool {
-        let normalized = Self.normalize(relativePath)
-        let lowercased = normalized.lowercased()
-        let components = lowercased.split(separator: "/").map(String.init)
-        let noisyDirectories: Set<String> = ["voiceprofiles", "voice-profiles", "voice_profiles", "voices",".git", ".obsidian", "node_modules", "dist", "build", ".build", ".cache", ".tmp", "snapshots", "logs"]
-        if components.contains(where: noisyDirectories.contains) { return true }
-        if !isDirectory {
-            let filename = components.last ?? ""
-            let excludedExtensions: Set<String> = [
-                "m4a", "mp3", "wav", "caf", "mp4", "mov", "webm",
-                "png", "jpg", "jpeg", "heic", "gif", "pdf", "zip", "tar", "gz",
-                "sqlite", "sqlite-wal", "sqlite-shm", "db", "log"
-            ]
-            if excludedExtensions.contains(URL(fileURLWithPath: filename).pathExtension.lowercased()) { return true }
-            if filename == ".ds_store" { return true }
-        }
-        return applyConfiguredPatterns && excludedPatterns.contains { Self.glob($0, matches: normalized, isDirectory: isDirectory) }
-    }
-
-    private func insertChunks(for relativePath: String, fileURL: URL) throws {
-        // Canonical representations are one artifact: an excluded companion must
-        // never re-enter retrieval through its other representation or a symlink.
-        if relativePath.hasPrefix("Meetings/"), ["transcript.json", "transcript.txt"].contains(fileURL.lastPathComponent) {
-            let directory = (relativePath as NSString).deletingLastPathComponent
-            let excludedCompanion = ["transcript.json", "transcript.txt", "meeting-artifacts.json"].contains { name in
-                let path = directory + "/" + name
-                let url = workspaceRootURL.appendingPathComponent(path)
-                return FileManager.default.fileExists(atPath: url.path) &&
-                    isExcludedSource(relativePath: path, resolvedURL: url.resolvingSymlinksInPath())
-            }
-            if excludedCompanion { return }
-        }
-        let sourcePath: String
-        let chunks: [SearchChunk]
-        if let source = try SearchTranscriptSource.read(relativePath: relativePath, workspaceRoot: workspaceRootURL) {
-            sourcePath = source.relativePath
-            chunks = Self.jsonTranscriptChunks(source.json)
-        } else {
-            let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-            guard let contents = String(data: data, encoding: .utf8) else { return }
-            sourcePath = relativePath
-            chunks = Self.chunks(relativePath: relativePath, contents: contents)
-        }
+    private func insertChunks(for relativePath: String) throws {
+        guard let source = try sources.read(relativePath) else { return }
+        let chunks = source.isTranscript
+            ? Self.jsonTranscriptChunks(source.contents)
+            : Self.chunks(relativePath: source.relativePath, contents: source.contents)
         for chunk in chunks {
             try database.run(
                 "INSERT INTO search_chunks (source_path, kind, title, body, transcript_start, transcript_end) VALUES (?, ?, ?, ?, ?, ?)",
                 bindings: [
-                    .text(sourcePath), .text(chunk.kind.rawValue), .text(chunk.title), .text(chunk.body),
+                    .text(source.relativePath), .text(chunk.kind.rawValue), .text(chunk.title), .text(chunk.body),
                     chunk.transcriptStartSeconds.map(SearchSQLiteValue.double) ?? .null,
                     chunk.transcriptEndSeconds.map(SearchSQLiteValue.double) ?? .null
                 ]
@@ -570,33 +469,7 @@ public final class SearchIndex {
         value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
     }
 
-    private static func glob(_ pattern: String, matches path: String, isDirectory: Bool) -> Bool {
-        let normalizedPattern = normalize(pattern)
-        var expression = "^"
-        var index = normalizedPattern.startIndex
-        while index < normalizedPattern.endIndex {
-            let character = normalizedPattern[index]
-            if character == "*" {
-                let next = normalizedPattern.index(after: index)
-                if next < normalizedPattern.endIndex && normalizedPattern[next] == "*" {
-                    expression += ".*"
-                    index = normalizedPattern.index(after: next)
-                } else {
-                    expression += "[^/]*"
-                    index = next
-                }
-            } else if character == "?" {
-                expression += "[^/]"
-                index = normalizedPattern.index(after: index)
-            } else {
-                expression += NSRegularExpression.escapedPattern(for: String(character))
-                index = normalizedPattern.index(after: index)
-            }
-        }
-        expression += (isDirectory && normalizedPattern.hasSuffix("/**")) ? "(?:/.*)?$" : "$"
-        return path.range(of: expression, options: [.regularExpression, .caseInsensitive]) != nil
-            || (normalizedPattern.hasSuffix("/**") && path.caseInsensitiveCompare(String(normalizedPattern.dropLast(3))) == .orderedSame)
-    }
+
 }
 
 private struct SearchChunk {

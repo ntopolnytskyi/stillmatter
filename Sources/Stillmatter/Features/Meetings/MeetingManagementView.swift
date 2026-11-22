@@ -69,20 +69,14 @@ final class MeetingManagementView: NSView {
     let calendarEditor = MeetingCalendarEditPanel()
     let calendarStatus = NSTextField(wrappingLabelWithString: "")
     var canEditCalendar = false
-    let eyebrow = NSTextField(labelWithString: "MEETING DETAIL")
     let meetingTitle = NSTextField(labelWithString: "")
     let overview = NSTextField(wrappingLabelWithString: "")
     let processingStatus = GraphiteFocusStatusLabel()
-    let processingProgress = GraphiteFocusProgressStatusView()
     let statusBadge = NSView()
     private var summaryOverviewSection: MeetingOverviewHostingView?
     private var notesOverviewSection: MeetingOverviewHostingView?
     let textEditPanel = MeetingTextEditPanel()
     private var selectionSyncScheduled = false
-    private var modalBaseVersion: WorkspaceFileVersion?
-    private var modalField: EditableTextField?
-    private var modalOriginalText = ""
-    private enum EditableTextField { case notes, summary }
     let overviewPage = NSStackView()
     let actionItemsPage = NSStackView()
     let canonicalActionReview = MeetingActionReviewView()
@@ -139,18 +133,12 @@ final class MeetingManagementView: NSView {
     lazy var renameButton = controls.button("Rename…", identifier: "meeting-rename")
     let archiveButton = MeetingHeaderButton(title: "Archive", target: nil, action: nil)
     private(set) var retryFeedback: (meetingID: String, message: String)?
-    private var restoredSelectionID: String?
-    private var pendingSearchSourcePath: String?
-    private var pendingSearchResult: SearchResult?
-    private weak var searchNavigationOwner: MeetingReadModel?
-    private var searchNavigationID: UUID?
-    private var searchNavigationMessage: String?
+    private let searchNavigation = MeetingSearchNavigation()
     private var pendingReviewPath: String?
     private var reviewDetailPath: String?
     private var reviewNavigationID: UUID?
     private var reviewSelectionStarted = false
     private var reviewUnavailable: (() -> Void)?
-    private var restoredSearchSelectionNeedsOpen = false
     lazy var openRecordingButton = controls.button("Open Recording", identifier: "meeting-open-recording")
     let audioStatus = NSTextField(wrappingLabelWithString: "Recording Bundle unavailable")
     let playButton = MeetingPlaybackButton(frame: .zero)
@@ -225,7 +213,6 @@ final class MeetingManagementView: NSView {
 
     func focusSearchResult(_ result: SearchResult) {
         currentReadModel()?.invalidate(.workspaceFilesChanged(paths: [result.sourcePath]))
-        pendingSearchResult = result
         queryField.stringValue = ""
         projectFilter.selectItem(at: 0)
         processingFilter.selectItem(at: 0)
@@ -234,24 +221,19 @@ final class MeetingManagementView: NSView {
         meetingsModel.setQueueFilter(.recorded)
         archiveFilter.selectItem(at: result.isArchived ? 1 : 0)
         applyFilters()
-        focusSearchSource(result.sourcePath)
+        beginSearchSource(result.sourcePath, result: result)
     }
 
     private func clearSearchNavigation() {
-        if restoredSearchSelectionNeedsOpen { restoredSelectionID = nil }
-        pendingSearchSourcePath = nil
-        pendingSearchResult = nil
-        restoredSearchSelectionNeedsOpen = false
-        searchNavigationID = nil
-        searchNavigationOwner = nil
+        searchNavigation.cancel()
     }
 
     func focusSearchSource(_ sourcePath: String) {
-        searchNavigationOwner = currentReadModel()
-        searchNavigationID = UUID()
-        searchNavigationMessage = nil
-        pendingSearchSourcePath = sourcePath
-        restoredSearchSelectionNeedsOpen = true
+        beginSearchSource(sourcePath, result: nil)
+    }
+
+    private func beginSearchSource(_ sourcePath: String, result: SearchResult?) {
+        searchNavigation.begin(sourcePath: sourcePath, result: result, owner: currentReadModel())
         guard featureIsVisible else { return }
         applySnapshot(meetingsModel.snapshot)
     }
@@ -336,12 +318,11 @@ final class MeetingManagementView: NSView {
         browserView.isHidden = !isVisible
         guard isVisible else {
             clearSearchNavigation()
-            searchNavigationMessage = nil
+            searchNavigation.cancel(clearMessage: true)
             clearReviewNavigation()
             lastRenderedDetail = nil
             if featureIsVisible { meetingsModel.deactivate() }
             featureIsVisible = false
-            restoredSelectionID = nil
             clearAudio()
             clearEvidence()
             return
@@ -474,9 +455,6 @@ final class MeetingManagementView: NSView {
     }
 
     private func buildDetail() {
-        eyebrow.font = GraphiteFocusPresentation.Typography.caption
-        eyebrow.textColor = GraphiteFocusPresentation.Colors(environment: .system(window: window)).accent
-        eyebrow.setAccessibilityLabel("Meeting detail")
         meetingTitle.setAccessibilityIdentifier("meeting-detail")
         GraphiteFocusPageHeader.configureTitleLabel(meetingTitle)
         meetingTitle.alignment = .left
@@ -652,7 +630,7 @@ final class MeetingManagementView: NSView {
             page.edgeInsets = overviewPage.edgeInsets
         }
         actionItemsPage.edgeInsets.top = GraphiteFocusPresentation.Space.compact
-        let titleGroup = NSStackView(views: [eyebrow, meetingTitle])
+        let titleGroup = NSStackView(views: [meetingTitle])
         titleGroup.orientation = .vertical
         titleGroup.alignment = .leading
         titleGroup.spacing = GraphiteFocusPresentation.Space.primitive
@@ -687,18 +665,17 @@ final class MeetingManagementView: NSView {
         statusBadge.layer?.cornerRadius = GraphiteFocusPresentation.Radius.compact
         statusBadge.layer?.borderWidth = 1
         processingStatus.translatesAutoresizingMaskIntoConstraints = false
-        processingProgress.translatesAutoresizingMaskIntoConstraints = false
+        processingStatus.usesSingleLineMode = true
+        processingStatus.maximumNumberOfLines = 1
+        processingStatus.lineBreakMode = .byClipping
+        processingStatus.cell?.wraps = false
         statusBadge.addSubview(processingStatus)
-        statusBadge.addSubview(processingProgress)
-        for stateView in [processingStatus, processingProgress] {
-            NSLayoutConstraint.activate([
-                stateView.leadingAnchor.constraint(equalTo: statusBadge.leadingAnchor, constant: GraphiteFocusPresentation.Space.compact),
-                stateView.trailingAnchor.constraint(equalTo: statusBadge.trailingAnchor, constant: -GraphiteFocusPresentation.Space.compact),
-                stateView.topAnchor.constraint(equalTo: statusBadge.topAnchor, constant: GraphiteFocusPresentation.Space.primitive),
-                stateView.bottomAnchor.constraint(equalTo: statusBadge.bottomAnchor, constant: -GraphiteFocusPresentation.Space.primitive)
-            ])
-        }
-        processingProgress.isHidden = true
+        NSLayoutConstraint.activate([
+            processingStatus.leadingAnchor.constraint(equalTo: statusBadge.leadingAnchor, constant: GraphiteFocusPresentation.Space.compact),
+            processingStatus.trailingAnchor.constraint(equalTo: statusBadge.trailingAnchor, constant: -GraphiteFocusPresentation.Space.compact),
+            processingStatus.topAnchor.constraint(equalTo: statusBadge.topAnchor, constant: GraphiteFocusPresentation.Space.primitive),
+            processingStatus.bottomAnchor.constraint(equalTo: statusBadge.bottomAnchor, constant: -GraphiteFocusPresentation.Space.primitive)
+        ])
         caption.addArrangedSubview(titleBar)
         caption.addArrangedSubview(metadataBar)
         caption.addArrangedSubview(statusBadge)
@@ -857,6 +834,11 @@ final class MeetingManagementView: NSView {
     }
 
     private func observeFeatureState() {
+        meetingsModel.detail.$textEditor.removeDuplicates().sink { [weak self] editor in
+            guard let self else { return }
+            if let editor { self.textEditPanel.render(editor) }
+            else { self.textEditPanel.finish() }
+        }.store(in: &cancellables)
         meetingsModel.$snapshot.sink { [weak self] _ in self?.scheduleSnapshotRender() }
             .store(in: &cancellables)
         meetingsModel.$selectedMeetingID.sink { [weak self] _ in self?.scheduleSelectedRowsSync() }
@@ -941,41 +923,22 @@ final class MeetingManagementView: NSView {
                 }
             }
         }
-        if searchNavigationID != nil, searchNavigationOwner !== currentReadModel() {
-            clearSearchNavigation()
-        }
-        if let sourcePath = pendingSearchSourcePath, meetingsModel.loadState == .loaded,
-           snapshot?.filters == meetingsModel.filters {
-            if let row = snapshot?.visibleRows.first(where: {
-                ($0.meetingRelativePath as NSString).deletingLastPathComponent == (sourcePath as NSString).deletingLastPathComponent
-            }) {
-                pendingSearchSourcePath = nil
-                restoredSelectionID = row.id
-            } else {
-                clearSearchNavigation()
-                searchNavigationMessage = "Search source is no longer available. Search again."
-                status.stringValue = searchNavigationMessage!
-            }
-        }
-        if let id = restoredSelectionID, snapshot?.visibleRows.contains(where: { $0.id == id }) == true {
-            restoredSelectionID = nil
-            let shouldOpenSelection = restoredSearchSelectionNeedsOpen
-            let searchRequest = searchNavigationID
-            restoredSearchSelectionNeedsOpen = false
+        if let selection = searchNavigation.selection(rows: snapshot?.visibleRows ?? [],
+                isLoaded: meetingsModel.loadState == .loaded,
+                filtersMatch: snapshot?.filters == meetingsModel.filters, owner: currentReadModel()) {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.featureIsVisible,
-                      !shouldOpenSelection || (self.searchNavigationID == searchRequest && self.searchNavigationOwner === self.currentReadModel()),
-                      let index = self.rows.firstIndex(where: { $0.id == id }) else { return }
+                      self.searchNavigation.isCurrent(selection, owner: self.currentReadModel()),
+                      let index = self.rows.firstIndex(where: { $0.id == selection.meetingID }) else { return }
                 self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
                 self.show(row: index)
-                if shouldOpenSelection {
-                    if self.meetingsModel.selectedMeetingID == id {
-                        self.meetingsModel.detail.refreshSelectedDetail()
-                    }
-                    self.onOpenSelection()
+                if self.meetingsModel.selectedMeetingID == selection.meetingID {
+                    self.meetingsModel.detail.refreshSelectedDetail()
                 }
+                self.onOpenSelection()
             }
         }
+        if let message = searchNavigation.message { status.stringValue = message }
         isApplyingFeatureState = true
         defer { isApplyingFeatureState = false }
         let currentRows = meetingsModel.visibleRows
@@ -1030,7 +993,7 @@ final class MeetingManagementView: NSView {
     private func renderBrowserLoadState(_ state: MeetingDetailLoadState) {
         // A completed refresh may retain an equal snapshot and publish no snapshot
         // change. Pending search routes still need to resume after loading.
-        if searchNavigationID != nil, case .loaded = state { scheduleSnapshotRender() }
+        if searchNavigation.isPending, case .loaded = state { scheduleSnapshotRender() }
         if reviewNavigationID != nil {
             switch state {
             case .failed, .unavailable: failReviewNavigation()
@@ -1066,8 +1029,7 @@ final class MeetingManagementView: NSView {
         case .loading:
             status.stringValue = "Loading Meeting detail…"
         case let .unavailable(message), let .failed(message):
-            if searchNavigationID != nil { clearSearchNavigation() }
-            if textEditPanel.isOpen { textEditPanel.showError(message + " Your text is still here.", conflict: true) }
+            if searchNavigation.isPending { clearSearchNavigation() }
             status.stringValue = meetingsModel.detail.isShowingStaleDetail
                 ? "\(message) Showing stale detail for this Meeting."
                 : message
@@ -1287,12 +1249,11 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderDetail(_ selected: MeetingBrowserDetail) {
-            if searchNavigationID != nil, searchNavigationOwner !== currentReadModel() { clearSearchNavigation() }
+            searchNavigation.validateOwner(currentReadModel())
             canEditCalendar = false
             let opensReview = reviewSelectionStarted && reviewDetailPath == selected.row.meetingRelativePath
             if reviewNavigationID != nil && !opensReview { return }
             if opensReview { clearReviewNavigation() }
-            refreshModalText(from: selected)
             isApplyingFeatureState = true
             defer { isApplyingFeatureState = false }
             let changedMeeting = renderedMeetingID != selected.row.id
@@ -1361,11 +1322,10 @@ final class MeetingManagementView: NSView {
                 button.isHidden = false
                 button.superview?.isHidden = false
             }
-            let canChangeFolder = selected.row.captureState == .stopped && !selected.jobs.contains(where: { $0.status == .queued || $0.status == .running })
             updateReprocessAvailability(for: selected)
             reprocessFeedback.stringValue = retryFeedback?.meetingID == selected.row.id ? retryFeedback!.message : ""
             reprocessFeedback.isHidden = reprocessFeedback.stringValue.isEmpty
-            canEditCalendar = canChangeFolder && !selected.row.isArchived && !meetingsModel.isDirty
+            canEditCalendar = selected.canAssociateCalendar && !meetingsModel.isDirty
             let context = selected.calendarContext
             if let event = context?.event {
                 let scheduled = event.eventStart.map { DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .short) } ?? "Unknown time"
@@ -1373,7 +1333,7 @@ final class MeetingManagementView: NSView {
             } else {
                 calendarStatus.stringValue = context?.status ?? "No linked calendar event. Calendar… to set up or link."
             }
-            renameButton.isEnabled = !selected.row.isArchived && canChangeFolder && selected.doorwayVersion != nil && !meetingsModel.isDirty
+            renameButton.isEnabled = selected.canRename && !meetingsModel.isDirty
             archiveButton.title = "Archive"
             archiveButton.image = NSImage(systemSymbolName: "archivebox", accessibilityDescription: "Archive meeting")
             archiveButton.toolTip = selected.archiveUnavailableReason ?? "Archive meeting"
@@ -1381,33 +1341,18 @@ final class MeetingManagementView: NSView {
             archiveButton.isEnabled = selected.archiveUnavailableReason == nil && !meetingsModel.isDirty
             archiveButton.isHidden = selected.row.isArchived
             status.stringValue = retryFeedback?.meetingID == selected.row.id ? retryFeedback!.message : (selected.row.isArchived ? "" : selected.archiveUnavailableReason ?? "")
-            if let result = pendingSearchResult,
-               (result.sourcePath as NSString).deletingLastPathComponent == (selected.row.meetingRelativePath as NSString).deletingLastPathComponent {
-                clearSearchNavigation()
-                let filename = (result.sourcePath as NSString).lastPathComponent
-                switch filename {
-                case "my-notes.md", "notes.md": selectPage(.notes)
-                case "action-items.md": selectPage(.actionItems)
-                case "open-items.md": selectPage(.openItems)
-                case "transcript.json", "transcript.txt", "transcript.vtt":
-                    selectPage(.transcript)
-                    if let seconds = result.transcriptStartSeconds,
-                       let segment = selected.transcript.first(where: {
-                           $0.startSeconds <= seconds && $0.endSeconds > seconds &&
-                               $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == result.body
-                       }) {
-                        timelineNavigation.show(seconds: seconds, segmentID: segment.id, kind: .transcript)
-                        if let seek = segment.seekSeconds, meetingsModel.detail.playbackState.isAvailable {
-                            meetingsModel.detail.seekPlayback(to: seek)
-                        }
-                    } else if result.transcriptStartSeconds != nil {
-                        timelineNavigation.clear()
-                        searchNavigationMessage = "The searched utterance changed or is no longer retained. Search again."
+            if let destination = searchNavigation.destination(for: selected, owner: currentReadModel()) {
+                selectPage(destination.page)
+                if let segment = destination.segment, let seconds = destination.seconds {
+                    timelineNavigation.show(seconds: seconds, segmentID: segment.id, kind: .transcript)
+                    if let seek = segment.seekSeconds, meetingsModel.detail.playbackState.isAvailable {
+                        meetingsModel.detail.seekPlayback(to: seek)
                     }
-                default: selectPage(.summary)
+                } else if destination.clearTimeline {
+                    timelineNavigation.clear()
                 }
             }
-            if let searchNavigationMessage { status.stringValue = searchNavigationMessage }
+            if let message = searchNavigation.message { status.stringValue = message }
             presentationMetrics?.recordViewUpdate()
     }
 
@@ -1477,14 +1422,9 @@ final class MeetingManagementView: NSView {
     }
 
     private func detailOverview(_ detail: MeetingBrowserDetail) -> String {
-        var lines: [String] = detail.row.isArchived ? ["Archived"] : []
+        var lines: [String] = []
         if let date = detail.row.startedAt { lines.append("Recorded: \(date.formatted(date: .abbreviated, time: .shortened))") }
         if let project = detail.row.project { lines.append("Project: \(project)") }
-        if let job = detail.job {
-            lines.append("Job: \(job.title) — \(job.status.rawValue)")
-            if let stage = job.stage { lines.append("Stage: \(stage)") }
-            if let error = job.error { lines.append("Error: \(error)") }
-        }
         return lines.joined(separator: "  ·  ")
     }
 
@@ -1493,22 +1433,9 @@ final class MeetingManagementView: NSView {
     }
 
     private func configureMeetingState(_ row: MeetingBrowserRow) {
-        let failed = row.job?.status == .failed
-        let isProcessing = row.processingState == .processing && !failed
-        processingStatus.isHidden = isProcessing
-        processingProgress.isHidden = !isProcessing
-        if isProcessing {
-            let stage = row.job?.stage.map { "Stage: \($0)" } ?? "Work in progress"
-            processingProgress.configure(title: "Processing", value: nil,
-                                         valueDescription: stage, colors: presentationColors)
-            let colors = presentationColors
-            statusBadge.layer?.backgroundColor = colors.surfacePanel.cgColor
-            statusBadge.layer?.borderColor = colors.accent.withAlphaComponent(0.48).cgColor
-        } else {
-            let meaning = statusMeaning(for: row)
-            processingStatus.setStatus(statusTitle(for: row), meaning: meaning, colors: presentationColors)
-            styleStatusBadge(meaning: meaning)
-        }
+        let meaning = statusMeaning(for: row)
+        processingStatus.setStatus(statusTitle(for: row), meaning: meaning, colors: presentationColors)
+        styleStatusBadge(meaning: meaning)
     }
 
     func styleStatusBadge(meaning: GraphiteFocusStatusMeaning) {
@@ -1522,22 +1449,19 @@ final class MeetingManagementView: NSView {
     }
 
     func statusMeaning(for row: MeetingBrowserRow) -> GraphiteFocusStatusMeaning {
-        if row.job?.status == .failed { return .destructive }
-        switch row.processingState {
+        switch MeetingStatusBadgeState(row: row).meaning {
         case .ready: return .success
-        case .live, .needsAttention: return .attention
-        case .processing, .unavailable: return .informational
+        case .attention: return .attention
+        case .failure: return .destructive
+        case .informational: return .informational
         }
     }
 
     private func statusTitle(for row: MeetingBrowserRow) -> String {
-        row.job?.status == .failed ? "Job failed · \(row.processingState.displayName)" : row.processingState.displayName
+        MeetingStatusBadgeState(row: row).title
     }
 
     private func statusText(for row: MeetingBrowserRow) -> String {
-        if row.processingState == .processing, row.job?.status != .failed {
-            return "Processing, \(row.job?.stage.map { "stage \($0)" } ?? "work in progress")"
-        }
         return "\(statusMeaning(for: row).symbol) \(statusTitle(for: row))"
     }
 
@@ -1609,120 +1533,25 @@ final class MeetingManagementView: NSView {
     private func beginSummaryEditing() { beginTextEditing(.summary) }
     private func beginNotesEditing() { beginTextEditing(.notes) }
 
-    private func beginTextEditing(_ field: EditableTextField) {
-        guard let detail = displayedDetail, let window, !textEditPanel.isOpen, !detail.row.isArchived,
-              selectedID == detail.row.id, !meetingsModel.detail.hasDirtyDrafts else { return }
-        let text: String
-        switch field {
-        case .summary:
-            guard detail.summaryVersion != nil else { return }
-            text = detail.summary?.summary ?? ""
-            meetingsModel.detail.beginEditingSummary()
-        case .notes:
-            guard detail.notesVersion != nil else { return }
-            // The doorway heading's separator newlines frame the Markdown body;
-            // they are not part of the text a user edits in the modal.
-            text = detail.humanNotes.trimmingCharacters(in: .newlines)
-            meetingsModel.detail.beginEditingNotes()
-        }
-        let meetingID = detail.row.id
-        modalBaseVersion = field == .summary ? detail.summaryVersion : detail.notesVersion
-        modalField = field
-        modalOriginalText = text
-        textEditPanel.present(over: window, field: field == .summary ? "Summary" : "My notes",
-                              meeting: detail.row.title, text: text,
+    private func beginTextEditing(_ field: MeetingTextField) {
+        guard let window, !textEditPanel.isOpen,
+              let editor = meetingsModel.detail.beginTextEditing(field) else { return }
+        let id = editor.id
+        textEditPanel.present(over: window, field: field.title,
+                              meeting: editor.meetingTitle, text: editor.text,
                               onChange: { [weak self] text in
-            guard let self, self.selectedID == meetingID else { return }
-            if field == .summary { self.meetingsModel.detail.updateSummaryDraft(text) }
-            else { self.meetingsModel.detail.updateNotesDraft(text) }
+            self?.meetingsModel.detail.updateTextEditor(id: id, text: text)
         }, onSave: { [weak self] text in
-            self?.saveModalText(field, meetingID: meetingID, text: text)
-        }, onCancel: { [weak self] in
-            guard let self else { return }
-            self.meetingsModel.detail.discardDrafts()
-            self.modalBaseVersion = nil
-            self.modalField = nil
-            self.textEditPanel.finish()
-        }, onReload: { [weak self] in
-            self?.reloadModalText(field, meetingID: meetingID)
-        })
-    }
-
-    /// Refresh a clean editor immediately; a dirty editor keeps its original base and draft.
-    private func refreshModalText(from detail: MeetingBrowserDetail) {
-        guard textEditPanel.isOpen, let field = modalField else { return }
-        let latestVersion = field == .summary ? detail.summaryVersion : detail.notesVersion
-        guard latestVersion != modalBaseVersion else { return }
-        if textEditPanel.text == modalOriginalText {
-            let latest = field == .summary ? detail.summary?.summary ?? "" : detail.humanNotes.trimmingCharacters(in: .newlines)
-            textEditPanel.showLatest(latest)
-            modalOriginalText = latest
-            modalBaseVersion = latestVersion
-        } else {
-            let name = field == .summary ? "Summary" : "My Notes"
-            textEditPanel.showError("\(name) changed while the editor was open. Your draft is preserved. Choose Reload Latest to replace it with the saved content, or Cancel.", conflict: true)
-        }
-    }
-
-    private func saveModalText(_ field: EditableTextField, meetingID: String, text: String) {
-        guard selectedID == meetingID else {
-            textEditPanel.showError("The selected Meeting changed. Cancel to leave this editor.", conflict: false)
-            return
-        }
-        if field == .summary { meetingsModel.detail.updateSummaryDraft(text) }
-        else { meetingsModel.detail.updateNotesDraft(text) }
-        let dirty = field == .summary ? meetingsModel.detail.summaryDraft?.isDirty == true
-                                      : meetingsModel.detail.notesDraft?.isDirty == true
-        guard dirty else {
-            meetingsModel.detail.discardDrafts()
-            modalBaseVersion = nil
-            modalField = nil
-            textEditPanel.finish()
-            return
-        }
-        textEditPanel.setSaving(true)
-        let completion: (Result<Void, Error>) -> Void = { [weak self] result in
-            guard let self, self.textEditPanel.isOpen else { return }
-            switch result {
-            case .success:
-                self.modalBaseVersion = nil
-                self.modalField = nil
-                self.textEditPanel.finish()
-                self.status.stringValue = field == .summary ? "Summary saved." : "Notes saved."
-            case let .failure(error):
-                let conflict: Bool
-                if case .failed(_, conflict: true) = self.meetingsModel.detail.mutationState { conflict = true }
-                else if case .malformed = error as? MeetingManagementError { conflict = true }
-                else { conflict = false }
-                self.textEditPanel.showError("Could not save: \(error.localizedDescription). Your text is still here.", conflict: conflict)
-            }
-        }
-        if field == .summary { meetingsModel.detail.saveSummary(completion: completion) }
-        else { meetingsModel.detail.saveNotes(completion: completion) }
-    }
-
-    private func reloadModalText(_ field: EditableTextField, meetingID: String) {
-        guard selectedID == meetingID else { return }
-        textEditPanel.setSaving(true)
-        meetingsModel.detail.refreshSelectedDetail { [weak self] result in
-            guard let self, self.textEditPanel.isOpen, self.selectedID == meetingID else { return }
-            switch result {
-            case .success:
-                self.meetingsModel.detail.reloadDraftsAfterConfirmation()
-                self.modalBaseVersion = field == .summary ? self.displayedDetail?.summaryVersion : self.displayedDetail?.notesVersion
-                if field == .summary {
-                    self.meetingsModel.detail.beginEditingSummary()
-                    self.textEditPanel.showLatest(self.meetingsModel.detail.summaryDraft?.editedText ?? "")
-                } else {
-                    self.meetingsModel.detail.beginEditingNotes()
-                    self.textEditPanel.showLatest((self.meetingsModel.detail.notesDraft?.editedText ?? "").trimmingCharacters(in: .newlines))
+            self?.meetingsModel.detail.saveTextEditor(id: id, text: text) { [weak self] result in
+                if case .success = result {
+                    self?.status.stringValue = field == .summary ? "Summary saved." : "Notes saved."
                 }
-                self.modalOriginalText = self.textEditPanel.text
-                self.textEditPanel.setSaving(false)
-            case let .failure(error):
-                self.textEditPanel.showError("Could not reload: \(error.localizedDescription). Your text is still here.", conflict: true)
             }
-        }
+        }, onCancel: { [weak self] in
+            self?.meetingsModel.detail.cancelTextEditing(id: id)
+        }, onReload: { [weak self] in
+            self?.meetingsModel.detail.reloadTextEditor(id: id)
+        })
     }
 
     private func updateOverviewSections(_ detail: MeetingBrowserDetail) {
@@ -2476,8 +2305,7 @@ final class MeetingManagementView: NSView {
         let remove = NSMenuItem(title: "Remove…", action: #selector(confirmRemove), keyEquivalent: "")
         remove.target = self
         remove.setAccessibilityIdentifier("meeting-remove")
-        remove.isEnabled = displayedDetail?.row.captureState == .stopped &&
-            displayedDetail?.jobs.contains(where: { $0.status == .queued || $0.status == .running }) == false && !meetingsModel.isDirty
+        remove.isEnabled = displayedDetail?.canRemove == true && !meetingsModel.isDirty
         menu.addItem(remove)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
     }
@@ -2604,11 +2432,10 @@ final class MeetingManagementView: NSView {
 
     private func updateReprocessAvailability(for selected: MeetingBrowserDetail?) {
         guard let detail = selected else { reprocessButton.isEnabled = false; return }
-        let active = detail.row.captureState != .stopped || detail.jobs.contains { $0.status == .queued || $0.status == .running }
-        reprocessButton.isEnabled = !detail.row.isArchived && !active && !meetingsModel.isDirty
-        reprocessButton.toolTip = detail.row.isArchived ? "Archived Meetings cannot be reprocessed."
-            : active ? "Wait for this Meeting’s active work to finish."
-            : meetingsModel.isDirty ? "Save or discard your edits before reprocessing." : "Rebuild generated Meeting content…"
+        let reason = detail.reprocessUnavailableReason
+        reprocessButton.isEnabled = reason == nil && !meetingsModel.isDirty
+        reprocessButton.toolTip = reason ?? (meetingsModel.isDirty
+            ? "Save or discard your edits before reprocessing." : "Rebuild generated Meeting content…")
     }
 
     @objc func confirmReprocess() {
@@ -2787,7 +2614,7 @@ extension MeetingManagementView: NSTableViewDataSource, NSTableViewDelegate {
         cell.alignment = .leading
         cell.spacing = GraphiteFocusPresentation.Space.primitive
         cell.edgeInsets = NSEdgeInsets(top: GraphiteFocusPresentation.Space.compact, left: GraphiteFocusPresentation.Space.panel, bottom: GraphiteFocusPresentation.Space.compact, right: GraphiteFocusPresentation.Space.panel)
-        cell.setAccessibilityLabel("\(meeting.title), \(date.stringValue), \(meeting.durationSeconds.map { "duration \(timeLabel($0)), " } ?? "")\(meeting.hasMyActions ? "my actions, " : "")\(meeting.hasOthersActions ? "others' actions, " : "")\(meeting.needsActionReview ? "actions need review, " : "")\(statusText(for: meeting))\(meeting.isArchived ? ", Archived" : "")")
+        cell.setAccessibilityLabel("\(meeting.title), \(date.stringValue), \(meeting.durationSeconds.map { "duration \(timeLabel($0)), " } ?? "")\(meeting.hasMyActions ? "my actions, " : "")\(meeting.hasOthersActions ? "others' actions, " : "")\(meeting.needsActionReview ? "actions need review, " : "")\(statusText(for: meeting))")
         return cell
     }
 

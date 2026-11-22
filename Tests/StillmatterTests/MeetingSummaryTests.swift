@@ -384,13 +384,12 @@ final class MeetingSummaryTests: XCTestCase {
             let recovery = MeetingReprocessingRecovery(vault: vault)
             try recovery.retain(jobID: "summary-job", paths: [fixture.summaryPath])
             var applied = false
-            let interrupted = try fixture.executor(extraction: extraction, onApplied: { applied = true },
-                publicationCheckpoint: { if $0 == phase { throw Crash.injected } })
-            XCTAssertThrowsError(try execute(interrupted, manifest: manifest))
+            XCTAssertThrowsError(try fixture.publishValidated(extraction: extraction, manifest: manifest,
+                onApplied: { applied = true }, publicationCheckpoint: { if $0 == phase { throw Crash.injected } }))
             XCTAssertFalse(applied, "Partial file/queue publication cannot claim success")
             XCTAssertTrue(FileManager.default.fileExists(atPath: recovery.location(jobID: "summary-job").path))
-            // Recreate the executor and operational connection as after a restart.
-            _ = try execute(fixture.executor(extraction: extraction), manifest: manifest)
+            // Recreate the publication snapshot and operational connection as after a restart.
+            _ = try fixture.publishValidated(extraction: extraction, manifest: manifest)
             let reopened = try MeetingManagementService(vault: vault, inbox: TasksInbox(databaseURL: fixture.rootURL.appendingPathComponent("operational.sqlite")))
                 .detail(for: initial.row.id)
             XCTAssertEqual(reopened.humanNotes, before.humanNotes)
@@ -411,7 +410,7 @@ final class MeetingSummaryTests: XCTestCase {
         let extraction = MeetingSummaryExtraction(meeting: fixture.transcript.meetingRelativePath, transcript: fixture.transcriptPath,
             decisions: [], myActionItems: [fixture.outcome(id: "first", text: "Send the plan", segment: 0),
                 fixture.outcome(id: "duplicate", text: "Send the plan", segment: 0)], otherActionItems: [], openQuestions: [])
-        _ = try execute(fixture.executor(extraction: extraction), manifest: MeetingSummaryJob.manifest(
+        _ = try fixture.publishValidated(extraction: extraction, manifest: MeetingSummaryJob.manifest(
             transcript: fixture.transcript, transcriptJSONRelativePath: fixture.transcriptPath))
         XCTAssertEqual(try service.detail(for: initial.row.id).myActionItems.count, 1)
         XCTAssertEqual(try fixture.inbox.items(category: .review).count, 1)
@@ -1108,6 +1107,27 @@ private final class MeetingSummaryFixture {
             inbox: inbox,
             onApplied: onApplied, analysisBudget: budget, publicationCheckpoint: publicationCheckpoint
         )
+    }
+
+    /// Trusted analysis fixtures cross the publication seam directly. Evidence and
+    /// permission integration remain covered through the executor tests above.
+    func publishValidated(extraction: MeetingSummaryExtraction, manifest: JobManifest,
+                          onApplied: () -> Void = {},
+                          publicationCheckpoint: (Int) throws -> Void = { _ in }) throws -> JobStageResult {
+        let job = JobRecord(id: "summary-job", manifest: manifest, status: .running, stages: [],
+            createdAt: "2026-09-21T09:00:00Z", updatedAt: "2026-09-21T09:00:00Z", failureDetails: nil)
+        let encoded = try XCTUnwrap(manifest.metadata[PiWorkflowManifest.metadataKey])
+        let workflow = try JSONDecoder().decode(PiWorkflowManifest.self, from: Data(encoded.utf8))
+        let vault = WorkspaceVault(workspaceRootURL: workspaceURL,
+            appSupportRootURL: rootURL.appendingPathComponent("Application Support"))
+        let publication = try MeetingGeneratedPublication(job: job, workflow: workflow,
+            workspaceRootURL: workspaceURL, vault: vault, inbox: inbox)
+        let summary = GeneratedArtifact(relativePath: summaryPath, data: Data("# Summary\n\nLaunch planning.\n".utf8))
+        let result = JobStageResult(artifacts: [summary,
+            GeneratedArtifact(relativePath: extractionPath, data: try JSONEncoder().encode(extraction))], logMessages: [])
+        return try publication.publishValidated(result, summary: summary, extraction: extraction,
+            cancellation: JobExecutionCancellation(), requireTransferApproval: {},
+            publicationCheckpoint: publicationCheckpoint, onApplied: onApplied)
     }
 
     func contents(_ relativePath: String) throws -> String {

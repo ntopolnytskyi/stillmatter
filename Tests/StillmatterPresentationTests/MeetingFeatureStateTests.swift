@@ -627,6 +627,209 @@ final class MeetingFeatureStateTests: XCTestCase {
         readModel.stop()
     }
 
+    @MainActor
+    func testUntouchedNotesEditorSaveAndRevertedEditDoNotWriteFramingNewlines() async throws {
+        try await withTextEditor { model, _, _, mutations, _ in
+            let editor = try XCTUnwrap(model.beginTextEditing(.notes))
+            XCTAssertEqual(editor.text, "Original notes")
+            model.updateTextEditor(id: editor.id, text: "Temporary edit")
+            XCTAssertTrue(model.hasDirtyDrafts)
+            model.updateTextEditor(id: editor.id, text: editor.text)
+            XCTAssertFalse(model.hasDirtyDrafts)
+            XCTAssertEqual(model.notesDraft?.editedText, "\nOriginal notes\n\n")
+            model.saveTextEditor(id: editor.id, text: editor.text)
+            XCTAssertNil(model.textEditor)
+            XCTAssertTrue(mutations.mutations.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testCleanEditorRefreshBecomesTheNewUntouchedSaveBaseline() async throws {
+        try await withTextEditor { model, source, reads, mutations, row in
+            let editor = try XCTUnwrap(model.beginTextEditing(.notes))
+            source.details[row.id] = self.editorDetail(row, notes: "\nFresh notes\n", version: "fresh")
+            model.refreshSelectedDetail()
+            await self.drain(reads)
+            XCTAssertEqual(model.textEditor?.id, editor.id)
+            XCTAssertEqual(model.textEditor?.text, "Fresh notes")
+            XCTAssertEqual(model.notesDraft?.baseVersion, self.version("fresh"))
+            model.saveTextEditor(id: editor.id, text: "Fresh notes")
+            XCTAssertTrue(mutations.mutations.isEmpty)
+            XCTAssertNil(model.textEditor)
+        }
+    }
+
+    @MainActor
+    func testDirtyEditorRetainsVersionUntilExplicitReloadAndFailedReloadKeepsText() async throws {
+        try await withTextEditor { model, source, reads, _, row in
+            let editor = try XCTUnwrap(model.beginTextEditing(.notes))
+            model.updateTextEditor(id: editor.id, text: "Local draft")
+            source.details[row.id] = self.editorDetail(row, notes: "External notes", version: "external")
+            model.refreshSelectedDetail()
+            await self.drain(reads)
+            XCTAssertEqual(model.textEditor?.text, "Local draft")
+            XCTAssertEqual(model.notesDraft?.baseVersion, self.version("old"))
+            XCTAssertEqual(model.textEditor?.canReload, true)
+            source.detailError = MeetingManagementError.malformed("my-notes.md is invalid")
+            model.reloadTextEditor(id: editor.id)
+            XCTAssertEqual(model.textEditor?.isBusy, true)
+            await self.drain(reads)
+            XCTAssertEqual(model.textEditor?.isBusy, false)
+            XCTAssertEqual(model.textEditor?.text, "Local draft")
+            XCTAssertEqual(model.notesDraft?.baseVersion, self.version("old"))
+            XCTAssertTrue(model.textEditor?.error?.contains("Could not reload") == true)
+            source.detailError = nil
+            model.reloadTextEditor(id: editor.id)
+            await self.drain(reads)
+            XCTAssertEqual(model.textEditor?.text, "External notes")
+            XCTAssertEqual(model.notesDraft?.baseVersion, self.version("external"))
+            XCTAssertNil(model.textEditor?.error)
+            XCTAssertFalse(model.hasDirtyDrafts)
+        }
+    }
+
+    @MainActor
+    func testNewerRefreshCanFulfillExplicitReloadWithoutLeavingEditorBusy() async throws {
+        try await withTextEditor { model, source, reads, _, row in
+            let editor = try XCTUnwrap(model.beginTextEditing(.notes))
+            model.updateTextEditor(id: editor.id, text: "Local draft")
+            model.reloadTextEditor(id: editor.id)
+            source.details[row.id] = self.editorDetail(row, notes: "Latest external notes", version: "latest")
+            model.refreshSelectedDetail()
+            await self.drain(reads)
+            XCTAssertEqual(model.textEditor?.text, "Latest external notes")
+            XCTAssertEqual(model.textEditor?.isBusy, false)
+            XCTAssertNil(model.textEditor?.error)
+            XCTAssertEqual(model.notesDraft?.baseVersion, self.version("latest"))
+            XCTAssertFalse(model.hasDirtyDrafts)
+        }
+    }
+
+    @MainActor
+    func testSummaryEditorSavePreservesDraftOnFailureAndUsesItsCapturedVersion() async throws {
+        try await withTextEditor { model, _, _, mutations, row in
+            let editor = try XCTUnwrap(model.beginTextEditing(.summary))
+            XCTAssertEqual(editor.text, "Original summary")
+            model.saveTextEditor(id: editor.id, text: "Edited summary")
+            model.saveTextEditor(id: editor.id, text: "Duplicate")
+            model.cancelTextEditing(id: editor.id)
+            XCTAssertEqual(mutations.mutations.count, 1)
+            XCTAssertEqual(model.textEditor?.isBusy, true)
+            guard case let .saveSummary(id, sections, base) = mutations.mutations[0] else {
+                return XCTFail("Expected Summary save")
+            }
+            XCTAssertEqual(id, row.id)
+            XCTAssertEqual(sections.summary, "Edited summary")
+            XCTAssertEqual(base, self.version("summary-old"))
+            mutations.completeNext(.failure(FeatureMutationError.failed))
+            await self.settleMainActor()
+            XCTAssertEqual(model.textEditor?.text, "Edited summary")
+            XCTAssertEqual(model.textEditor?.isBusy, false)
+            XCTAssertEqual(model.textEditor?.canReload, false)
+            model.saveTextEditor(id: editor.id, text: "Edited summary")
+            let saved = self.editorDetail(row, notes: "Original notes", summary: "Edited summary", version: "saved")
+            mutations.completeNext(.success(.detail(saved)))
+            await self.settleMainActor()
+            XCTAssertNil(model.textEditor)
+            XCTAssertEqual(model.summaryDraft?.baseVersion, self.version("summary-saved"))
+            XCTAssertFalse(model.hasDirtyDrafts)
+        }
+    }
+
+    @MainActor
+    func testSaveConflictAndMalformedRefreshOfferReloadWithoutLosingDraft() async throws {
+        try await withTextEditor { model, source, reads, mutations, row in
+            let editor = try XCTUnwrap(model.beginTextEditing(.notes))
+            model.saveTextEditor(id: editor.id, text: "Local notes")
+            mutations.completeNext(.failure(WorkspaceVaultError.conflict(relativePath: "my-notes.md",
+                expected: self.version("old"), actual: self.version("new"))))
+            await self.settleMainActor()
+            XCTAssertEqual(model.textEditor?.canReload, true)
+            XCTAssertEqual(model.textEditor?.text, "Local notes")
+            source.detailError = MeetingManagementError.malformed("my-notes.md is invalid")
+            model.refreshSelectedDetail()
+            await self.drain(reads)
+            XCTAssertEqual(model.textEditor?.canReload, true)
+            XCTAssertTrue(model.textEditor?.error?.contains("my-notes.md") == true)
+            XCTAssertEqual(model.textEditor?.text, "Local notes")
+            source.detailError = nil
+            source.details[row.id] = self.editorDetail(row, notes: "External notes", version: "external")
+            model.refreshSelectedDetail()
+            await self.drain(reads)
+            model.cancelTextEditing(id: editor.id)
+            let reopened = try XCTUnwrap(model.beginTextEditing(.notes))
+            XCTAssertEqual(reopened.text, "External notes")
+            model.updateTextEditor(id: editor.id, text: "Stale callback")
+            model.cancelTextEditing(id: editor.id)
+            XCTAssertEqual(model.textEditor, reopened)
+        }
+    }
+
+    @MainActor
+    func testPausingMeetingsRetainsTheEditorAndIgnoresItsInterruptedSave() async throws {
+        try await withTextEditor { model, _, _, mutations, row in
+            let editor = try XCTUnwrap(model.beginTextEditing(.notes))
+            model.saveTextEditor(id: editor.id, text: "Draft across pause")
+            model.stop()
+            XCTAssertEqual(model.textEditor?.id, editor.id)
+            XCTAssertEqual(model.textEditor?.text, "Draft across pause")
+            XCTAssertEqual(model.textEditor?.isBusy, false)
+            mutations.completeNext(.success(.detail(self.editorDetail(row, notes: "Late save", version: "late"))))
+            await self.settleMainActor()
+            XCTAssertEqual(model.textEditor?.text, "Draft across pause")
+            XCTAssertTrue(model.hasDirtyDrafts)
+            model.cancelTextEditing(id: editor.id)
+            XCTAssertNil(model.textEditor)
+        }
+    }
+
+    @MainActor
+    func testOldSaveAndReloadCannotChangeANewEditorSession() async throws {
+        try await withTextEditor { model, _, reads, mutations, row in
+            let editor = try XCTUnwrap(model.beginTextEditing(.notes))
+            model.saveTextEditor(id: editor.id, text: "Saving old draft")
+            model.select(nil)
+            model.select(MeetingReference(row: row))
+            await self.drain(reads)
+            let reopened = try XCTUnwrap(model.beginTextEditing(.notes))
+            mutations.completeNext(.success(.detail(self.editorDetail(row, notes: "Old saved notes", version: "late"))))
+            await self.settleMainActor()
+            XCTAssertEqual(model.textEditor, reopened)
+            model.reloadTextEditor(id: reopened.id)
+            model.select(nil)
+            model.select(MeetingReference(row: row))
+            await self.drain(reads)
+            let latest = try XCTUnwrap(model.beginTextEditing(.summary))
+            model.updateTextEditor(id: reopened.id, text: "Old reload callback")
+            XCTAssertEqual(model.textEditor, latest)
+        }
+    }
+
+    @MainActor
+    private func withTextEditor(_ body: (MeetingDetailModel, FeatureReadSource, ControlledFeatureReadExecutor,
+                                        ControlledMutationExecutor, MeetingBrowserRow) async throws -> Void) async throws {
+        let row = browserRow("editor", state: .ready)
+        let source = FeatureReadSource(rows: [row], details: [row.id: editorDetail(row, notes: "\nOriginal notes\n\n", version: "old")])
+        let reads = ControlledFeatureReadExecutor()
+        let read = makeReadModel("editor-workspace", source: source, executor: reads)
+        let mutations = ControlledMutationExecutor()
+        let model = MeetingDetailModel()
+        model.bind(readModel: read, mutationExecutor: mutations, playbackTransport: nil)
+        defer { model.stop(); read.stop() }
+        read.readBrowser(filters: MeetingBrowserFilters()) { _ in }
+        await drain(reads)
+        model.select(MeetingReference(row: row))
+        await drain(reads)
+        try await body(model, source, reads, mutations, row)
+    }
+
+    private func editorDetail(_ row: MeetingBrowserRow, notes: String, summary: String = "Original summary",
+                              version hash: String) -> MeetingBrowserDetail {
+        MeetingBrowserDetail(row: row, doorwayText: "canonical", doorwayVersion: version("doorway"),
+            humanNotes: notes, notesVersion: version(hash), summaryVersion: version("summary-" + hash),
+            summary: MeetingSummarySections(summary: summary))
+    }
+
     private func makeReadModel(_ workspaceID: String, source: FeatureReadSource,
                                executor: ControlledFeatureReadExecutor) -> MeetingReadModel {
         MeetingReadModel(workspaceID: workspaceID, sourceFactory: { source },
@@ -680,6 +883,7 @@ private final class FeatureReadSource: MeetingReadSource {
     var rows: [MeetingBrowserRow]
     var details: [String: MeetingBrowserDetail]
     private(set) var detailReadCount = 0
+    var detailError: Error?
 
     init(rows: [MeetingBrowserRow], details: [String: MeetingBrowserDetail] = [:]) {
         self.rows = rows
@@ -695,6 +899,7 @@ private final class FeatureReadSource: MeetingReadSource {
     }
     func detail(for reference: MeetingReference, browserRow: MeetingBrowserRow) throws -> MeetingBrowserDetail {
         detailReadCount += 1
+        if let detailError { throw detailError }
         return details[reference.id] ?? MeetingBrowserDetail(row: browserRow, doorwayText: "canonical")
     }
     func updateSearchIndex(_ index: SearchIndex?) {}

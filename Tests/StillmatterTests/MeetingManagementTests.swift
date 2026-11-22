@@ -912,6 +912,7 @@ final class MeetingManagementTests: XCTestCase {
         let service = MeetingManagementService(vault: fixture.vault, jobStore: store)
         XCTAssertEqual(try service.detail(for: "failed").row.processingState, .needsAttention)
         XCTAssertEqual(try service.detail(for: "failed").job?.stage, "Transcribe audio")
+        XCTAssertEqual(try service.detail(for: "failed").job?.stageID, TranscriptionJob.stageID)
         XCTAssertTrue(try XCTUnwrap(service.detail(for: "failed").job?.error).contains("transcription failed"))
         XCTAssertEqual(try service.list().count, 2)
         XCTAssertNil(try service.detail(for: "other").job)
@@ -1305,6 +1306,32 @@ final class MeetingManagementTests: XCTestCase {
         }
     }
 
+    func testRenameRejectsAnArchiveWrittenAfterTheCallerReadTheMeeting() throws {
+        let fixture = try Fixture()
+        let path = "Meetings/ready/meeting.md"
+        try fixture.write(path, "---\ntitle: Ready\ncapture_session_id: ready\n---\n# Ready\n")
+        try seedArchiveReady(fixture, path: path)
+        let service = MeetingManagementService(vault: fixture.vault)
+        let before = try service.detail(for: path)
+        let version = try XCTUnwrap(before.doorwayVersion)
+        XCTAssertTrue(before.canRename)
+        try service.archive(meetingID: before.row.id)
+        let doorway = try fixture.vault.readMarkdown(relativePath: path).data
+        let paths = try fixture.vault.markdownPaths(relativeTo: "Meetings")
+
+        XCTAssertThrowsError(try service.rename(meetingID: before.row.id, title: "Renamed", expectedVersion: version)) {
+            XCTAssertEqual($0 as? MeetingManagementError, .retryRejected("Archived Meeting metadata is read-only."))
+        }
+        XCTAssertEqual(try fixture.vault.readMarkdown(relativePath: path).data, doorway)
+        XCTAssertEqual(try fixture.vault.markdownPaths(relativeTo: "Meetings").sorted(), paths.sorted())
+        let after = try service.detail(for: before.row.id)
+        XCTAssertTrue(after.row.isArchived)
+        XCTAssertEqual(after.row.title, before.row.title)
+        XCTAssertFalse(after.canRename)
+        XCTAssertFalse(after.canAssociateCalendar)
+        XCTAssertTrue(after.canRemove)
+    }
+
     func testRenameRejectsCollisionAndStaleVersionWithoutChangingReferences() throws {
         let fixture = try Fixture()
         let old = "Meetings/2026/01/01/09-10-old/meeting.md"
@@ -1599,17 +1626,26 @@ final class MeetingManagementTests: XCTestCase {
     func testPlaybackFailsClosedWhenRequiredAudioIsMissingOrUndecodable() throws {
         let fixture = try Fixture()
         let bundle = try makePlaybackBundle(in: fixture, id: "source")
-        let service = MeetingManagementService(vault: fixture.vault)
+        let evidence = MeetingPlaybackEvidence(recordingMediaURL: nil)
+        func resolve() throws -> MeetingPlaybackEvidence.Resolution {
+            let path = "Meetings/source/meeting.md"
+            let doorway = try fixture.vault.readMarkdown(relativePath: path).data
+            return evidence.resolve(doorwayText: String(decoding: doorway, as: UTF8.self),
+                                    meetingPath: path, transcript: nil)
+        }
         let audio = bundle.deletingLastPathComponent().appendingPathComponent("mic.caf")
         try Data("not audio".utf8).write(to: audio)
-        let corrupt = try service.detail(for: "source").playback
+        let corruptEvidence = try resolve()
+        XCTAssertTrue(corruptEvidence.bundleArtifact.available, "Readable artifacts are distinct from valid playback")
+        XCTAssertTrue(try XCTUnwrap(corruptEvidence.sourceArtifacts.first).available)
+        let corrupt = corruptEvidence.playback
         XCTAssertEqual(corrupt.capability, .unavailable)
         XCTAssertNil(corrupt.microphonePath)
         XCTAssertTrue(corrupt.message.contains("Microphone"))
         try FileManager.default.removeItem(at: audio)
-        XCTAssertEqual(try service.detail(for: "source").playback.capability, .unavailable)
+        XCTAssertEqual(try resolve().playback.capability, .unavailable)
         try FileManager.default.removeItem(at: bundle)
-        let missing = try service.detail(for: "source").playback
+        let missing = try resolve().playback
         XCTAssertEqual(missing.capability, .unavailable)
         XCTAssertTrue(missing.message.contains("Recording Bundle unavailable"))
     }
@@ -1647,15 +1683,21 @@ final class MeetingManagementTests: XCTestCase {
             try FileManager.default.copyItem(at: original.deletingLastPathComponent(), to: parent.appendingPathComponent("ambiguous"))
         }
         try FileManager.default.removeItem(at: original.deletingLastPathComponent())
-        let service = MeetingManagementService(vault: fixture.vault, recordingMediaURL: media)
-        XCTAssertEqual(try service.detail(for: "ambiguous").playback.capability, .unavailable)
+        let evidence = MeetingPlaybackEvidence(recordingMediaURL: media)
+        func resolve() throws -> MeetingPlaybackEvidence.Resolution {
+            let path = "Meetings/ambiguous/meeting.md"
+            let doorway = try fixture.vault.readMarkdown(relativePath: path).data
+            return evidence.resolve(doorwayText: String(decoding: doorway, as: UTF8.self),
+                                    meetingPath: path, transcript: nil)
+        }
+        XCTAssertEqual(try resolve().playback.capability, .unavailable)
         try FileManager.default.removeItem(at: media.appendingPathComponent("2025/ambiguous"))
-        XCTAssertEqual(try service.detail(for: "ambiguous").playback.capability, .microphoneOnly)
+        XCTAssertEqual(try resolve().playback.capability, .microphoneOnly)
         let sidecar = media.appendingPathComponent("2026/ambiguous/recording-bundle.json")
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: sidecar)) as? [String: Any])
         json["meetingRelativePath"] = "Meetings/foreign/meeting.md"
         try JSONSerialization.data(withJSONObject: json).write(to: sidecar)
-        XCTAssertEqual(try service.detail(for: "ambiguous").playback.capability, .unavailable)
+        XCTAssertEqual(try resolve().playback.capability, .unavailable)
     }
 
     private func makePlaybackBundle(in fixture: Fixture, id: String) throws -> URL {

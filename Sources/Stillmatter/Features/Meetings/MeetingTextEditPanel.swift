@@ -1,6 +1,9 @@
 import AppKit
+#if SWIFT_PACKAGE
+import StillmatterPresentation
+#endif
 
-/// One sheet for either editable Meeting text field. The owning view handles versioned saves;
+/// One sheet for either editable Meeting text field. The presentation module handles versioned saves;
 /// this module owns the modal keyboard/focus lifecycle and never changes Meeting selection.
 @MainActor
 final class MeetingTextEditPanel: NSObject {
@@ -132,6 +135,15 @@ final class MeetingTextEditPanel: NSObject {
         saveButton.isEnabled = !saving
         cancelButton.isEnabled = !saving
         reloadButton.isEnabled = !saving
+    }
+
+    func render(_ state: MeetingTextEditorState) {
+        guard isOpen else { return }
+        if editor.string != state.text { editor.string = state.text }
+        errorLabel.stringValue = state.error ?? ""
+        errorLabel.isHidden = state.error == nil
+        reloadButton.isHidden = !state.canReload
+        setSaving(state.isBusy)
     }
 
     func showError(_ message: String, conflict: Bool) {

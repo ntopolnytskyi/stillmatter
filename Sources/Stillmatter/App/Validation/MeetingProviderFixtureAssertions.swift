@@ -132,7 +132,7 @@ extension MeetingManagementView {
             let queuedStore = try JobStore(databaseURL: workspaceRoot.appendingPathComponent("Support/state-fixture.sqlite"))
             _ = try queuedStore.enqueue(id: "queued-second", manifest: JobManifest(
                 type: MeetingSummaryJob.type, title: "Summarize second", executionClass: .heavy,
-                stages: [JobStageDefinition(id: "summarize", title: "Generate Summary")],
+                stages: [JobStageDefinition(id: MeetingSummaryJob.stageID, title: "Generate Summary")],
                 metadata: ["capture_session_id": "second"], maxAutomaticRetries: 0))
             let queuedView = MeetingFixtureProviders.make(serviceProvider: {
                 MeetingManagementService(vault: vault, jobStore: queuedStore)
@@ -147,10 +147,9 @@ extension MeetingManagementView {
                          queuedView.overviewPage.isHidden && queuedView.actionItemsPage.isHidden &&
                          queuedView.openItemsPage.isHidden && queuedView.notesPage.isHidden && queuedView.timelinePage.isHidden &&
                          queuedView.pageSelector.isHidden && queuedView.pinnedAudio.isHidden &&
-                         queuedView.toolbar.isHidden && !queuedView.processingProgress.isHidden &&
-                         queuedView.processingProgress.accessibilityLabel() == "Processing" &&
-                         ((queuedView.processingProgress.accessibilityValue() as? String)?.contains("Stage: Generate Summary") == true ||
-                          (queuedView.processingProgress.accessibilityValue() as? String)?.contains("Work in progress") == true) &&
+                         queuedView.toolbar.isHidden &&
+                         queuedView.processingStatus.accessibilityLabel() == "Summarization queued" &&
+                         queuedView.processingStatus.maximumNumberOfLines == 1 &&
                          queuedView.status.stringValue.contains("Meeting content will appear when it finishes"),
                          "Queued work must show separate wait guidance while all Meeting content remains hidden")
             recordMeetingFixtureProgress("Queued Processing detail remained blank")
@@ -169,7 +168,7 @@ extension MeetingManagementView {
             let scheduler = JobScheduler(store: jobStore, executor: MeetingRetryFixtureExecutor())
             _ = try scheduler.enqueue(id: "failed-first", manifest: JobManifest(
                 type: MeetingSummaryJob.type, title: "Summarize first", executionClass: .heavy,
-                stages: [JobStageDefinition(id: "summarize", title: "Generate Summary")],
+                stages: [JobStageDefinition(id: MeetingSummaryJob.stageID, title: "Generate Summary")],
                 metadata: ["capture_session_id": "first"], maxAutomaticRetries: 0))
             let deadline = Date().addingTimeInterval(3)
             while Date() < deadline && (try? jobStore.job(id: "failed-first")?.status) != .failed {

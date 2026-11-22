@@ -74,7 +74,7 @@ public final class MeetingTitleReviewService {
         let active = try jobs?.jobs().contains { job in
             (job.status == .queued || job.status == .running) &&
                 (!enforceWorkspaceOwner || job.manifest.workspaceOwner == vault.rootURL.standardizedFileURL.resolvingSymlinksInPath().path) &&
-                MeetingManagementService.owns(job, session: session, path: path)
+                MeetingDoorwayMetadata.owns(job, session: session, path: path)
         } ?? false
         if !active, !slug.isEmpty, basename.contains("-untitled-meeting"),
            !directory.contains(".."), !cleaned.contains("/") {
