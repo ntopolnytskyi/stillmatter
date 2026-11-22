@@ -141,6 +141,10 @@ struct MeetingArchiveState: Codable {
 
 public final class MeetingManagementService {
     private var artifactStore: MeetingArtifactStore { MeetingArtifactStore(vault: vault, inbox: inbox) }
+    private var textEditing: MeetingTextEditing {
+        MeetingTextEditing(vault: vault, inbox: inbox, index: index,
+                           readDetail: { try self.detail(for: $0) }, onMeetingChanged: onMeetingChanged)
+    }
     private let vault: WorkspaceVault; private let jobs: JobStore?; private let inbox: TasksInbox?; private let index: SearchIndex?; private let captureSnapshot: () -> CaptureSnapshot?
     private let enforceWorkspaceOwner: Bool
     private func workspaceJobs() throws -> [JobRecord] {
@@ -307,73 +311,15 @@ public final class MeetingManagementService {
     }
 
     public func saveHumanNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
-        do {
-            let detail = try self.detail(for: id)
-            guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting content is read-only.") }
-            let defaultNotesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
-            let noteIDs: (String) -> Set<String> = { text in
-                Set(TodoItemParser().parse(markdown: text, relativePath: defaultNotesPath).compactMap {
-                    UUID(uuidString: $0.id)?.uuidString.lowercased()
-                })
-            }
-            let removedNoteTaskIDs = noteIDs(detail.humanNotes).subtracting(noteIDs(notes))
-            if try legacyWriterIsActive(for: detail.row) {
-                let liveNotesPath = Self.sibling(detail.row.meetingRelativePath, "my-notes.md")
-                if try vault.versionOfMarkdown(relativePath: liveNotesPath) != nil {
-                    _ = try MeetingNoteTodoBridge(vault: vault).saveNotes(
-                        notes, at: liveNotesPath, expectedNotesVersion: expectedVersion,
-                        removingItemIDs: removedNoteTaskIDs
-                    )
-                    try? index?.update(relativePath: liveNotesPath)
-                    onMeetingChanged([detail.row.meetingRelativePath])
-                    return try self.detail(for: id)
-                }
-                // Capture still appends to the doorway until the live-notes writer is
-                // migrated. Keep this representation authoritative for that session.
-                let updated = Self.replaceNotes(in: detail.doorwayText, notes: notes)
-                do {
-                    _ = try vault.writeMarkdown(Data(updated.utf8), relativePath: detail.row.meetingRelativePath, expectedVersion: expectedVersion)
-                } catch {
-                    try artifactStore.keepConflict(notes, external: Self.notes(from: String(decoding: try vault.readMarkdown(relativePath: detail.row.meetingRelativePath).data, as: UTF8.self)),
-                        meetingID: detail.row.id, path: detail.row.meetingRelativePath)
-                    throw error
-                }
-                try? index?.update(relativePath: detail.row.meetingRelativePath)
-            } else {
-                try artifactStore.saveNotes(notes, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
-                try? index?.update(relativePath: Self.sibling(detail.row.meetingRelativePath, "my-notes.md"))
-            }
-            onMeetingChanged([detail.row.meetingRelativePath])
-            return try self.detail(for: id)
-        } catch {
-            // Preserve a draft even when the newer external source cannot be parsed.
-            if !(error is WorkspaceVaultError) { try artifactStore.keepConflict(notes, external: error.localizedDescription, meetingID: id, path: "My Notes") }
-            throw error
-        }
+        try textEditing.saveNotes(notes, for: id, expectedVersion: expectedVersion)
     }
-    public func saveNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail { try saveHumanNotes(notes, for:id, expectedVersion:expectedVersion) }
+
+    public func saveNotes(_ notes: String, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
+        try textEditing.saveNotes(notes, for: id, expectedVersion: expectedVersion)
+    }
+
     public func saveSummary(_ sections: MeetingSummarySections, for id: String, expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
-        do {
-            let detail = try self.detail(for: id)
-            guard !detail.row.isArchived else { throw MeetingManagementError.retryRejected("Archived Meeting content is read-only.") }
-            let summaryPath = Self.sibling(detail.row.meetingRelativePath, "summary.md")
-            if try legacyWriterIsActive(for: detail.row) {
-                do {
-                    _ = try vault.writeMarkdown(Data(sections.summary.utf8), relativePath: summaryPath, expectedVersion: expectedVersion)
-                } catch {
-                    try artifactStore.keepConflict(sections.summary, external: detail.summary?.summary ?? "", meetingID: detail.row.id, path: summaryPath)
-                    throw error
-                }
-            } else {
-                try artifactStore.saveSummary(sections, meetingPath: detail.row.meetingRelativePath, meetingID: detail.row.id, expected: expectedVersion)
-            }
-            try? index?.update(relativePath: summaryPath)
-            onMeetingChanged([detail.row.meetingRelativePath])
-            return try self.detail(for: id)
-        } catch {
-            if !(error is WorkspaceVaultError) { try artifactStore.keepConflict(sections.summary, external: error.localizedDescription, meetingID: id, path: "Summary") }
-            throw error
-        }
+        try textEditing.saveSummary(sections, for: id, expectedVersion: expectedVersion)
     }
     public func saveOutcome(_ entry: MeetingOutcomeEntry, delete: Bool = false, for id: String,
                             expectedVersion: WorkspaceFileVersion) throws -> MeetingBrowserDetail {
@@ -569,11 +515,6 @@ public final class MeetingManagementService {
         if let s=captureSnapshot(), let p=s.meetingRelativePath, s.state != .idle && s.state != .failed, !rows.contains(where:{$0.meetingRelativePath==p}) { rows.append(MeetingBrowserRow(id:p,title:s.meetingTitle ?? Self.fallbackTitle(p),startedAt:nil,meetingRelativePath:p,captureState:.live,processingState:.live)) }
         return rows.sorted { if let a=$0.startedAt, let b=$1.startedAt, a != b { return a>b }; if $0.startedAt != nil { return true }; if $1.startedAt != nil { return false }; return $0.meetingRelativePath < $1.meetingRelativePath }
     }
-    private func legacyWriterIsActive(for row: MeetingBrowserRow) throws -> Bool {
-        guard row.captureState == .live || row.processingState == .processing else { return false }
-        return try artifactStore.identity(at: row.meetingRelativePath) == nil
-    }
-
     private func makeDetail(row: MeetingBrowserRow, source: (data: Data, version: WorkspaceFileVersion)) throws -> MeetingBrowserDetail {
         var text = String(data: source.data, encoding: .utf8) ?? ""
         let path = row.meetingRelativePath
@@ -595,7 +536,7 @@ public final class MeetingManagementService {
             return MeetingBrowserDetail(row: row, doorwayText: inactive ? text : "", doorwayVersion: inactive ? source.version : nil,
                                         job: primaryJob, jobs: presentedJobs)
         }
-        let usesLegacyArtifacts = try legacyWriterIsActive(for: row)
+        let usesLegacyArtifacts = try artifactStore.usesLegacyWriter(for: row)
         let canonical = try usesLegacyArtifacts
             ? artifactStore.legacyLoaded(meetingPath: row.meetingRelativePath, meetingID: row.id)
             : artifactStore.load(meetingPath: row.meetingRelativePath, meetingID: row.id)
@@ -696,23 +637,6 @@ public final class MeetingManagementService {
 
     private static func processing(live:Bool,path:String,jobs:[JobRecord],vault:WorkspaceVault)->MeetingProcessingState { if live{return .live}; if jobs.contains(where:{$0.status == .queued || $0.status == .running}) {return .processing}; if jobs.contains(where:{$0.status == .failed}) {return .needsAttention}; let dir=(path as NSString).deletingLastPathComponent; let t=Self.validTranscript(path: dir+"/transcript.json", vault: vault) && (try? vault.readMarkdown(relativePath: dir+"/transcript.md")) != nil, s=(try? vault.readMarkdown(relativePath:dir+"/summary.md")) != nil && (try? vault.readMarkdown(relativePath:dir+"/summary-extraction.json")).flatMap { try? JSONDecoder().decode(MeetingSummaryExtraction.self, from: $0.data) } != nil; return t && s ? .ready : .needsAttention }
     private static func validTranscript(path: String, vault: WorkspaceVault) -> Bool { guard let data = try? vault.readMarkdown(relativePath: path).data else { return false }; let decoder=JSONDecoder(); decoder.dateDecodingStrategy = .iso8601; return (try? decoder.decode(TranscriptDocument.self, from: data)) != nil }
-    private static func notesRange(in text: String) -> Range<String.Index>? {
-        // Captured Meetings use Live notes; older manually written Meetings may use Notes.
-        guard let heading = text.range(of: #"(?m)^## (?:Live notes|Notes)[ \t]*$"#, options: .regularExpression) else { return nil }
-        let end = text.range(of: #"(?m)^## [^\n]+$"#, options: .regularExpression, range: heading.upperBound..<text.endIndex)?.lowerBound ?? text.endIndex
-        return heading.upperBound..<end
-    }
-    private static func notes(from text: String) -> String {
-        guard let range = notesRange(in: text) else { return "" }
-        return text[range].trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    private static func replaceNotes(in text: String, notes: String) -> String {
-        let clean = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let range = notesRange(in: text) else {
-            return text.trimmingCharacters(in: .newlines) + "\n\n## Notes\n\n" + clean + "\n"
-        }
-        return text.replacingCharacters(in: range, with: "\n\n" + clean + "\n\n")
-    }
     private static func sibling(_ path:String,_ name:String)->String {(path as NSString).deletingLastPathComponent+"/"+name}
     private static func frontmatter(_ text:String)->String { guard text.hasPrefix("---") else{return "---\n---\n"}; guard let r=text.range(of:"---",range:text.index(text.startIndex,offsetBy:3)..<text.endIndex) else{return "---\n---\n"}; return String(text[..<text.index(after:r.upperBound)])+"\n" }
     private static func renderSummary(_ s:MeetingSummarySections)->String { ["## Summary",s.summary,"## Decisions",s.decisions,"## My action items",s.myActionItems,"## Other action items",s.otherActionItems,"## Open questions",s.openQuestions].joined(separator:"\n\n")+"\n" }

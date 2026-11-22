@@ -165,14 +165,14 @@ final class MeetingFeatureStateTests: XCTestCase {
         model.refresh()
         XCTAssertTrue(model.pendingWorkspaceDecision)
         XCTAssertEqual(model.snapshot?.workspaceID, "workspace-a")
-        model.resolvePendingWorkspaceChange(.cancel)
+        self.resolveDeparture(.cancel, model: model)
         XCTAssertFalse(model.pendingWorkspaceDecision)
         XCTAssertEqual(model.detail.notesDraft?.editedText, "Keep this edit")
 
         selectedReadModel = readModelC
         model.refresh()
         XCTAssertTrue(model.pendingWorkspaceDecision)
-        model.resolvePendingWorkspaceChange(.discard)
+        self.resolveDeparture(.discard, model: model)
         await drain(executorC)
         XCTAssertEqual(model.snapshot?.workspaceID, "workspace-c")
         XCTAssertEqual(model.selectedMeetingID, "b")
@@ -360,7 +360,7 @@ final class MeetingFeatureStateTests: XCTestCase {
         let observation = model.$pendingSelectionDecision.dropFirst().sink { pending in
             if pending {
                 alerts += 1
-                model.resolvePendingSelection(.cancel) // NSAlert returns inside Published's synchronous callback.
+                self.resolveDeparture(.cancel, model: model) // NSAlert returns inside Published's synchronous callback.
             }
         }
         defer { observation.cancel() }
@@ -389,7 +389,7 @@ final class MeetingFeatureStateTests: XCTestCase {
         model.detail.updateNotesDraft("local unsaved")
         model.setQueueFilter(.attention)
         XCTAssertTrue(model.pendingSelectionDecision)
-        model.resolvePendingSelection(.cancel)
+        self.resolveDeparture(.cancel, model: model)
         XCTAssertEqual(model.queueFilter, .recorded)
         XCTAssertEqual(model.visibleRows.map(\.id), ["a"])
         XCTAssertEqual(model.selectedMeetingID, "a")
@@ -417,12 +417,12 @@ final class MeetingFeatureStateTests: XCTestCase {
 
         model.detail.updateNotesDraft("unsaved")
         XCTAssertEqual(model.select(meetingID: "b", selectedIDs: ["b"]), .requiresDecision)
-        model.resolvePendingSelection(.cancel)
+        self.resolveDeparture(.cancel, model: model)
         XCTAssertEqual(model.selectedMeetingID, "a")
         XCTAssertEqual(model.detail.notesDraft?.editedText, "unsaved")
 
         XCTAssertEqual(model.select(meetingID: "b", selectedIDs: ["b"]), .requiresDecision)
-        model.resolvePendingSelection(.save)
+        self.resolveDeparture(.save, model: model)
         XCTAssertEqual(mutations.mutations.count, 1)
         guard case let .saveNotes(id, text, baseVersion) = mutations.mutations[0] else {
             return XCTFail("Expected versioned notes save")
@@ -439,7 +439,7 @@ final class MeetingFeatureStateTests: XCTestCase {
         XCTAssertEqual(model.detail.notesDraft?.baseVersion, version("a"))
         XCTAssertTrue(model.pendingSelectionDecision)
 
-        model.resolvePendingSelection(.discard)
+        self.resolveDeparture(.discard, model: model)
         XCTAssertEqual(model.selectedMeetingID, "b")
         XCTAssertNil(model.detail.notesDraft)
         await drain(executor)
@@ -462,7 +462,7 @@ final class MeetingFeatureStateTests: XCTestCase {
         await drain(executor)
         model.detail.updateNotesDraft("saved notes")
         _ = model.select(meetingID: "b", selectedIDs: ["b"])
-        model.resolvePendingSelection(.save)
+        self.resolveDeparture(.save, model: model)
         XCTAssertEqual(model.selectedMeetingID, "a")
 
         let savedA = detail(rowA, notes: "saved notes", version: "saved")
@@ -803,6 +803,146 @@ final class MeetingFeatureStateTests: XCTestCase {
             model.updateTextEditor(id: reopened.id, text: "Old reload callback")
             XCTAssertEqual(model.textEditor, latest)
         }
+    }
+
+    @MainActor
+    func testDepartureReloadCompletesOnlyItsOriginAfterSaveFailure() async throws {
+        try await withTextEditor { model, source, reads, mutations, row in
+            model.updateNotesDraft("Unsaved draft")
+            let navigation = MeetingDraftNavigation(detail: model)
+            var approvals: [Bool] = []
+            let token = navigation.begin(.workspacePreparation) { approvals.append($0) }
+            navigation.resolve(.save, for: token)
+            mutations.completeNext(.failure(FeatureMutationError.failed))
+            await self.settleMainActor()
+            XCTAssertTrue(approvals.isEmpty)
+            source.details[row.id] = self.editorDetail(row, notes: "External notes", version: "new")
+            navigation.recover(.reloadLatest, for: token)
+            XCTAssertTrue(approvals.isEmpty, "Settings cannot change roots before the fresh read")
+            // A superseding canonical refresh must fulfill the explicit reload intent.
+            model.refreshSelectedDetail()
+            await self.drain(reads)
+            XCTAssertEqual(approvals, [true])
+            XCTAssertEqual(model.notesDraft?.editedText, "External notes")
+            XCTAssertFalse(model.hasDirtyDrafts)
+            XCTAssertNil(navigation.context)
+        }
+    }
+
+    @MainActor
+    func testDepartureFailedReloadRejectsNavigationAndPreservesDraft() async throws {
+        try await withTextEditor { model, source, reads, mutations, _ in
+            model.updateNotesDraft("Keep my draft")
+            let originalVersion = model.notesDraft?.baseVersion
+            let navigation = MeetingDraftNavigation(detail: model)
+            var approvals: [Bool] = []
+            let token = navigation.begin(.workspaceChange) { approvals.append($0) }
+            navigation.resolve(.save, for: token)
+            mutations.completeNext(.failure(FeatureMutationError.failed))
+            await self.settleMainActor()
+            source.detailError = FeatureMutationError.failed
+            navigation.recover(.reloadLatest, for: token)
+            await self.drain(reads)
+            XCTAssertEqual(approvals, [false])
+            XCTAssertEqual(model.notesDraft?.editedText, "Keep my draft")
+            XCTAssertEqual(model.notesDraft?.baseVersion, originalVersion)
+        }
+    }
+
+    @MainActor
+    func testReplacingDepartureSuppressesLateSaveContinuation() async throws {
+        try await withTextEditor { model, _, _, mutations, row in
+            model.updateNotesDraft("Saving notes")
+            let navigation = MeetingDraftNavigation(detail: model)
+            var old: [Bool] = [], replacement: [Bool] = []
+            let token = navigation.begin(.selection) { old.append($0) }
+            navigation.resolve(.save, for: token)
+            let replacementToken = navigation.begin(.workspacePreparation) { replacement.append($0) }
+            mutations.completeNext(.success(.detail(self.editorDetail(row, notes: "Saving notes", version: "saved"))))
+            await self.settleMainActor()
+            XCTAssertEqual(old, [false])
+            XCTAssertTrue(replacement.isEmpty)
+            XCTAssertEqual(navigation.context, .workspacePreparation)
+            navigation.resolve(.cancel, for: replacementToken)
+            XCTAssertEqual(replacement, [false])
+        }
+    }
+
+    @MainActor
+    func testSettingsRecoveryCannotResumeAnUnrelatedPendingSelection() async {
+        let rowA = browserRow("a", state: .ready), rowB = browserRow("b", state: .ready)
+        let source = FeatureReadSource(rows: [rowA, rowB], details: ["a": detail(rowA, notes: "A", version: "a")])
+        let reads = ControlledFeatureReadExecutor(), mutations = ControlledMutationExecutor()
+        let read = makeReadModel("workspace", source: source, executor: reads)
+        let model = MeetingsModel(readModelProvider: { read }, mutationExecutorProvider: { mutations })
+        defer { model.stop(); read.stop() }
+        model.activate()
+        await drain(reads)
+        model.detail.updateNotesDraft("Draft")
+        _ = model.select(meetingID: "b", selectedIDs: ["b"])
+        var approvals: [Bool] = []
+        model.requestWorkspaceChangePreparation { approvals.append($0) }
+        guard let prompt = model.draftNavigation.prompt else { return XCTFail("Missing preparation prompt") }
+        model.draftNavigation.resolve(.save, for: prompt.token)
+        XCTAssertFalse(model.pendingSelectionDecision)
+        mutations.completeNext(.failure(FeatureMutationError.failed))
+        await settleMainActor()
+        XCTAssertTrue(approvals.isEmpty)
+        model.draftNavigation.recover(.reloadLatest, for: prompt.token)
+        await drain(reads)
+        XCTAssertEqual(approvals, [true])
+        XCTAssertEqual(model.selectedMeetingID, "a", "Settings recovery owns no Meeting selection continuation")
+        XCTAssertFalse(model.pendingSelectionDecision)
+    }
+
+    @MainActor
+    func testReplacedDecisionTokenCannotDiscardTheCurrentDraft() async throws {
+        try await withTextEditor { model, _, _, mutations, _ in
+            model.updateNotesDraft("Retain this draft")
+            let navigation = MeetingDraftNavigation(detail: model)
+            var old: [Bool] = [], current: [Bool] = []
+            let oldToken = navigation.begin(.selection) { old.append($0) }
+            let token = navigation.begin(.selection) { current.append($0) }
+            navigation.resolve(.discard, for: oldToken)
+            navigation.resolve(.save, for: oldToken)
+            XCTAssertEqual(old, [false])
+            XCTAssertTrue(current.isEmpty)
+            XCTAssertTrue(mutations.mutations.isEmpty)
+            XCTAssertEqual(model.notesDraft?.editedText, "Retain this draft")
+            XCTAssertTrue(model.hasDirtyDrafts)
+            XCTAssertEqual(navigation.prompt?.token, token)
+            navigation.resolve(.cancel, for: token)
+            XCTAssertEqual(current, [false])
+        }
+    }
+
+    @MainActor
+    func testReplacedRecoveryTokenCannotReloadOrCancelCurrentDeparture() async throws {
+        try await withTextEditor { model, _, reads, mutations, _ in
+            model.updateNotesDraft("Preserved after conflict")
+            let navigation = MeetingDraftNavigation(detail: model)
+            var old: [Bool] = [], current: [Bool] = []
+            let oldToken = navigation.begin(.workspacePreparation) { old.append($0) }
+            navigation.resolve(.save, for: oldToken)
+            mutations.completeNext(.failure(FeatureMutationError.failed))
+            await self.settleMainActor()
+            let token = navigation.begin(.selection) { current.append($0) }
+            navigation.recover(.reloadLatest, for: oldToken)
+            navigation.recover(.keepEditing, for: oldToken)
+            await self.drain(reads)
+            XCTAssertEqual(old, [false])
+            XCTAssertTrue(current.isEmpty)
+            XCTAssertEqual(navigation.prompt?.token, token)
+            XCTAssertEqual(model.notesDraft?.editedText, "Preserved after conflict")
+            XCTAssertTrue(model.hasDirtyDrafts)
+            navigation.resolve(.cancel, for: token)
+        }
+    }
+
+    @MainActor
+    private func resolveDeparture(_ decision: MeetingSelectionDecision, model: MeetingsModel) {
+        guard let prompt = model.draftNavigation.prompt else { XCTFail("Missing departure prompt"); return }
+        model.draftNavigation.resolve(decision, for: prompt.token)
     }
 
     @MainActor

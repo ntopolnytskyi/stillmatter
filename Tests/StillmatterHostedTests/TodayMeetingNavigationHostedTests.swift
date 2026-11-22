@@ -139,6 +139,96 @@ final class TodayMeetingNavigationHostedTests: XCTestCase {
     }
 
     @MainActor
+    func testReplacingSelectionDuringNativeAlertRejectsItsOldDiscardAndPromptsReplacement() async throws {
+        let source = ReviewNavigationSource()
+        let read = MeetingReadModel(workspaceID: "A", sourceFactory: { source })
+        var view: MeetingManagementView!
+        var prompts = 0
+        view = MeetingManagementView(readModelProvider: { read }, mutationExecutorProvider: { nil },
+            playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in },
+            presentConfirmationAlert: { alert in
+                XCTAssertEqual(alert.messageText, "Save Meeting edits before changing selection?")
+                prompts += 1
+                if prompts == 1 {
+                    _ = view.meetingsModel.select(meetingID: "target", selectedIDs: ["other", "target"])
+                    return .alertSecondButtonReturn // Discard belongs to the replaced request.
+                }
+                XCTAssertEqual(view.selectedID, "other")
+                XCTAssertEqual(view.meetingsModel.detail.notesDraft?.editedText, "Keep this draft")
+                return .alertThirdButtonReturn
+            })
+        defer { view.refresh(isVisible: false); read.stop() }
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.selectedID == "other" && view.displayedDetail != nil }, evaluatedWith: view)], timeout: 5)
+        view.meetingsModel.detail.updateNotesDraft("Keep this draft")
+        _ = view.meetingsModel.select(meetingID: "target", selectedIDs: ["target"])
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in prompts == 2 && !view.meetingsModel.pendingSelectionDecision }, evaluatedWith: view)], timeout: 5)
+        XCTAssertEqual(view.selectedID, "other")
+        XCTAssertTrue(view.meetingsModel.detail.hasDirtyDrafts)
+    }
+
+    @MainActor
+    func testSettingsRequestExistsBeforeNativeAlertAndOldDiscardCannotApproveReplacement() async throws {
+        let source = ReviewNavigationSource()
+        let read = MeetingReadModel(workspaceID: "A", sourceFactory: { source })
+        var view: MeetingManagementView!
+        var prompts = 0
+        var first: [Bool] = [], replacement: [Bool] = []
+        view = MeetingManagementView(readModelProvider: { read }, mutationExecutorProvider: { nil },
+            playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in },
+            presentConfirmationAlert: { _ in
+                prompts += 1
+                XCTAssertEqual(view.meetingsModel.draftNavigation.context, .workspacePreparation)
+                if prompts == 1 {
+                    view.prepareWorkspaceChange { replacement.append($0) }
+                    return .alertSecondButtonReturn
+                }
+                XCTAssertEqual(view.meetingsModel.detail.notesDraft?.editedText, "Keep this draft")
+                return .alertThirdButtonReturn
+            })
+        defer { view.refresh(isVisible: false); read.stop() }
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil }, evaluatedWith: view)], timeout: 5)
+        view.meetingsModel.detail.updateNotesDraft("Keep this draft")
+        view.prepareWorkspaceChange { first.append($0) }
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in prompts == 2 && replacement == [false] }, evaluatedWith: view)], timeout: 5)
+        XCTAssertEqual(first, [false])
+        XCTAssertEqual(replacement, [false])
+        XCTAssertTrue(view.meetingsModel.detail.hasDirtyDrafts)
+    }
+
+    @MainActor
+    func testStaleNativeRecoveryAnswerCannotReloadOrResolveReplacementSelection() async throws {
+        let source = ReviewNavigationSource()
+        let read = MeetingReadModel(workspaceID: "A", sourceFactory: { source })
+        var view: MeetingManagementView!
+        var decisions = 0, recoveries = 0
+        view = MeetingManagementView(readModelProvider: { read }, mutationExecutorProvider: { nil },
+            playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in },
+            presentConfirmationAlert: { alert in
+                if alert.messageText == "Could not save Meeting edits" {
+                    recoveries += 1
+                    _ = view.meetingsModel.select(meetingID: "target", selectedIDs: ["other", "target"])
+                    return .alertFirstButtonReturn // Reload belongs to the replaced failure.
+                }
+                decisions += 1
+                if decisions == 1 { return .alertFirstButtonReturn }
+                XCTAssertEqual(view.selectedID, "other")
+                XCTAssertEqual(view.meetingsModel.detail.notesDraft?.editedText, "Retain failed save")
+                return .alertThirdButtonReturn
+            })
+        defer { view.refresh(isVisible: false); read.stop() }
+        view.refresh(isVisible: true)
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in view.displayedDetail != nil }, evaluatedWith: view)], timeout: 5)
+        view.meetingsModel.detail.updateNotesDraft("Retain failed save")
+        _ = view.meetingsModel.select(meetingID: "target", selectedIDs: ["target"])
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in decisions == 2 && recoveries == 1 && !view.meetingsModel.pendingSelectionDecision }, evaluatedWith: view)], timeout: 5)
+        XCTAssertEqual(view.selectedID, "other")
+        XCTAssertEqual(view.meetingsModel.detail.notesDraft?.editedText, "Retain failed save")
+        XCTAssertTrue(view.meetingsModel.detail.hasDirtyDrafts)
+    }
+
+    @MainActor
     private func makeView(_ model: MeetingReadModel) -> MeetingManagementView {
         MeetingManagementView(readModelProvider: { model }, mutationExecutorProvider: { nil },
             playbackTransportProvider: { nil }, openRecording: {}, openWorkspaceFile: { _ in })

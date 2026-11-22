@@ -782,6 +782,7 @@ public final class MeetingsModel: ObservableObject {
     @Published public private(set) var pendingWorkspaceDecision = false
 
     public let detail: MeetingDetailModel
+    public let draftNavigation: MeetingDraftNavigation
 
     private let readModelProvider: () -> MeetingReadModel?
     private let mutationExecutorProvider: () -> MeetingMutationExecuting?
@@ -809,7 +810,9 @@ public final class MeetingsModel: ObservableObject {
         self.readModelProvider = readModelProvider
         self.mutationExecutorProvider = mutationExecutorProvider
         self.playbackTransportProvider = playbackTransportProvider
-        self.detail = detail ?? MeetingDetailModel()
+        let detail = detail ?? MeetingDetailModel()
+        self.detail = detail
+        draftNavigation = MeetingDraftNavigation(detail: detail)
     }
 
     public var visibleRows: [MeetingBrowserRow] { queueFilter.filter(snapshot?.visibleRows ?? []) }
@@ -831,6 +834,7 @@ public final class MeetingsModel: ObservableObject {
     }
 
     public func deactivate() {
+        draftNavigation.cancel()
         isActive = false
         browserRequest?.cancel()
         browserRequest = nil
@@ -897,70 +901,47 @@ public final class MeetingsModel: ObservableObject {
             commitSelection(id: id, ids: ids)
             return .applied
         }
-        pendingSelection = (id, ids)
-        pendingSelectionDecision = true
-        // @Published delivers before storing true. A synchronous alert may already have
-        // resolved and cleared the request inside that delivery; do not leave a stale flag.
-        if pendingSelection == nil { pendingSelectionDecision = false }
+        requestSelection(id: id, ids: ids)
         return .requiresDecision
     }
 
-    public func resolvePendingSelection(_ decision: MeetingSelectionDecision,
-                                        completion: ((Result<Void, Error>) -> Void)? = nil) {
-        guard let pendingSelection else { return }
-        switch decision {
-        case .cancel:
-            self.pendingSelection = nil
-            if let previousQueue = queueBeforePendingSelection {
-                queueBeforePendingSelection = nil
-                queueFilter = previousQueue
-                if let snapshot { self.snapshot = snapshot }
-            }
-            pendingSelectionDecision = false
-            completion?(.success(()))
-        case .discard:
-            queueBeforePendingSelection = nil
-            detail.discardDrafts()
-            self.pendingSelection = nil
-            pendingSelectionDecision = false
-            commitSelection(id: pendingSelection.id, ids: pendingSelection.ids)
-            completion?(.success(()))
-        case .save:
-            detail.saveDirtyDrafts { [weak self] result in
-                guard let self else { return }
-                if case .success = result {
-                    self.queueBeforePendingSelection = nil
-                    self.pendingSelection = nil
-                    self.pendingSelectionDecision = false
-                    self.commitSelection(id: pendingSelection.id, ids: pendingSelection.ids)
-                }
-                completion?(result)
-            }
-        }
+    /// Establishes the Settings departure before the adapter displays its decision.
+    /// Settings must wait for this result before committing its new Workspace root.
+    public func requestWorkspaceChangePreparation(completion: @escaping (Bool) -> Void) {
+        guard detail.hasDirtyDrafts else { completion(true); return }
+        draftNavigation.begin(.workspacePreparation, continuation: completion)
     }
 
-    public func resolvePendingWorkspaceChange(_ decision: MeetingSelectionDecision,
-                                             completion: ((Result<Void, Error>) -> Void)? = nil) {
-        guard pendingWorkspaceDecision else { return }
-        switch decision {
-        case .cancel:
-            ignoredReadModel = pendingReadModel
-            clearPendingWorkspace()
-            completion?(.success(()))
-        case .discard:
-            detail.discardDrafts()
-            installPendingWorkspace()
-            completion?(.success(()))
-        case .save:
-            detail.saveDirtyDrafts { [weak self] result in
-                guard let self else { return }
-                if case .success = result { self.installPendingWorkspace() }
-                completion?(result)
+    private func requestSelection(id: String?, ids: Set<String>) {
+        if pendingSelection?.id == id, pendingSelection?.ids == ids,
+           draftNavigation.context == .selection { return }
+        let desiredQueue = queueFilter
+        let originalQueue = queueBeforePendingSelection
+        draftNavigation.begin(.selection) { [weak self] allow in
+            guard let self else { return }
+            self.pendingSelection = nil
+            self.pendingSelectionDecision = false
+            if allow {
+                self.queueBeforePendingSelection = nil
+                self.commitSelection(id: id, ids: ids)
+            } else if let previousQueue = self.queueBeforePendingSelection {
+                self.queueBeforePendingSelection = nil
+                self.queueFilter = previousQueue
+                if let snapshot = self.snapshot { self.snapshot = snapshot }
             }
         }
+        // Replacing a pending selection cancels its continuation, including its
+        // queue rollback. Keep the newly requested queue and original rollback target.
+        queueFilter = desiredQueue
+        queueBeforePendingSelection = originalQueue
+        pendingSelection = (id, ids)
+        pendingSelectionDecision = true
+        // A synchronous native decision may resolve during @Published delivery.
+        if pendingSelection == nil { pendingSelectionDecision = false }
     }
 
     public func stop() {
+        draftNavigation.cancel()
         deactivate()
         detail.bind(readModel: nil, mutationExecutor: nil, playbackTransport: nil)
     }
@@ -977,10 +958,20 @@ public final class MeetingsModel: ObservableObject {
         let executor = mutationExecutorProvider()
         let playback = playbackTransportProvider()
         if readModel != nil && detail.hasDirtyDrafts {
+            if pendingWorkspaceDecision, pendingReadModel === candidate { return }
+            draftNavigation.begin(.workspaceChange) { [weak self] allow in
+                guard let self else { return }
+                if allow { self.installPendingWorkspace() }
+                else {
+                    self.ignoredReadModel = self.pendingReadModel
+                    self.clearPendingWorkspace()
+                }
+            }
             pendingReadModel = candidate
             pendingMutationExecutor = executor
             pendingPlaybackTransport = playback
             pendingWorkspaceDecision = true
+            if draftNavigation.context != .workspaceChange { pendingWorkspaceDecision = false }
             return
         }
         install(candidate, executor: executor, playback: playback)
@@ -988,6 +979,7 @@ public final class MeetingsModel: ObservableObject {
 
     private func install(_ candidate: MeetingReadModel?, executor: MeetingMutationExecuting?,
                          playback: MeetingPlaybackTransport?) {
+        draftNavigation.cancel()
         requestRevision &+= 1
         browserRequest?.cancel()
         browserRequest = nil
@@ -1038,6 +1030,7 @@ public final class MeetingsModel: ObservableObject {
     }
 
     private func commitSelection(id: String?, ids: Set<String>) {
+        draftNavigation.cancel()
         let visible = Set(visibleRows.map(\.id))
         let validIDs = ids.intersection(visible)
         let nextID = id.flatMap { visible.contains($0) ? $0 : nil } ?? visibleRows.first?.id
@@ -1056,11 +1049,10 @@ public final class MeetingsModel: ObservableObject {
                                              selectedMeetingIDs: selectedMeetingIDs)
         let ids = nextState.selectedMeetingIDs
         if (reconciled != selectedMeetingID || ids != selectedMeetingIDs) && detail.hasDirtyDrafts {
-            pendingSelection = (reconciled, ids)
-            pendingSelectionDecision = true
-            if pendingSelection == nil { pendingSelectionDecision = false }
+            requestSelection(id: reconciled, ids: ids)
             return
         }
+        if reconciled != selectedMeetingID || ids != selectedMeetingIDs { draftNavigation.cancel() }
         mutableSelectionState = nextState
         selectedMeetingID = reconciled
         selectedMeetingIDs = ids
@@ -1079,11 +1071,10 @@ public final class MeetingsModel: ObservableObject {
         let selectedPathChanged = selectedRow != nil && detail.detail != nil &&
             selectedRow?.meetingRelativePath != detail.detail?.row.meetingRelativePath
         if (reconciled != selectedMeetingID || ids != selectedMeetingIDs || selectedPathChanged) && detail.hasDirtyDrafts {
-            pendingSelection = (reconciled, ids)
-            pendingSelectionDecision = true
-            if pendingSelection == nil { pendingSelectionDecision = false }
+            requestSelection(id: reconciled, ids: ids)
             return
         }
+        if reconciled != selectedMeetingID || ids != selectedMeetingIDs { draftNavigation.cancel() }
         mutableSelectionState = nextState
         selectedMeetingID = reconciled
         selectedMeetingIDs = ids

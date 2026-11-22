@@ -918,6 +918,54 @@ final class MeetingManagementTests: XCTestCase {
         XCTAssertNil(try service.detail(for: "other").job)
     }
 
+    func testTextEditingPublishesTodoRemovalSearchAndOneChangeForLegacyAndCanonicalFiles() throws {
+        for live in [true, false] {
+            let fixture = try Fixture()
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let path = "Meetings/editing/meeting.md"
+            let notesPath = "Meetings/editing/my-notes.md"
+            try fixture.write(path, "---\ntitle: Editing\ncapture_session_id: editing\n---\n# Editing\n")
+            try fixture.write(notesPath, "- [ ] Retire this checkbox\n")
+            try fixture.write("Meetings/editing/summary.md", "## Summary\n\nPrevious summary.\n")
+            try MeetingNoteTodoBridge(vault: fixture.vault).adoptSavedNotes(at: notesPath)
+            let todo = TodoItemIndex(workspaceRootURL: fixture.root)
+            let oldTask = try XCTUnwrap(todo.loadTaskViews(today: "2026-01-01").queue.first)
+            let snapshot = CaptureSnapshot(state: .recording, meetingTitle: "Editing", meetingRelativePath: path, source: .teams,
+                elapsedSeconds: 2, failureMessage: nil, processingStatus: [], preflightReport: nil, micRecording: nil,
+                systemAudioRecording: nil, recordingBundle: nil, transcriptionAudio: nil)
+            let index = try SearchIndex(databaseURL: fixture.root.appendingPathComponent("Support/search.sqlite"),
+                                        workspaceRootURL: fixture.root)
+            var changes: [[String]] = []
+            let service = MeetingManagementService(vault: fixture.vault, searchIndex: index,
+                captureSnapshot: { live ? snapshot : nil }, onMeetingChanged: { changes.append($0) })
+            let initial = try service.detail(for: path)
+            try index.startupScan()
+            let saved = try service.saveNotes("Evergreen memorandum", for: initial.row.id,
+                                              expectedVersion: XCTUnwrap(initial.notesVersion))
+            XCTAssertEqual(saved.humanNotes, "Evergreen memorandum")
+            XCTAssertEqual(changes, [[path]])
+            XCTAssertFalse(try todo.loadTaskViews(today: "2026-01-01").queue.contains { $0.id == oldTask.id })
+            XCTAssertFalse(String(decoding: try fixture.vault.readMarkdown(relativePath: "Todos/todo.md").data,
+                                  as: UTF8.self).contains("[[item:\(oldTask.id)"))
+            XCTAssertTrue(try index.search("Evergreen").contains { $0.sourcePath == notesPath })
+            XCTAssertEqual(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/editing/meeting-artifacts.json") == nil, live)
+
+            var summary = try XCTUnwrap(saved.summary)
+            summary.summary = "Juniper conclusion"
+            let summarized = try service.saveSummary(summary, for: saved.row.id,
+                                                      expectedVersion: XCTUnwrap(saved.summaryVersion))
+            XCTAssertTrue(summarized.summary?.summary.contains("Juniper conclusion") == true)
+            XCTAssertEqual(changes, [[path], [path]])
+            XCTAssertTrue(try index.search("Juniper").contains { $0.sourcePath == "Meetings/editing/summary.md" })
+            XCTAssertEqual(try fixture.vault.versionOfMarkdown(relativePath: "Meetings/editing/meeting-artifacts.json") == nil, live)
+
+            XCTAssertThrowsError(try service.saveNotes("Stale discarded overwrite", for: saved.row.id,
+                                                       expectedVersion: XCTUnwrap(initial.notesVersion)))
+            XCTAssertEqual(try service.detail(for: saved.row.id).humanNotes, "Evergreen memorandum")
+            XCTAssertEqual(changes, [[path], [path]], "A failed edit never publishes a change")
+        }
+    }
+
     func testLiveNotesEditPreservesProcessingAndDetectsStaleVersion() throws {
         let fixture = try Fixture()
         let path = "Meetings/live/meeting.md"

@@ -3,6 +3,14 @@ import Foundation
 /// Owns canonical Meeting text, migration and its file-aware consistency boundary.
 /// Jobs and derived indexes may refer to these files; neither is a competing content store.
 final class MeetingArtifactStore {
+    /// An active recorder/producer that has not adopted canonical artifacts keeps
+    /// its current files authoritative until it finishes. Reads and edits share
+    /// this decision so an edit cannot migrate files out from under that writer.
+    func usesLegacyWriter(for row: MeetingBrowserRow) throws -> Bool {
+        guard row.captureState == .live || row.processingState == .processing else { return false }
+        return try identity(at: row.meetingRelativePath) == nil
+    }
+
     struct Loaded {
         let notes: String
         let notesVersion: WorkspaceFileVersion

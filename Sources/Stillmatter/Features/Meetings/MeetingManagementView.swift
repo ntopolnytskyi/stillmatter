@@ -20,8 +20,7 @@ final class MeetingManagementView: NSView {
     private(set) var meetingsModel: MeetingsModel!
     private var cancellables = Set<AnyCancellable>()
     private var isApplyingFeatureState = false
-    private var hasPresentedSelectionDecision = false
-    private var hasPresentedWorkspaceDecision = false
+    private var isPresentingDraftNavigationPrompt = false
     private var renderedMeetingID: String?
     var renderedRows: [MeetingBrowserRow] = []
     private var lastRenderedDetail: MeetingBrowserDetail?
@@ -134,11 +133,7 @@ final class MeetingManagementView: NSView {
     let archiveButton = MeetingHeaderButton(title: "Archive", target: nil, action: nil)
     private(set) var retryFeedback: (meetingID: String, message: String)?
     private let searchNavigation = MeetingSearchNavigation()
-    private var pendingReviewPath: String?
-    private var reviewDetailPath: String?
-    private var reviewNavigationID: UUID?
-    private var reviewSelectionStarted = false
-    private var reviewUnavailable: (() -> Void)?
+    private let reviewNavigation = MeetingReviewNavigation()
     lazy var openRecordingButton = controls.button("Open Recording", identifier: "meeting-open-recording")
     let audioStatus = NSTextField(wrappingLabelWithString: "Recording Bundle unavailable")
     let playButton = MeetingPlaybackButton(frame: .zero)
@@ -239,11 +234,7 @@ final class MeetingManagementView: NSView {
     }
 
     func focusActionItems(_ meetingPath: String, unavailable: @escaping () -> Void) {
-        reviewNavigationID = UUID()
-        reviewSelectionStarted = false
-        reviewUnavailable = unavailable
-        pendingReviewPath = meetingPath
-        reviewDetailPath = nil
+        reviewNavigation.begin(meetingPath: meetingPath, owner: currentReadModel(), unavailable: unavailable)
         queryField.stringValue = ""
         startDateEnabled.state = .off
         endDateEnabled.state = .off
@@ -255,19 +246,7 @@ final class MeetingManagementView: NSView {
         meetingsModel.refresh()
     }
 
-    private func clearReviewNavigation() {
-        pendingReviewPath = nil
-        reviewDetailPath = nil
-        reviewNavigationID = nil
-        reviewSelectionStarted = false
-        reviewUnavailable = nil
-    }
-
-    private func failReviewNavigation() {
-        let unavailable = reviewUnavailable
-        clearReviewNavigation()
-        unavailable?()
-    }
+    private func clearReviewNavigation() { reviewNavigation.cancel() }
 
     private var featureIsVisible = false
 
@@ -850,20 +829,11 @@ final class MeetingManagementView: NSView {
             self.updateQueueButtons()
             self.scheduleSnapshotRender()
         }.store(in: &cancellables)
-        meetingsModel.$pendingSelectionDecision.sink { [weak self] pending in
-            guard let self else { return }
-            if pending && !self.hasPresentedSelectionDecision {
-                self.hasPresentedSelectionDecision = true
-                self.presentSelectionDecision()
-            } else if !pending { self.hasPresentedSelectionDecision = false }
-        }.store(in: &cancellables)
-        meetingsModel.$pendingWorkspaceDecision.sink { [weak self] pending in
-            guard let self else { return }
-            if pending && !self.hasPresentedWorkspaceDecision {
-                self.hasPresentedWorkspaceDecision = true
-                self.presentWorkspaceDecision()
-            } else if !pending { self.hasPresentedWorkspaceDecision = false }
-        }.store(in: &cancellables)
+        meetingsModel.draftNavigation.$prompt.removeDuplicates()
+            .receive(on: DispatchQueue.main).sink { [weak self] prompt in
+                guard let self, let prompt, self.meetingsModel.draftNavigation.isCurrent(prompt) else { return }
+                self.presentDraftNavigationPrompt(prompt)
+            }.store(in: &cancellables)
         meetingsModel.detail.$detail.sink { [weak self] detail in
             guard let self else { return }
             if let detail { self.renderDetail(detail) }
@@ -901,26 +871,14 @@ final class MeetingManagementView: NSView {
     }
 
     func applySnapshot(_ snapshot: MeetingBrowserSnapshot?) {
-        if let path = pendingReviewPath, meetingsModel.loadState == .loaded {
-            guard let row = snapshot?.visibleRows.first(where: { $0.meetingRelativePath == path && !$0.isArchived }) else {
-                failReviewNavigation()
-                return
-            }
-            pendingReviewPath = nil
-            reviewDetailPath = path
-            let request = reviewNavigationID
+        if let selection = reviewNavigation.selection(rows: snapshot?.visibleRows ?? [],
+                state: meetingsModel.loadState, filtersMatch: snapshot?.filters == meetingsModel.filters,
+                owner: currentReadModel()) {
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.featureIsVisible, self.reviewNavigationID == request else { return }
-                guard let index = self.rows.firstIndex(where: { $0.id == row.id && $0.meetingRelativePath == path }) else {
-                    self.failReviewNavigation()
-                    return
-                }
-                self.reviewSelectionStarted = true
-                _ = self.meetingsModel.select(meetingID: self.rows[index].id, selectedIDs: [self.rows[index].id])
-                if self.reviewNavigationID == request, let detail = self.meetingsModel.detail.detail,
-                   detail.row.meetingRelativePath == path {
-                    self.renderDetail(detail)
-                }
+                guard let self, self.featureIsVisible,
+                      self.reviewNavigation.beginSelection(selection, rows: self.rows, owner: self.currentReadModel()) else { return }
+                _ = self.meetingsModel.select(meetingID: selection.meetingID, selectedIDs: [selection.meetingID])
+                if let detail = self.meetingsModel.detail.detail { self.renderDetail(detail) }
             }
         }
         if let selection = searchNavigation.selection(rows: snapshot?.visibleRows ?? [],
@@ -994,13 +952,8 @@ final class MeetingManagementView: NSView {
         // A completed refresh may retain an equal snapshot and publish no snapshot
         // change. Pending search routes still need to resume after loading.
         if searchNavigation.isPending, case .loaded = state { scheduleSnapshotRender() }
-        if reviewNavigationID != nil {
-            switch state {
-            case .failed, .unavailable: failReviewNavigation()
-            case .loaded: scheduleSnapshotRender()
-            default: break
-            }
-        }
+        reviewNavigation.browserStateChanged(state, owner: currentReadModel())
+        if reviewNavigation.isPending, case .loaded = state { scheduleSnapshotRender() }
         guard meetingsModel.snapshot == nil else { return }
         switch state {
         case .loading:
@@ -1017,12 +970,7 @@ final class MeetingManagementView: NSView {
     }
 
     private func renderLoadState(_ state: MeetingDetailLoadState) {
-        if reviewNavigationID != nil && reviewSelectionStarted {
-            switch state {
-            case .failed, .unavailable: failReviewNavigation()
-            default: break
-            }
-        }
+        reviewNavigation.detailStateChanged(state, owner: currentReadModel())
         switch state {
         case .loading where meetingsModel.detail.isShowingStaleDetail:
             status.stringValue = "Refreshing this Meeting; the displayed detail is stale."
@@ -1081,22 +1029,57 @@ final class MeetingManagementView: NSView {
         clearEvidence()
     }
 
-    private func presentSelectionDecision() {
+    private func presentDraftNavigationPrompt(_ prompt: MeetingDraftNavigation.Prompt) {
+        guard !isPresentingDraftNavigationPrompt, meetingsModel.draftNavigation.isCurrent(prompt) else { return }
+        isPresentingDraftNavigationPrompt = true
+        defer {
+            isPresentingDraftNavigationPrompt = false
+            // Present a replacement after this modal closes, including a request
+            // published while the nested event loop was processing the old alert.
+            if let next = meetingsModel.draftNavigation.prompt, next != prompt {
+                DispatchQueue.main.async { [weak self] in self?.presentDraftNavigationPrompt(next) }
+            }
+        }
         let alert = NSAlert()
-        alert.messageText = "Save Meeting edits before changing selection?"
-        alert.informativeText = "Your notes or summary have unsaved changes."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
+        switch prompt.kind {
+        case .decision:
+            alert.messageText = prompt.context == .selection
+                ? "Save Meeting edits before changing selection?" : "Save Meeting edits before changing workspace?"
+            switch prompt.context {
+            case .selection: alert.informativeText = "Your notes or summary have unsaved changes."
+            case .workspacePreparation: alert.informativeText = "The current workspace stays active until edits are resolved."
+            case .workspaceChange: alert.informativeText = "The workspace changed while this Meeting had unsaved edits."
+            }
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Discard")
+            alert.addButton(withTitle: prompt.context == .selection ? "Cancel" : "Keep Current Workspace")
+        case let .saveFailure(message):
+            clearReviewNavigation()
+            if let detail = displayedDetail { renderDetail(detail) }
+            alert.messageText = "Could not save Meeting edits"
+            alert.informativeText = "\(message) Your draft is still available."
+            alert.addButton(withTitle: "Reload Latest")
+            alert.addButton(withTitle: "Keep Editing")
+        }
+        #if DEBUG
+        let response = task05AlertResponse?(alert) ?? presentConfirmationAlert(alert)
+        #else
         let response = presentConfirmationAlert(alert)
-        let decision: MeetingSelectionDecision = response == .alertFirstButtonReturn ? .save
-            : response == .alertSecondButtonReturn ? .discard : .cancel
-        if decision == .cancel { clearReviewNavigation(); clearSearchNavigation() }
-        meetingsModel.resolvePendingSelection(decision) { [weak self] result in
-            guard let self, case let .failure(error) = result else { return }
-            self.clearReviewNavigation()
-            if let detail = self.displayedDetail { self.renderDetail(detail) }
-            self.resolveSaveFailure(error, pendingSelection: true)
+        #endif
+        // A modal alert can run a nested event loop. A replacement departure owns
+        // its own prompt; an answer to this one cannot resolve the replacement.
+        guard meetingsModel.draftNavigation.isCurrent(prompt) else { return }
+        switch prompt.kind {
+        case .decision:
+            let decision: MeetingSelectionDecision = response == .alertFirstButtonReturn ? .save
+                : response == .alertSecondButtonReturn ? .discard : .cancel
+            if decision == .cancel && prompt.context == .selection {
+                clearReviewNavigation(); clearSearchNavigation()
+            }
+            meetingsModel.draftNavigation.resolve(decision, for: prompt.token)
+        case .saveFailure:
+            meetingsModel.draftNavigation.recover(response == .alertFirstButtonReturn ? .reloadLatest : .keepEditing,
+                                                  for: prompt.token)
         }
     }
 
@@ -1104,78 +1087,8 @@ final class MeetingManagementView: NSView {
 
     /// Called before Settings commits the new root, including when Meetings is hidden.
     func prepareWorkspaceChange(completion: @escaping (Bool) -> Void) {
-        guard meetingsModel.detail.hasDirtyDrafts else { completion(true); return }
-        let alert = NSAlert()
-        alert.messageText = "Save Meeting edits before changing workspace?"
-        alert.informativeText = "The current workspace stays active until edits are resolved."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Keep Current Workspace")
-        #if DEBUG
-        let response = task05AlertResponse?(alert) ?? presentConfirmationAlert(alert)
-        #else
-        let response = presentConfirmationAlert(alert)
-        #endif
-        switch response {
-        case .alertFirstButtonReturn:
-            meetingsModel.detail.saveDirtyDrafts { [weak self] result in
-                switch result {
-                case .success: completion(true)
-                case let .failure(error):
-                    self?.resolveSaveFailure(error, pendingSelection: true)
-                    completion(false)
-                }
-            }
-        case .alertSecondButtonReturn:
-            meetingsModel.detail.discardDrafts()
-            completion(true)
-        default: completion(false)
-        }
+        meetingsModel.requestWorkspaceChangePreparation(completion: completion)
     }
-
-    private func presentWorkspaceDecision() {
-        let alert = NSAlert()
-        alert.messageText = "Save Meeting edits before changing workspace?"
-        alert.informativeText = "The workspace changed while this Meeting had unsaved edits."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Keep Current Workspace")
-        let response = presentConfirmationAlert(alert)
-        let decision: MeetingSelectionDecision = response == .alertFirstButtonReturn ? .save
-            : response == .alertSecondButtonReturn ? .discard : .cancel
-        meetingsModel.resolvePendingWorkspaceChange(decision) { [weak self] result in
-            guard let self, case let .failure(error) = result else { return }
-            self.resolveSaveFailure(error, pendingSelection: false)
-        }
-    }
-
-    private func resolveSaveFailure(_ error: Error, pendingSelection: Bool) {
-        let alert = NSAlert()
-        alert.messageText = "Could not save Meeting edits"
-        alert.informativeText = "\(error.localizedDescription) Your draft is still available."
-        alert.addButton(withTitle: "Reload Latest")
-        alert.addButton(withTitle: "Keep Editing")
-        #if DEBUG
-        let response = task05AlertResponse?(alert) ?? presentConfirmationAlert(alert)
-        #else
-        let response = presentConfirmationAlert(alert)
-        #endif
-        if response == .alertFirstButtonReturn {
-            meetingsModel.detail.refreshSelectedDetail { [weak self] result in
-                guard let self else { return }
-                if case .success = result {
-                    self.meetingsModel.detail.reloadDraftsAfterConfirmation()
-                    if pendingSelection { self.meetingsModel.resolvePendingSelection(.discard) }
-                    else { self.meetingsModel.resolvePendingWorkspaceChange(.discard) }
-                }
-            }
-        } else if pendingSelection {
-            meetingsModel.resolvePendingSelection(.cancel)
-        } else {
-            meetingsModel.resolvePendingWorkspaceChange(.cancel)
-        }
-    }
-
 
     private func configureProjectFilter(rows: [MeetingBrowserRow]) {
         let selected = projectFilter.selectedItem?.representedObject as? String
@@ -1251,9 +1164,9 @@ final class MeetingManagementView: NSView {
     private func renderDetail(_ selected: MeetingBrowserDetail) {
             searchNavigation.validateOwner(currentReadModel())
             canEditCalendar = false
-            let opensReview = reviewSelectionStarted && reviewDetailPath == selected.row.meetingRelativePath
-            if reviewNavigationID != nil && !opensReview { return }
-            if opensReview { clearReviewNavigation() }
+            let reviewDisposition = reviewNavigation.disposition(for: selected, owner: currentReadModel())
+            if reviewDisposition == .wait { return }
+            let opensReview = reviewDisposition == .openActionItems
             isApplyingFeatureState = true
             defer { isApplyingFeatureState = false }
             let changedMeeting = renderedMeetingID != selected.row.id
