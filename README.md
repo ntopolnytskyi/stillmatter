@@ -1,6 +1,6 @@
 # Stillmatter
 
-Stillmatter is a local-first native macOS work log. It records meetings, transcribes English and Ukrainian locally, generates editable summaries, and turns approved action items into Markdown todos.
+Stillmatter is a native macOS work log with local recording and transcription. It generates editable summaries through optional, explicitly enabled ChatGPT text analysis and exposes approved personal action items as Markdown todos.
 
 Today brings together your Inbox, queue, and upcoming meetings. Recording handles the current capture; Meetings provides history, playback, notes, transcripts, and processing controls. Tasks and Settings complete the app.
 
@@ -21,15 +21,15 @@ Upgrades from the previous app name do not migrate settings, Application Support
 
 In **Settings → Permissions & Components**, choose **Install** beside **Local transcription**. Setup requires Python 3.9–3.13 and about 4 GB free for the recommended Large v3 Turbo model, or 7 GB for Large v3. Python 3.14 is currently unsupported by this setup.
 
-Stillmatter installs an isolated faster-whisper 1.2.1 environment and model under `~/Library/Application Support/Stillmatter/Transcription`. A model switch keeps the previous installation active until the replacement validates. Choose English or Ukrainian before recording; regenerate later to change language.
+Stillmatter installs an isolated faster-whisper 1.2.1 environment and model under `~/Library/Application Support/Stillmatter/Transcription`. A model switch keeps the previous installation active until the replacement validates. Auto is the default language mode; confirmed reprocessing supports English/Ukrainian overrides.
 
 Developer overrides: `STILLMATTER_PYTHON` selects Python; setting both `STILLMATTER_WHISPER_CLI` and `STILLMATTER_WHISPER_MODEL` selects an existing whisper.cpp installation instead.
 
 ## Data and processing
 
-Meetings use Markdown folders with linked audio, transcripts, and summaries. Microphone and system audio are captured separately with recovery files; originals remain evidence. Teams capture policy is configurable as Ask, Automatic, or Manual. Processing Jobs run independently of the current recording. AI workflows use read-only workspace tools and return artifacts and proposals; your action items require approval before becoming canonical todos in `Todos/todo.md`.
+Meetings use Markdown folders with linked audio, transcripts, and summaries. Microphone and system audio are captured separately with recovery files; originals remain evidence. Teams capture policy is configurable as Ask, Automatic, or Manual. Processing Jobs run independently of the current recording. Analysis sends the Transcript and My Notes through Pi only when **Allow ChatGPT analysis of Meeting text** is enabled in Settings; it defaults off. Local grounded analysis is unsupported.
 
-The canonical queue is `Todos/todo.md` under `## Queue`, highest priority first. Checkbox states are `[ ]` open, `[x]` done, `[B]` blocked, and `[C]` canceled. Due dates use `due: YYYY-MM-DD`; comments and subtasks are indented. Completion moves an item under a dated `## Done` subsection. Accepted action items retain source links.
+The personal Queue is `Todos/todo.md` under `## Queue`, highest priority first. Approved Meeting tasks appear as references to the same canonical item; note-authored tasks remain in My Notes. Checkbox states are `[ ]` open, `[x]` done, `[B]` blocked, and `[C]` canceled. Due dates use `due: YYYY-MM-DD`; comments and subtasks are indented. Completion moves a Queue entry under a dated `## Done` subsection. See [current Meeting behavior](docs/product/MEETING_FEATURE.md) for task authority and approval rules.
 
 ## Development
 
@@ -64,9 +64,11 @@ The interactive walkthrough shell scripts have also been removed. Their repeated
 
 ## Documentation
 
-- [Domain glossary](CONTEXT.md): product terms.
-- [Visual rules](docs/graphite-focus/DESIGN.md) and [Stillmatter screen profile](docs/graphite-focus/STILLMATTER_PROFILE.md).
-- [Recording and Meetings behavior](docs/meetings-recording-plan.md), including remaining scope.
+- [Product index](docs/product/INDEX.md): reading paths, current coverage and documentation authority.
+- [Domain glossary](CONTEXT.md): business terms.
+- [Shared UI principles](docs/UI_PRINCIPALS.md): visual rules, native controls, shell and application composition.
+- [Meeting feature](docs/product/MEETING_FEATURE.md): implemented behavior and feature-specific UI.
+- [Planned work](docs/planned/INDEX.md): future ToDo specification and unresolved integration decisions.
 - [Architecture decisions](docs/adr/) and [local issue tracker](docs/agents/issue-tracker.md).
 
 ## License and distribution

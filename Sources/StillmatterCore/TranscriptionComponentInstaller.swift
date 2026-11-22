@@ -2,6 +2,8 @@ import Foundation
 
 public enum TranscriptionModelChoice: String, Codable, CaseIterable {
     case recommended = "large-v3-turbo"
+    case medium = "medium"
+    case small = "small"
     case full = "large-v3"
 
     public var variant: String { rawValue }
@@ -10,6 +12,8 @@ public enum TranscriptionModelChoice: String, Codable, CaseIterable {
     public var repository: String {
         switch self {
         case .recommended: return "dropbox-dash/faster-whisper-large-v3-turbo"
+        case .medium: return "Systran/faster-whisper-medium"
+        case .small: return "Systran/faster-whisper-small"
         case .full: return "Systran/faster-whisper-large-v3"
         }
     }
@@ -17,20 +21,26 @@ public enum TranscriptionModelChoice: String, Codable, CaseIterable {
     public var revision: String {
         switch self {
         case .recommended: return "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+        case .medium: return "08e178d48790749d25932bbc082711ddcfdfbc4f"
+        case .small: return "536b0662742c02347bc0e980a01041f333bce120"
         case .full: return "edaa852ec7e145841d8ffdb056a99866b5f0a478"
         }
     }
 
     public var displayName: String {
         switch self {
-        case .recommended: return "Recommended — Large v3 Turbo"
-        case .full: return "Full quality — Large v3"
+        case .recommended: return "Turbo — Large v3 (recommended)"
+        case .medium: return "Medium — multilingual"
+        case .small: return "Small — multilingual"
+        case .full: return "Full — Large v3"
         }
     }
 
     public var downloadBytes: Int64 {
         switch self {
         case .recommended: return 1_620_000_000 + SpeakerDiarizationModelManifest.downloadBytes
+        case .medium: return 1_530_575_217 + SpeakerDiarizationModelManifest.downloadBytes
+        case .small: return 486_215_847 + SpeakerDiarizationModelManifest.downloadBytes
         case .full: return 3_100_000_000 + SpeakerDiarizationModelManifest.downloadBytes
         }
     }
@@ -38,6 +48,8 @@ public enum TranscriptionModelChoice: String, Codable, CaseIterable {
     public var requiredFreeBytes: Int64 {
         switch self {
         case .recommended: return 4_000_000_000
+        case .medium: return 4_000_000_000
+        case .small: return 2_000_000_000
         case .full: return 7_000_000_000
         }
     }

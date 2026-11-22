@@ -2,6 +2,11 @@ import Foundation
 
 /// The narrative is grounded independently of the structured outcome arrays.
 enum MeetingSummaryEvidence {
+    /// Remove machine evidence markers from reader-facing text, preserving ordinary brackets.
+    static func readableText(_ text: String) -> String {
+        text.replacingOccurrences(of: #"[ \t]*\[segment-[A-Za-z0-9_-]+\]"#, with: "", options: .regularExpression)
+    }
+
     static func narrative(in markdown: String) -> String {
         let lines = markdown.components(separatedBy: .newlines)
         var collecting = false

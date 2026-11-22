@@ -288,8 +288,8 @@ public final class MeetingSummaryJobExecutor: CancellableJobExecuting {
         }
         if let canonicalBase { extraction = try artifacts.reconcileGeneratedActions(extraction, base: canonicalBase) }
         let sanitizedExtractionData = try JSONEncoder().encode(extraction)
-        let renderedSummary = GeneratedArtifact(relativePath: paths.summary, data: Data(MeetingSummaryEvidence.render(
-            narrative: MeetingSummaryEvidence.narrative(in: String(decoding: summary.data, as: UTF8.self)), extraction: extraction).utf8))
+        let renderedSummary = GeneratedArtifact(relativePath: paths.summary, data: Data(MeetingSummaryEvidence.readableText(MeetingSummaryEvidence.render(
+            narrative: MeetingSummaryEvidence.narrative(in: String(decoding: summary.data, as: UTF8.self)), extraction: extraction)).utf8))
         var publishedArtifacts = result.artifacts.map { $0.relativePath == paths.summary ? renderedSummary : $0 }
         if let extractionIndex = publishedArtifacts.firstIndex(where: { $0.relativePath == paths.extraction }) {
             publishedArtifacts[extractionIndex] = GeneratedArtifact(relativePath: paths.extraction, data: sanitizedExtractionData)

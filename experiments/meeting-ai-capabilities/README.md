@@ -1,6 +1,6 @@
 # Disposable Meeting AI capability probes
 
-These are **non-shipped** probes for tickets 02/03. They never read a Meeting or credentials and do not establish product parity. Findings, source links and unexecuted acceptance criteria are in [the capability evaluation](../../docs/meeting_ai_handoff/capability-evaluation-2026-11-01.md).
+These are **non-shipped** probes for tickets 02/03. They never read a Meeting or credentials and do not establish product parity. Findings, source links and unexecuted acceptance criteria are in [the capability evaluation](../../docs/archive/2026-11-21/meeting_ai_handoff/capability-evaluation-2026-11-01.md).
 
 Run the behavioral probe self-tests:
 
@@ -56,7 +56,7 @@ Evaluate full-coverage Auto segmentation candidates on a retained fixture with t
   --max-speech-duration-seconds 2.5 --min-chunk-duration-seconds 0.5
 ```
 
-This accounts for every input sample as detected speech or an explicitly untranscribed VAD gap, resets Auto detection per chunk, and restores source-time offsets. It is an evaluation tool only: chunk-length sensitivity and synthetic-only evidence do not establish a production segmentation policy or human mixed-speech quality. Results for the current experiment are in the [Auto segmentation report](../../docs/meeting_ai_handoff/asr-auto-full-recording-experiment-2026-11-09.md).
+This accounts for every input sample as detected speech or an explicitly untranscribed VAD gap, resets Auto detection per chunk, and restores source-time offsets. It is an evaluation tool only: chunk-length sensitivity and synthetic-only evidence do not establish a production segmentation policy or human mixed-speech quality. Results for the current experiment are in the [Auto segmentation report](../../docs/archive/2026-11-21/meeting_ai_handoff/asr-auto-full-recording-experiment-2026-11-09.md).
 
 Generate and evaluate an exact three-minute, varied English/Ukrainian meeting conversation:
 
@@ -74,7 +74,7 @@ python3 experiments/meeting-ai-capabilities/make_three_minute_asr_fixture.py \
   --output .build/capabilities/asr-language-selection-three-minute-auto.json
 ```
 
-The fixture is synthesized afresh from 40 unique, responsive dialogue turns with local macOS Samantha (English) and Lesya (Ukrainian) voices. The exact transcript is saved for WER scoring, and turn pauses are spread across an exact 180-second duration. This is more varied than repeating phrases, but remains TTS: it does not establish quality on recorded human conversation, accents, overlapping speakers, or room noise. The full decode takes several minutes on the measured CPU configuration. Results for the varied dialogue are in the [sample-selection report](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-dialogue-2026-11-09.json) and [same-audio Auto baseline](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-dialogue-auto-2026-11-09.json). The earlier repeated-phrase stress results remain in the [repetition report](../../docs/meeting_ai_handoff/capability-asr-language-selection-three-minute-2026-11-09.json).
+The fixture is synthesized afresh from 40 unique, responsive dialogue turns with local macOS Samantha (English) and Lesya (Ukrainian) voices. The exact transcript is saved for WER scoring, and turn pauses are spread across an exact 180-second duration. This is more varied than repeating phrases, but remains TTS: it does not establish quality on recorded human conversation, accents, overlapping speakers, or room noise. The full decode takes several minutes on the measured CPU configuration. Results for the varied dialogue are in the [sample-selection report](../../docs/archive/2026-11-21/meeting_ai_handoff/capability-asr-language-selection-three-minute-dialogue-2026-11-09.json) and [same-audio Auto baseline](../../docs/archive/2026-11-21/meeting_ai_handoff/capability-asr-language-selection-three-minute-dialogue-auto-2026-11-09.json). The earlier repeated-phrase stress results remain in the [repetition report](../../docs/archive/2026-11-21/meeting_ai_handoff/capability-asr-language-selection-three-minute-2026-11-09.json).
 
 Generate the requested three-minute Ukrainian/English/Ukrainian fixture and test one language sample per minute:
 
@@ -89,7 +89,7 @@ python3 experiments/meeting-ai-capabilities/make_three_minute_uk_en_uk_fixture.p
   --output .build/capabilities/asr-minute-language-uk-en-uk.json --compare-auto
 ```
 
-The fixture contains exactly 60 seconds each of Ukrainian, English, then Ukrainian speech. Auto samples each minute for the first 15 minutes and transcribes each window in English only when detection is English; Russian and all other language detections are routed to Ukrainian. After minute 15, it transcribes the remaining tail using the language selected for minute 15. The installed runtime's `detect_language` accepts 30-second encoder segments; the probe allows two per one-minute window. Results are in the [minute-window report](../../docs/meeting_ai_handoff/capability-asr-minute-language-uk-en-uk-2026-11-09.json). This aligned synthetic test does not establish arbitrary language-switch timing or human-meeting quality; the policy cannot detect switches after minute 15.
+The fixture contains exactly 60 seconds each of Ukrainian, English, then Ukrainian speech. Auto samples each minute for the first 15 minutes and transcribes each window in English only when detection is English; Russian and all other language detections are routed to Ukrainian. After minute 15, it transcribes the remaining tail using the language selected for minute 15. The installed runtime's `detect_language` accepts 30-second encoder segments; the probe allows two per one-minute window. Results are in the [minute-window report](../../docs/archive/2026-11-21/meeting_ai_handoff/capability-asr-minute-language-uk-en-uk-2026-11-09.json). This aligned synthetic test does not establish arbitrary language-switch timing or human-meeting quality; the policy cannot detect switches after minute 15.
 
 ## Ticket 03 downloaded-model evaluation
 
@@ -110,7 +110,7 @@ and SHA-256 hashes of evaluated artifacts. Download each URL to its listed filen
 under a disposable model root, verify SHA-256, and extract `segmentation.tar.bz2`
 there. Do not treat a successful download as a quality result. Candidate source,
 license and installation constraints are in
-[local-model-candidates.md](../../docs/meeting_ai_handoff/local-model-candidates.md).
+[local-model-candidates.md](../../docs/archive/2026-11-21/meeting_ai_handoff/local-model-candidates.md).
 No gated model agreement or credential was needed for these public conversions.
 Installed `llama-server`, Pi, macOS `say` voices and `ffmpeg` versions are recorded
 in the corresponding reports; packages alone do not install these executables.
@@ -182,5 +182,5 @@ was limited to one output token by installed Pi's 4,096-token context-safety
 reserve; its failed report is retained separately. Compaction is disabled in the
 bounded research run. Product adapters must budget the entire system/context/output
 and process full Meeting evidence; these settings do not authorize truncation.
-See the [current capability contract](../../docs/meeting_ai_handoff/local-capability-contract.md)
+See the [current capability contract](../../docs/archive/2026-11-21/meeting_ai_handoff/local-capability-contract.md)
 for measured failures, downstream constraints, and unexecuted hardware/human lanes.

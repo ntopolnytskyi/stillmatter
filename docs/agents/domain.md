@@ -1,51 +1,25 @@
-# Domain Docs
+# Domain and product documentation
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+This repository uses one root glossary and feature-oriented documentation.
 
-## Before exploring, read these
+## Before a feature change
 
-- **`CONTEXT.md`** at the repo root, or
-- **`CONTEXT-MAP.md`** at the repo root if it exists: it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
-- **`docs/adr/`**: read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
+1. Read [CONTEXT.md](../../CONTEXT.md) for business meanings and [product/INDEX.md](../product/INDEX.md) for coverage and the relevant feature reading path.
+2. Read the relevant current feature document. For UI changes, also read [UI_PRINCIPALS.md](../UI_PRINCIPALS.md) for shared composition, controls, tokens and interaction rules.
+3. Read relevant [ADRs](../adr/) and the task's approved spec/tickets. Future ToDo work also requires [its integration review](../planned/TODO_INTEGRATION_REVIEW.md); unresolved conflicts are not permission to override current Meeting behavior.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+## Ownership and disagreement
 
-## File structure
+CONTEXT.md is a compact glossary: meanings, natural groupings and useful avoided synonyms. Behavior and implementation details belong in feature docs. Shared UI rules belong in UI_PRINCIPALS.md. ADRs explain consequential tradeoffs; a future-capability ADR does not establish implemented behavior.
 
-Single-context repo (most repos):
+Current docs describe verified implementation. Specs and tickets describe intended work. Check disagreements against source, tests and accepted amendments; surface ADR conflicts explicitly. Historical documents under `docs/archive/` preserve evidence and rationale and are not active instructions.
 
-```
-/
-├── CONTEXT.md
-├── docs/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
-└── src/
-```
+Present apparent bugs, unmet requirements and unresolved contradictions to the user before creating issues from a documentation review. Preserve the agreed distinction between a correction, existing work and a new issue. Keep unreviewed future integration decisions in the planned review document.
 
-Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
+## Completing a change
 
-```
-/
-├── CONTEXT-MAP.md
-├── docs/adr/                          ← system-wide decisions
-└── src/
-    ├── ordering/
-    │   ├── CONTEXT.md
-    │   └── docs/adr/                  ← context-specific decisions
-    └── billing/
-        ├── CONTEXT.md
-        └── docs/adr/
-```
+Update affected feature docs whenever behavior or feature-specific UI changes. Update UI_PRINCIPALS.md when shared UI rules change, CONTEXT.md when meanings change, and INDEX.md when coverage or reading paths change. Keep each rule authoritative in one place and link to it elsewhere.
 
-## Use the glossary's vocabulary
+Use glossary vocabulary in code discussions, proposals, issues and tests. Propose missing business concepts when needed; avoid adding general programming terminology to the glossary. Record an ADR when a hard-to-reverse decision involves a real tradeoff and its rationale would otherwise be surprising.
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
-
-If the concept you need isn't in the glossary yet, that's a signal: either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
-
-## Flag ADR conflicts
-
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
-
-> _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
+Before completion, verify changed documentation against the implementation, check links and run relevant existing validators. State verification limits honestly; automated checks do not establish device behavior or model quality.

@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import StillmatterCore
+@testable import StillmatterTranscriptionRuntime
 
 final class TranscriptionComponentInstallerTests: XCTestCase {
     func testInstallPublishesProgressAndReadyOnlyAfterCompleteModelPromotion() throws {
@@ -190,6 +191,35 @@ final class TranscriptionComponentInstallerTests: XCTestCase {
         XCTAssertEqual(fixture.installer.installedModelURL(), fixture.paths.modelURL(for: .full))
     }
 
+    func testSmallAndMediumAcquisitionMetadata() {
+        XCTAssertEqual(TranscriptionModelChoice.small.repository, "Systran/faster-whisper-small")
+        XCTAssertEqual(TranscriptionModelChoice.medium.repository, "Systran/faster-whisper-medium")
+        XCTAssertEqual(TranscriptionModelChoice.small.revision, "536b0662742c02347bc0e980a01041f333bce120")
+        XCTAssertEqual(TranscriptionModelChoice.medium.revision, "08e178d48790749d25932bbc082711ddcfdfbc4f")
+        XCTAssertEqual(TranscriptionModelChoice.small.downloadBytes, 486_215_847 + SpeakerDiarizationModelManifest.downloadBytes)
+        XCTAssertEqual(TranscriptionModelChoice.medium.downloadBytes, 1_530_575_217 + SpeakerDiarizationModelManifest.downloadBytes)
+    }
+
+    func testNewModelsActivateAndSurviveInstallerRestartWithoutDeletingTurbo() throws {
+        let acquirer = FixtureAcquirer()
+        let fixture = try InstallerFixture(acquirer: acquirer)
+        for choice in [TranscriptionModelChoice.recommended, .medium, .small] {
+            fixture.installer.install(model: choice)
+            waitUntil {
+                fixture.installer.state() == .ready(fixture.paths.modelURL(for: choice))
+            }
+            XCTAssertEqual(acquirer.requestedModels.last, choice)
+            let restarted = TranscriptionComponentInstaller(paths: fixture.paths, acquirer: acquirer)
+            XCTAssertEqual(restarted.installedModelChoice(), choice)
+            let engine = FasterWhisperTranscriptionEngine(
+                componentURL: try XCTUnwrap(restarted.installedModelURL()),
+                modelIdentifier: try XCTUnwrap(restarted.installedModelChoice()).variant)
+            XCTAssertEqual(engine.modelIdentifier, choice.rawValue)
+            XCTAssertEqual(restarted.installedModelURL(), fixture.paths.modelURL(for: choice))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.modelURL.path))
+        }
+    }
+
     func testDeveloperCLIOverrideWinsWithoutAffectingAppManagedDefault() throws {
         let appSupport = URL(fileURLWithPath: "/tmp/Stillmatter Test Support")
         let configuration = TranscriptionComponentPaths.developerCLIConfiguration(
@@ -266,6 +296,7 @@ private enum FixtureError: LocalizedError {
 
 private final class FixtureAcquirer: TranscriptionModelAcquiring {
     var error: Error?
+    var requestedModels: [TranscriptionModelChoice] = []
     let omitEntry: String?
     let progressUpdates: Int
 
@@ -281,6 +312,7 @@ private final class FixtureAcquirer: TranscriptionModelAcquiring {
         cancellation: TranscriptionInstallCancellation,
         progress: @escaping (TranscriptionInstallProgress) -> Void
     ) throws -> URL {
+        requestedModels.append(model)
         for offset in 0..<progressUpdates {
             progress(TranscriptionInstallProgress(
                 phase: "Downloading fixture…",

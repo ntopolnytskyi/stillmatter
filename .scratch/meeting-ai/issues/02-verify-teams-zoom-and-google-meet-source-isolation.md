@@ -12,7 +12,7 @@
 
 ## Context and scope
 
-Use the [approved spec](../spec.md), [domain glossary](../../../CONTEXT.md), and [shared layout vocabulary](../../../docs/meeting_ai_handoff/layout.md). The approved graph defines this slice; preserve behavior outside it. Resolve prerequisite research from the linked blockers before claiming capability.
+Use the [approved spec](../spec.md), [domain glossary](../../../CONTEXT.md), and [shared layout vocabulary](../../../docs/UI_PRINCIPALS.md). The approved graph defines this slice; preserve behavior outside it. Resolve prerequisite research from the linked blockers before claiming capability.
 
 ## User experience
 
@@ -48,7 +48,7 @@ Published from the user-approved 50-ticket breakdown. The ready-for-agent label 
 
 ### 2026-11-01 — Initial capability investigation (real-call lanes incomplete)
 
-Evidence and executable probes: [capability evaluation](../../../docs/meeting_ai_handoff/capability-evaluation-2026-11-01.md), [disposable probes](../../../experiments/meeting-ai-capabilities/README.md). No production Swift or UI changes. The later disposition below closes the research finding with explicit source-scope constraints; it does not complete the unrun real-call lanes or unblock claims of source isolation.
+Evidence and executable probes: [capability evaluation](../../../docs/archive/2026-11-21/meeting_ai_handoff/capability-evaluation-2026-11-01.md), [disposable probes](../../../experiments/meeting-ai-capabilities/README.md). No production Swift or UI changes. The later disposition below closes the research finding with explicit source-scope constraints; it does not complete the unrun real-call lanes or unblock claims of source isolation.
 
 Executed read-only native preflight both inside/outside sandbox; outside has one display and granted screen/AX/mic permissions for helper identity. Teams/Zoom/Chrome installation versions recorded. Source audit finds current recorder captures every app except itself. Apple documents application-level audio filtering even for a single selected window; existing ScreenCaptureKit backend cannot establish Meet-only tab scope. Added generated target/unrelated tones, PCM leakage assertion (per-channel), and a reproducible exact-source/denial/reconnect/concurrent-inference evaluation lane. Scope checker self-tests pass; actual Teams/Zoom/Meet call samples, continuity/latency under inference, and packaged permission/device behavior have not been measured. No browser/system-wide fallback was substituted.
 
@@ -56,7 +56,7 @@ Validation: `python3 -m unittest discover -s experiments/meeting-ai-capabilities
 
 ### 2026-11-01 — Research outcome and explicit limits
 
-**Resolved as a capability investigation, not as proof that source-isolated capture is implemented.** The source audit found the production recorder excludes only Stillmatter and otherwise captures applications broadly. Apple's current ScreenCaptureKit contract supports audio filtering by application; it does not expose a browser-tab audio filter. Thus current Teams/Zoom/Meet capture is not isolated, and Meet-tab-only audio is unsupported by this backend. The capability matrix and official API links are in [the evaluation report](../../../docs/meeting_ai_handoff/capability-evaluation-2026-11-01.md).
+**Resolved as a capability investigation, not as proof that source-isolated capture is implemented.** The source audit found the production recorder excludes only Stillmatter and otherwise captures applications broadly. Apple's current ScreenCaptureKit contract supports audio filtering by application; it does not expose a browser-tab audio filter. Thus current Teams/Zoom/Meet capture is not isolated, and Meet-tab-only audio is unsupported by this backend. The capability matrix and official API links are in [the evaluation report](../../../docs/archive/2026-11-21/meeting_ai_handoff/capability-evaluation-2026-11-01.md).
 
 `python3 -m unittest discover -s experiments/meeting-ai-capabilities -v` passed **12 tests**. They validate synthetic fixture discrimination and RPC/ASR probe behavior; they do not perform ScreenCaptureKit capture. Actual Teams/Zoom/Meet source tones, unrelated-app/tab leakage, start/end/reconnect and hidden-control timing, packaged-app permission denial, and audio continuity/latency during active inference were **not measured**. Those criteria remain unchecked and must be satisfied before claiming or shipping source-isolated capture. The failure to verify them is recorded, not papered over. No production code, UI, storage, or capture fallback changed.
 

@@ -18,6 +18,19 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.transcriptionLanguage, .automatic)
     }
 
+    func testEveryTranscriptionModelPersistsAcrossRestart() {
+        let suiteName = "StillmatterTests.Models.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        for choice in TranscriptionModelChoice.allCases {
+            let store = SettingsStore(userDefaults: defaults, storageKey: "models")
+            var settings = store.settings
+            settings.transcriptionModelChoice = choice
+            store.settings = settings
+            XCTAssertEqual(SettingsStore(userDefaults: defaults, storageKey: "models").settings.transcriptionModelChoice, choice)
+        }
+    }
+
     func testDefaultSettingsMatchMvpWorkingTimeAndPreferences() {
         let settings = AppSettings()
 

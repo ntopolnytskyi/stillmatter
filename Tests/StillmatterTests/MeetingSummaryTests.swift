@@ -681,6 +681,13 @@ final class MeetingSummaryTests: XCTestCase {
         }
     }
 
+    func testReaderFacingSummaryRemovesMachineCitationsAndPreservesOrdinaryBrackets() {
+        let text = "- Should the meeting status be displayed at the top? [segment-00003] [segment-00004]\n\nKeep [optional] text and [documentation](https://example.com)."
+        let expected = "- Should the meeting status be displayed at the top?\n\nKeep [optional] text and [documentation](https://example.com)."
+        XCTAssertEqual(MeetingSummaryEvidence.readableText(text), expected)
+        XCTAssertEqual(MeetingSummarySections(summary: text).summary, expected)
+    }
+
     func testCitedSummaryAcceptsOutcomeHeadingLevelsWithoutTreatingEmptySectionsAsNarrative() throws {
         for level in [1, 2, 3] {
             let fixture = try MeetingSummaryFixture()
@@ -697,7 +704,7 @@ final class MeetingSummaryTests: XCTestCase {
             })
             _ = try execute(executor, manifest: manifest)
             let summary = try fixture.contents(fixture.summaryPath)
-            XCTAssertEqual(MeetingSummaryEvidence.narrative(in: summary), "Launch planning. [segment-00001]")
+            XCTAssertEqual(MeetingSummaryEvidence.narrative(in: summary), "Launch planning.")
         }
     }
 
@@ -717,7 +724,7 @@ final class MeetingSummaryTests: XCTestCase {
         })
         _ = try execute(executor, manifest: manifest)
         XCTAssertEqual(fixture.latestPiRunner?.prompts.count, 2)
-        XCTAssertTrue(try fixture.contents(fixture.summaryPath).contains(uncited + " [segment-00001]"))
+        XCTAssertEqual(MeetingSummaryEvidence.narrative(in: try fixture.contents(fixture.summaryPath)), uncited)
     }
 
     func testCitationCorrectionIsBoundedAndNeverPublishesAnInvalidResponse() throws {

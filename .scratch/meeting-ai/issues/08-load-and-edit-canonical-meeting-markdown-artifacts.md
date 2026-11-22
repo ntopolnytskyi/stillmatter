@@ -12,7 +12,7 @@
 
 ## Context and scope
 
-Use the [approved spec](../spec.md), [domain glossary](../../../CONTEXT.md), and [shared layout vocabulary](../../../docs/meeting_ai_handoff/layout.md). The approved graph defines this slice; preserve behavior outside it. Resolve prerequisite research from the linked blockers before claiming capability.
+Use the [approved spec](../spec.md), [domain glossary](../../../CONTEXT.md), and [shared layout vocabulary](../../../docs/UI_PRINCIPALS.md). The approved graph defines this slice; preserve behavior outside it. Resolve prerequisite research from the linked blockers before claiming capability.
 
 Relevant accepted decisions: [file authority and shared identity](../../../docs/adr/0002-file-authority-and-shared-action-item-identity.md), [Person-owned profiles](../../../docs/adr/0003-people-own-independent-voice-profiles.md), and [serial workflows with independent capture](../../../docs/adr/0004-serial-meeting-workflows-with-independent-capture.md). Apply only those affecting this slice.
 

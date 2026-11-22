@@ -51,7 +51,7 @@ public struct MeetingActionItem: Equatable { public let id: String; public let t
     public init(id: String, text: String, citations: [MeetingCitation], reviewState: ProposalReviewState = .referenceOnly, referenceOnly: Bool = false, completionStatus: TodoStatus? = nil) { self.completionStatus=completionStatus; self.id=id; self.text=text; self.citations=citations; self.reviewState=reviewState; self.referenceOnly=referenceOnly }
 }
 public struct MeetingSummarySections: Equatable { public var summary: String; public var decisions: String; public var myActionItems: String; public var otherActionItems: String; public var openQuestions: String
-    public init(summary: String = "", decisions: String = "", myActionItems: String = "", otherActionItems: String = "", openQuestions: String = "") { self.summary=summary; self.decisions=decisions; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.openQuestions=openQuestions }
+    public init(summary: String = "", decisions: String = "", myActionItems: String = "", otherActionItems: String = "", openQuestions: String = "") { self.summary=MeetingSummaryEvidence.readableText(summary); self.decisions=decisions; self.myActionItems=myActionItems; self.otherActionItems=otherActionItems; self.openQuestions=openQuestions }
 }
 public struct MeetingBrowserRow: Equatable, Identifiable { public let id: String; public let title: String; public let startedAt: Date?; public let meetingRelativePath: String; public let captureState: MeetingCaptureDisplayState; public let processingState: MeetingProcessingState; public let project: String?; public let job: MeetingJobPresentation?; public let isArchived: Bool
     public let durationSeconds: Double?

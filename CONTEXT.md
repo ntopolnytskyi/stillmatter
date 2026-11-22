@@ -1,69 +1,142 @@
 # Stillmatter
 
-Stillmatter is a private work log connecting meetings, evidence, and personal todos. This glossary defines product language; the current Meeting AI design is recorded in the [reconciled specification](.scratch/meeting-ai/spec.md), with its review status stated there. Earlier behavior and UI context live in the [Recording and Meetings document](docs/meetings-recording-plan.md) and [screen profile](docs/graphite-focus/STILLMATTER_PROFILE.md).
+Stillmatter is a private work log connecting meetings, evidence and personal tasks. This glossary defines shared business language; feature documentation describes availability and behavior.
 
-## Language
+## Application layout
+
+**Sidebar**:
+The icon-only navigation bar on the left side of the window, below the Top Bar. Navigation Items run from top to bottom; Settings and the Application Icon are anchored at the bottom.
+
+**Navigation Item**:
+An icon in the Sidebar that selects a major part of the application, such as Recording, Meetings or Tasks, or opens Settings. The selected destination is shown in the Application Area.
+
+**Application Area**:
+The entire region to the right of the Sidebar and below the Top Bar, containing the selected destination's content.
+
+**Top Bar**:
+The bar in the window's title area, spanning above both the Sidebar and Application Area. It contains recording status and Search.
+_Avoid_: Status Bar for this region.
+
+**Application Icon**:
+The app identity shown at the bottom of the Sidebar, separate from the navigation destinations.
+
+**Listing**:
+The area containing a collection of Listing Items within the Application Area, optionally with a Listing Bar. Each application function defines its own Listing and Workbench; a Listing supports selecting one item or, where appropriate, multiple items.
+
+**Listing Item**:
+The representation of an individual record or a group in a Listing, ranging from plain text to a composition of information and controls, including icons, chips and a context menu. In Meetings it represents one Meeting and can show title, recording start time, duration and status; in a grouped Settings layout it represents a settings group whose settings appear in the Workbench. In the future Todo layout, it can represent a task view or group, such as Today, Tomorrow, Important or a project, whose tasks appear in the Workbench.
+
+**Listing Bar**:
+The optional bar at the top of a Listing, primarily for searching its Listing Items. It may also contain Listing Filters; its search and filters apply only to that Listing.
+
+**Listing Filter**:
+A criterion available through the Listing Bar that narrows which Listing Items are shown.
+
+**Workbench**:
+The part of the Application Area where the user reads, edits and acts on the selected record or group, including its header, tabs and content. Each application function defines the content shown for its Listing selection.
+_Avoid_: Detail Workspace.
+
+## Text presentation
+
+**Rendered Markdown**:
+The formatted reading presentation of Markdown text, used throughout the application when the text is not being edited.
+
+**Markdown Editor**:
+The editing presentation of Markdown text, showing plain Markdown source, including its formatting syntax.
+
+## Meeting Workbench
+
+**Info Bar**:
+The top part of the Meeting Workbench, presenting information about the selected Meeting. It sits above the Tabs and is distinct from the window-wide Top Bar.
+
+**Tab**:
+A named section of the Meeting Workbench, selected through the row of Tabs below the Info Bar. Selecting a Tab shows its Tab Content.
+
+**Tab Content**:
+The content of the selected Tab, shown below the Tabs in the Meeting Workbench.
+
+## Workspace and organization
+
+**Workspace**:
+The folder selected to store and organize Stillmatter's Markdown content.
+
+**Tag**:
+A reusable label used to classify Action Items and Todo Items.
+
+**Project**:
+A special Tag used to group tasks.
+
+## Recording
 
 **Meeting**:
-A conversation and its collected recordings, transcript, summary, notes, decisions, and action items.
+A work-log item representing an ad hoc or planned conversation with one person or a group, optionally associated with a calendar event. It contains the available recordings, Transcript, Summary, My Notes, Decisions, Action Items and Open Items.
 
 **Capture Session**:
-The time-bounded recording of a Meeting, separate from its later processing.
+A period during which Stillmatter records audio for a Meeting, separate from later processing.
 
 **Capture Preflight**:
-A readiness assessment that blocks capture when requirements are unmet or explains a reduced capture mode.
-
-**Teams Detection Signal**:
-Evidence that a native Teams call may be active; detection is distinct from permission or policy to record it.
+A readiness check that determines whether recording can start and which audio sources are available.
 
 **Microphone Track**:
-The user's independently recorded input audio.
+Audio captured from the selected microphone during a Capture Session, representing the application user's audio input. The track alone does not establish the identity of every Speaker it captures.
 
 **System Audio Track**:
-Audio recorded from Mac applications, kept separate from the Microphone Track.
+Audio captured from Mac applications during a Capture Session, representing the other person or group participating in the conversation and kept separate from the Microphone Track.
 
 **Recording Bundle**:
-The validated collection of a Capture Session's audio references, integrity information, and diagnostics used for later processing.
+The complete set of files associated with a Meeting, organized in one folder under the parent media folder. It includes recordings, metadata, transcription files and Markdown documents.
 
-**Transcription Audio Sidecar**:
-A replaceable audio derivative used to improve transcription without altering original recordings.
+## Meeting content
 
 **Transcript**:
-Timestamped text derived from Meeting audio, linked back to its evidence.
+Timestamped text of a Meeting's recorded speech, with speaker attribution and links to the source audio.
 
-**Voice Profile**:
-Local learned voice information owned by a Person, used to suggest their identity in later Meetings. It survives Meeting archive/deletion, is removed when its Person is deleted, and requires the user's confirmation before applying a suggested match.
+**Transcript Segment**:
+A timestamped portion of a Transcript containing speech and its speaker attribution.
 
-**Person**:
-A known individual whose identity and optional Voice Profile are maintained independently of Meetings. Removing a Person removes their learned Voice Profile.
+**Speaker**:
+A named or unidentified participant to whom recorded speech is attributed.
 
-**Speaker Range**:
-A time interval of recorded speech attributed to a speaker. The user can correct its limits or split a mixed-speaker interval into separately attributed ranges.
+**Citation**:
+A reference to the specific Transcript passage supporting a statement, Decision, Action Item or Open Item.
 
 **Summary**:
-An editable account of a Meeting's main points, decisions, my action items, other action items, and open questions, with citations to the Transcript.
+A compact, editable account of what was discussed, agreed and acted on during a Meeting, preserving significant details. It helps the user understand the conversation and find relevant Meetings later through search.
+
+**My Notes**:
+User-authored Markdown notes for a Meeting, kept separate from generated content.
+
+**Decision**:
+A choice or agreement reached during a Meeting, with a Citation when available.
+
+**Open Item**:
+An unresolved question or issue raised during a Meeting, tracked until resolved, with a Citation when available.
+
+## Tasks and attention
 
 **Action Item**:
-An evidence-backed commitment or proposed obligation assigned to a person or awaiting an owner, with a review state and completion state. An approved personal Action Item is also a Todo Item, retaining the same identity and state; other people's items remain Meeting work.
+A task or commitment arising from a Meeting, assigned to someone or awaiting an owner, with a Citation when available.
 _Avoid_: Todo Item for an unapproved proposal.
 
 **Todo Item**:
-A personal task represented by a Markdown checkbox; its priority is its position in the canonical Queue. It may be entered directly or be an approved personal Action Item exposed in the Todo queue, retaining that Action Item's identity and state.
+A personal task entered manually or accepted from a Meeting's Action Items.
+
+**Approval**:
+The user's acceptance of a proposed Action Item after a Meeting, separate from completing it. Only Action Items require Approval; Decisions and Open Items do not.
 
 **Inbox**:
-Items awaiting a decision, review, or attention, separate from the canonical Todo queue. Meeting Action Items await approval within their Meeting rather than appearing individually in the Inbox.
+A collection of items requiring the user's decision, review or attention.
 
-**Project**:
-A long-running area of work gathering related knowledge, meetings, todos, and decisions.
+**Today Review**:
+The daily process of reviewing items needing attention, personal tasks and upcoming meetings.
 
-**Decision**:
-A resolved choice, linked to evidence when available.
-
-**Job**:
-App-owned background work with observable stages, outputs, and retry state; distinct from Meeting or artifact readiness.
+## Processing and lifecycle
 
 **AI Workflow**:
-A bounded AI Job that reads workspace context and returns generated artifacts or proposals without directly applying canonical workspace mutations.
+A defined process that uses AI to analyze information and produce content or proposed outcomes.
+
+**AI Meeting Workflow**:
+An AI Workflow that processes a Meeting's recorded conversation to produce a Transcript, Summary, and proposed Decisions, Action Items and Open Items.
 
 **Archive**:
-An inactive Meeting lifecycle state excluded from default browsing and search, with no in-app restore or editing. Archived Meetings retain their artifacts and links subject to evidence retention.
+The inactive state of a Meeting with read-only in-app access, excluded from default browsing and search.

@@ -12,7 +12,7 @@
 
 ## Context and scope
 
-Use the [approved spec](../spec.md), [domain glossary](../../../CONTEXT.md), and [shared layout vocabulary](../../../docs/meeting_ai_handoff/layout.md). The approved graph defines this slice; preserve behavior outside it. Resolve prerequisite research from the linked blockers before claiming capability.
+Use the [approved spec](../spec.md), [domain glossary](../../../CONTEXT.md), and [shared layout vocabulary](../../../docs/UI_PRINCIPALS.md). The approved graph defines this slice; preserve behavior outside it. Resolve prerequisite research from the linked blockers before claiming capability.
 
 ## User experience
 
@@ -44,7 +44,7 @@ This slice introduces no new interactive page or control. Verify its observable 
 Published from the user-approved 50-ticket breakdown. The ready-for-agent label means specified; execution still waits for every declared blocker to complete. Implementation has not begun.
 
 
-2026-11-01 — Implemented and verified ticket 01. See [coverage contract and complete evidence](../../../docs/meeting_ai_handoff/coverage.md).
+2026-11-01 — Implemented and verified ticket 01. See [coverage contract and complete evidence](../../../docs/archive/2026-11-21/meeting_ai_handoff/coverage.md).
 
 - Shipping inventory evaluates SwiftPM product reachability and reconciles Xcode membership: 113 Swift files, 21 individually justified/hash-frozen non-shipped validation exclusions, 92 required source files. Exact source hashes, Package.swift, shipping Release settings, Swift/Xcode versions and configuration prevent incompatible report merges. Duplicate module/file/line records merge by source location without double counting; absent/empty app/platform coverage fails.
 - Tests: 34 Python tool behavior tests passed; fresh historical Debug package baseline reproduced 303 tests / 4 skipped / 0 failures; shipping-condition Release package route also passed 303 / 4 skipped / 0 failures. Separate native full run passed 13 / 0 skipped / 0 failures after replacing a Debug-only proposal seed with a real isolated workspace-scoped TasksInbox fixture. Separate hosted app route passed 2 / 0 skipped / 0 failures. All workspace/media/support/preferences roots were disposable; no real library or model was used.

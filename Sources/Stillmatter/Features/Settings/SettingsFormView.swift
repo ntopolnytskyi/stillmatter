@@ -320,7 +320,7 @@ final class SettingsFormView: NSView {
     private func transcriptionModelRow() -> NSView {
         let titleLabel = NSTextField(labelWithString: "Transcription model")
         titleLabel.widthAnchor.constraint(equalToConstant: 180).isActive = true
-        let guidance = NSTextField(wrappingLabelWithString: "Recommended uses faster-whisper Large v3 Turbo and needs about 4 GB free during setup. Full quality uses Large v3 and needs about 7 GB.")
+        let guidance = NSTextField(wrappingLabelWithString: "All models support English and Ukrainian. Setup needs about 4 GB free for Turbo or Medium, 2 GB for Small, and 7 GB for Full. Choose Install Selected to activate a different model; the current transcription can finish.")
         guidance.textColor = .secondaryLabelColor
         guidance.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let row = NSStackView(views: [titleLabel, transcriptionModelPopup, guidance])

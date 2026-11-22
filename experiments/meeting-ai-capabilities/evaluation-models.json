@@ -1,5 +1,5 @@
 {
-  "purpose": "Evaluation only; model download does not authorize Meeting upload. Verify downloaded hashes before offline inference. Upstream license links and conversion provenance: docs/meeting_ai_handoff/local-model-candidates.md",
+  "purpose": "Evaluation only; model download does not authorize Meeting upload. Verify downloaded hashes before offline inference. Upstream license links and conversion provenance: docs/archive/2026-11-21/meeting_ai_handoff/local-model-candidates.md",
   "models": [
     {
       "file": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
